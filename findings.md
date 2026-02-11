@@ -1,5 +1,27 @@
 # 发现记录
 
+## 本轮任务（上线安全基线）关键发现（改造前）
+- 当时版本已具备登录 UI 与会话 cookie，但 `/api` 仍可在未登录时被代理访问，属于“仅前端门禁”。
+- 当时前端代码仍依赖 `VITE_AUTHORIZATION`（会进入浏览器构建产物），不满足上线安全要求。
+- 报错 `http proxy error: /auth/session ECONNREFUSED` 的根因是开发态只启动了 Vite 或端口冲突；现已把 auth 默认端口迁到 `3101` 并将 `dev` 改为并发启动。
+- 要满足 MVP 上线基线，需要将上游密钥完全下沉到服务端，并在 `/api` 层强制鉴权和限流保护。
+
+## 本轮实现结论（已完成）
+- 后端 `server/index.mjs` 已实现：
+  - `/api` 前置 `requireAuth`，未登录返回 401；
+  - 仅服务端注入 `UPSTREAM_AUTHORIZATION` 到上游请求头；
+  - 登录接口加入基于 `IP + 用户名` 的窗口限流（默认 10 分钟 5 次，超限封禁 30 分钟）；
+  - 登录成功/失败基础审计日志。
+- 前端去敏：
+  - `services/apiConfig.ts` 不再读取任何前端鉴权 env；
+  - `services/openaiImages.ts` 不再强制客户端 Authorization（改为可选头）。
+- 开发代理收口：
+  - `vite.config.ts` 中 `/api` 与 `/auth` 均转发至 auth server（默认 `http://localhost:3101`）。
+- 联调结果：
+  - 未登录访问 `/api/v1/models` => 401（通过）；
+  - 登录后访问 `/api/v1/models` 已能到达上游（上游当前返回 429 invalid token cooldown，与本地鉴权链路无关）；
+  - 连续 6 次错误密码，第 6 次返回 429（限流通过）。
+
 ## 当前架构（初始）
 - 左侧栏已有「设置」折叠组、素材库入口、接口配置。
 - 主流程已支持：批量尺寸、取消生成、错误详情弹窗、素材库、遮罩编辑、对比。

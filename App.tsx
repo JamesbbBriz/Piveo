@@ -17,6 +17,7 @@ import { MaskEditorModal } from './components/MaskEditorModal';
 import { imagesEdits, imageObjToDataUrl, ResponseFormat } from './services/openaiImages';
 import { filterSizesByAspect, getSupportedAspectRatios, getSupportedSizeForAspect } from './services/sizeUtils';
 import { PromptModelPanel } from './components/PromptModelPanel';
+import { getSession, login, logout } from './services/auth';
 
 const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSettings => {
   const aspectRatioValues = getSupportedAspectRatios();
@@ -64,14 +65,14 @@ const isLikelyModelUnsupported = (message: string): boolean =>
   /模型.*不支持.*(图片|生图)/i.test(message);
 
 const isLikelyMissingAuth = (message: string): boolean =>
-  /missing|缺少|invalid.*auth|unauthorized|401|鉴权|authorization/i.test(message);
+  /missing|缺少|invalid.*auth|unauthorized|401|鉴权|authorization|未登录|登录失效/i.test(message);
 
 const isLikelyCorsOrNetwork = (message: string): boolean =>
   /cors|network|failed to fetch|网络错误|预检/i.test(message);
 
 const getFriendlyErrorMessage = (message: string): string => {
   if (isLikelyModelUnsupported(message)) return "当前模型不支持生图，请切换到可用图片模型后重试。";
-  if (isLikelyMissingAuth(message)) return "鉴权失败，请检查 .env.local 里的令牌配置。";
+  if (isLikelyMissingAuth(message)) return "未登录或会话已失效，请重新登录后重试。";
   if (isLikelyCorsOrNetwork(message)) return "网络或跨域错误，请优先使用 `/api` 代理地址。";
   return `生成失败：${message}`;
 };
@@ -86,9 +87,9 @@ const getErrorAdvice = (message: string): string[] => {
   }
   if (isLikelyMissingAuth(message)) {
     return [
-      "在 .env.local 配置完整 Authorization，例如 VITE_AUTHORIZATION=Bearer sk-xxx。",
-      "也可以在 .env.local 设置 VITE_AUTHORIZATION 或 VITE_API_KEY。",
-      "应用后重新发送即可。",
+      "先重新登录，确认右上角已显示当前账号。",
+      "检查认证服务是否运行（开发环境默认 http://localhost:3101）。",
+      "如果是服务端报错，检查服务端环境变量 UPSTREAM_AUTHORIZATION 是否已配置。",
     ];
   }
   if (isLikelyCorsOrNetwork(message)) {
@@ -166,6 +167,11 @@ const App: React.FC = () => {
   const [maskEditBaseUrl, setMaskEditBaseUrl] = useState<string | null>(null);
   const [balanceRefreshTick, setBalanceRefreshTick] = useState(0);
   const [hasHydratedStorage, setHasHydratedStorage] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
+  const [authUser, setAuthUser] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [loginForm, setLoginForm] = useState({ username: "", password: "" });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -178,6 +184,21 @@ const App: React.FC = () => {
   } | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    const checkAuth = async () => {
+      const session = await getSession();
+      if (cancelled) return;
+      setAuthUser(session?.username || null);
+      setAuthReady(true);
+    };
+    void checkAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authReady || !authUser) return;
     let cancelled = false;
     const bootstrap = async () => {
       await initPersistentStorage();
@@ -227,7 +248,7 @@ const App: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authReady, authUser]);
 
   useEffect(() => {
     if (!hasHydratedStorage) return;
@@ -318,6 +339,44 @@ const App: React.FC = () => {
   const handleUpdateApiConfig = (cfg: ApiConfig) => {
     setApiConfig(cfg);
     saveStoredApiConfig(cfg);
+  };
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginForm.username.trim() || !loginForm.password) {
+      setAuthError("请输入账号和密码。");
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const user = await login(loginForm.username.trim(), loginForm.password);
+      setAuthUser(user.username);
+      setLoginForm({ username: user.username, password: "" });
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "登录失败，请重试。");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setAuthLoading(true);
+    try {
+      await logout();
+    } catch {
+      // ignore network error, still reset local auth state
+    } finally {
+      setHasHydratedStorage(false);
+      setSessions([]);
+      setCurrentSessionId(null);
+      setTemplates([]);
+      setModels([]);
+      setSelectedImage(null);
+      setInputText('');
+      setAuthUser(null);
+      setAuthLoading(false);
+    }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -710,6 +769,55 @@ const App: React.FC = () => {
     "4. 开着连续编辑但临时换图：你上传新图时，本次会用新图；下次不上传才回到自动沿用。",
   ];
 
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-dark-900 text-gray-200 flex items-center justify-center">
+        <div className="text-sm text-gray-400">正在检查登录状态...</div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <div className="min-h-screen bg-dark-900 text-gray-200 flex items-center justify-center p-4">
+        <form onSubmit={handleLoginSubmit} className="w-full max-w-sm bg-dark-800 border border-dark-700 rounded-2xl p-6 space-y-4 shadow-2xl">
+          <div className="text-xl font-bold text-banana-400">TopSeller 图销冠</div>
+          <div className="text-sm text-gray-400">请登录后继续使用。</div>
+          <div className="space-y-2">
+            <label className="text-xs text-gray-400">账号</label>
+            <input
+              type="text"
+              value={loginForm.username}
+              onChange={(e) => setLoginForm((prev) => ({ ...prev, username: e.target.value }))}
+              className="w-full bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-banana-500"
+              placeholder="请输入账号"
+              autoComplete="username"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs text-gray-400">密码</label>
+            <input
+              type="password"
+              value={loginForm.password}
+              onChange={(e) => setLoginForm((prev) => ({ ...prev, password: e.target.value }))}
+              className="w-full bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-banana-500"
+              placeholder="请输入密码"
+              autoComplete="current-password"
+            />
+          </div>
+          {authError && <div className="text-xs text-red-400">{authError}</div>}
+          <button
+            type="submit"
+            disabled={authLoading}
+            className="w-full bg-banana-500 hover:bg-banana-400 disabled:opacity-60 text-dark-900 font-semibold py-2.5 rounded-lg transition-colors"
+          >
+            {authLoading ? "登录中..." : "登录"}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
   if (!currentSession) return <div className="text-white text-center mt-10">初始化中...</div>;
 
   return (
@@ -731,10 +839,28 @@ const App: React.FC = () => {
         balanceRefreshTick={balanceRefreshTick}
       />
       <div className="flex-1 flex flex-col h-full relative">
+        <div className="absolute top-3 right-4 z-20 hidden lg:flex items-center gap-2">
+          <span className="text-xs text-gray-400 px-2 py-1 rounded border border-dark-600 bg-dark-800/70">
+            {authUser}
+          </span>
+          <button
+            onClick={handleLogout}
+            disabled={authLoading}
+            className="text-xs px-2.5 py-1.5 rounded border border-dark-600 bg-dark-800 hover:bg-dark-700 text-gray-200 disabled:opacity-60"
+          >
+            退出登录
+          </button>
+        </div>
         <div className="lg:hidden h-14 border-b border-dark-700 flex items-center px-4 justify-between bg-dark-800">
           <button onClick={() => setIsSidebarOpen(true)} className="text-gray-400"><Icon name="bars" /></button>
           <span className="font-semibold text-gray-200 truncate max-w-[200px]">{currentSession.title}</span>
-          <div className="w-6"></div>
+          <button
+            onClick={handleLogout}
+            disabled={authLoading}
+            className="text-[11px] px-2 py-1 rounded border border-dark-600 bg-dark-800 text-gray-300 disabled:opacity-60"
+          >
+            退出
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 lg:p-8 scroll-smooth">
           <div className="w-full max-w-none min-h-full flex flex-col pr-1 lg:pr-4">

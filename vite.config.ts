@@ -4,6 +4,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
+    const authTarget = env.VITE_AUTH_PROXY_TARGET || 'http://localhost:3101';
     return {
       server: {
         port: 3000,
@@ -11,11 +12,16 @@ export default defineConfig(({ mode }) => {
         // 开发环境通过同源代理绕过浏览器 CORS：
         // 使用 VITE_API_BASE_URL=/api 且 VITE_API_PROXY_TARGET=https://n.lconai.com
         proxy: {
-          '/api': {
-            target: env.VITE_API_PROXY_TARGET || 'https://n.lconai.com',
+          '/auth': {
+            target: authTarget,
             changeOrigin: true,
-            secure: true,
-            rewrite: (p) => p.replace(/^\/api/, ''),
+            secure: false,
+          },
+          '/api': {
+            // /api 请求统一先进入本地 auth server，由服务端注入上游 Authorization。
+            target: authTarget,
+            changeOrigin: true,
+            secure: false,
           },
         },
       },

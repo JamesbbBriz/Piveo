@@ -13,10 +13,9 @@ const readEnvString = (key: string): string => {
 
 export const getEnvApiConfig = (): ApiConfig => {
   const baseUrl = (readEnvString("VITE_API_BASE_URL") || "/api").trim();
-
-  const envAuth = readEnvString("VITE_AUTHORIZATION").trim();
-  const envKey = readEnvString("VITE_API_KEY").trim();
-  const authorization = envAuth || (envKey ? `Bearer ${envKey}` : "");
+  // 安全策略：前端不再直接持有上游令牌。
+  // 上游 Authorization 统一由后端网关注入。
+  const authorization = "";
 
   const defaultImageModel = (readEnvString("VITE_DEFAULT_IMAGE_MODEL") || "gemini-2.5-flash-image").trim();
 

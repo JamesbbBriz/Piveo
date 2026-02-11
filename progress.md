@@ -1,5 +1,18 @@
 # 进度日志
 
+- [安全加固] 按 `planning-with-files` 重启流程：完成 session catchup + 计划文件重置为“上线安全基线”任务。
+- [安全加固] 确认现状：登录已接入但 `/api` 未强制会话；前端仍持有 Authorization，需去敏。
+- [安全加固] 复现并定位 `ECONNREFUSED`：Vite 与 auth 端口行为已核实，后续以 `3101` 为默认 auth 端口。
+- [安全加固] 完成后端收口：`server/index.mjs` 增加 `requireAuth` 保护 `/api/*`，并由服务端注入 `UPSTREAM_AUTHORIZATION`。
+- [安全加固] 完成前端去敏：`services/apiConfig.ts` 不再读取前端密钥；`services/openaiImages.ts` 改为可选 Authorization 头。
+- [安全加固] 完成登录安全增强：加入登录限流（默认 10 分钟 5 次，超限封禁 30 分钟）与基础审计日志。
+- [安全加固] 完成代理调整：`vite.config.ts` 让 `/auth` 与 `/api` 均经 auth server，避免绕过会话。
+- [安全加固] 完成联调验证：
+  - 未登录 `/api/v1/models` => 401；
+  - 错误密码第 6 次 => 429；
+  - build 与 tsc 均通过。
+- [部署准备] 已生成高强度 `AUTH_JWT_SECRET` 并写入 `.env.local`（脱敏确认）；保留 `AUTH_USER/AUTH_PASSWORD` 可按生产策略替换。
+
 - 初始化规划文件，进入阶段1（梳理与实现边界）。
 - 完成 `services/openaiImages.ts`：增加模型不支持自动兜底、响应附带 `model_used/endpoint_used`。
 - 完成 `App.tsx`：新增错误自救条、重试链路、快捷提示词、素材复用回调、主区域加宽、连续编辑配置接入。

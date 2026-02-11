@@ -167,13 +167,9 @@ const getClientConfig = (override?: Partial<ApiConfig>): ApiConfig => {
   return merged;
 };
 
-const requireAuthorization = (cfg: ApiConfig): string => {
-  if (!cfg.authorization) {
-    throw new Error(
-      "缺少鉴权信息。请在左侧栏接口设置里填写 Authorization，或在 .env.local 里设置 VITE_AUTHORIZATION / VITE_API_KEY。"
-    );
-  }
-  return cfg.authorization;
+const buildAuthHeaders = (cfg: ApiConfig): Record<string, string> => {
+  const auth = (cfg.authorization || "").trim();
+  return auth ? { Authorization: auth } : {};
 };
 
 const toImageUrlForChat = (s: string): string => {
@@ -187,10 +183,9 @@ const isGeminiImageModel = (model: string): boolean => /^gemini-/i.test(model) &
 
 export const listModels = async (opts?: ClientRequestOptions): Promise<string[]> => {
   const cfg = getClientConfig(opts?.api);
-  const authorization = requireAuthorization(cfg);
 
   const resp = await fetch(`${cfg.baseUrl}/v1/models`, {
-    headers: { Authorization: authorization },
+    headers: buildAuthHeaders(cfg),
     signal: opts?.signal,
   });
   if (!resp.ok) {
@@ -264,12 +259,11 @@ const parseBalancePayload = (payload: any): { amount: number | null; currency?: 
 
 export const fetchBalance = async (opts?: ClientRequestOptions): Promise<BalanceInfo> => {
   const cfg = getClientConfig(opts?.api);
-  const authorization = requireAuthorization(cfg);
 
   const requestJson = async (path: string): Promise<any> => {
     const resp = await fetch(`${cfg.baseUrl}${path}`, {
       method: "GET",
-      headers: { Authorization: authorization },
+      headers: buildAuthHeaders(cfg),
       signal: opts?.signal,
     });
     if (resp.status === 404 || resp.status === 405) {
@@ -391,7 +385,6 @@ const geminiImageViaChat = async (
   model: string,
   signal?: AbortSignal
 ): Promise<图片生成响应> => {
-  const authorization = requireAuthorization(cfg);
   const n = Math.min(Math.max(req.n ?? 1, 1), 10);
   const responseFormat = req.response_format ?? ResponseFormat.Url;
   const created = Math.floor(Date.now() / 1000);
@@ -415,7 +408,7 @@ const geminiImageViaChat = async (
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: authorization,
+        ...buildAuthHeaders(cfg),
       },
       body: JSON.stringify({
         model,
@@ -476,7 +469,6 @@ export const imagesGenerations = async (
   opts?: ClientRequestOptions
 ): Promise<图片生成响应> => {
   const cfg = getClientConfig(opts?.api);
-  const authorization = requireAuthorization(cfg);
   const signal = opts?.signal;
 
   const callWithModel = async (model: string): Promise<图片生成响应> => {
@@ -517,7 +509,7 @@ export const imagesGenerations = async (
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: authorization,
+          ...buildAuthHeaders(cfg),
         },
         body: JSON.stringify(body),
         signal,
@@ -627,7 +619,6 @@ export const imagesEdits = async (
   opts?: ClientRequestOptions
 ): Promise<图片生成响应> => {
   const cfg = getClientConfig(opts?.api);
-  const authorization = requireAuthorization(cfg);
   const signal = opts?.signal;
 
   const fd = new FormData();
@@ -664,7 +655,7 @@ export const imagesEdits = async (
   const resp = await fetch(`${cfg.baseUrl}/v1/images/edits`, {
     method: "POST",
     headers: {
-      Authorization: authorization,
+      ...buildAuthHeaders(cfg),
     },
     body: fd,
     signal,

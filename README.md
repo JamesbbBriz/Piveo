@@ -13,19 +13,42 @@
 1. 安装依赖：
    `npm install`
 2. 配置 `.env.local`（可参考 `.env.example`）：
-   - `VITE_AUTHORIZATION`：完整的鉴权头（Authorization，例如：`Bearer sk-xxx`）
-   - 推荐开发环境：`VITE_API_BASE_URL=/api` + `VITE_API_PROXY_TARGET=https://n.lconai.com`（用 Vite 代理绕过浏览器 CORS）
+   - `UPSTREAM_AUTHORIZATION`：服务端访问上游网关的鉴权头（例如：`Bearer sk-xxx`）
+   - `UPSTREAM_API_BASE_URL`：上游网关地址（默认 `https://n.lconai.com`）
+   - 推荐开发环境：`VITE_API_BASE_URL=/api`（前端只打本地代理）
    - `VITE_DEFAULT_IMAGE_MODEL`：默认生图模型（默认：`gemini-2.5-flash-image`）
-3. 启动开发服务器：
+3. 启动开发服务器（会同时启动前端和登录服务）：
    `npm run dev`
+
+如果你只想单独启动某一项：
+- 前端：`npm run dev:web`
+- 认证服务：`npm run dev:auth`
+- 端口默认：前端 `3000`，认证服务 `3101`（避免与 Vite 自动端口冲突）
 
 ## 运行时配置
 
-接口地址和鉴权令牌统一放在 `.env.local` 配置（不在前端填写）：
+接口地址和鉴权令牌统一放在服务端 `.env.local` 配置（不在前端填写）：
 - `VITE_API_BASE_URL`
-- `VITE_AUTHORIZATION`（或 `VITE_API_KEY`）
+- `UPSTREAM_API_BASE_URL`
+- `UPSTREAM_AUTHORIZATION`
 
 模型在左侧栏底部切换器选择；切换器下方显示余额（若网关未开放 billing 端点则显示“暂不可用”）。
+
+## 登录功能
+
+- 已增加登录鉴权（`/auth/login`、`/auth/session`、`/auth/logout`）。
+- 默认预置用户：
+  - 账号：`guoboss`
+  - 密码：`qazwsxedc1229`
+- 可通过 `.env.local` 覆盖：
+  - `AUTH_USER`
+  - `AUTH_PASSWORD`
+  - `AUTH_JWT_SECRET`
+- 上线建议：
+  - `AUTH_JWT_SECRET` 使用高强度随机字符串。
+  - `UPSTREAM_AUTHORIZATION` 仅放服务端环境变量，禁止使用 `VITE_` 前缀。
+  - `/api` 已强制登录后访问，登录接口已带基础限流。
+  - 使用 `npm run build` 后通过 `npm run start` 启动（同进程提供鉴权 + /api 代理 + 静态资源）。
 
 ## 数据持久化
 
@@ -41,4 +64,4 @@
 
 - `Failed to generate model`
   - 原因：本质仍是图片生成接口失败（通常是模型或鉴权问题）。
-  - 处理：检查 `.env.local` 中的地址/令牌/默认模型；建议开发环境先用 `/api` 代理。
+  - 处理：检查 `.env.local` 中的 `UPSTREAM_AUTHORIZATION`、`UPSTREAM_API_BASE_URL`、默认模型配置。
