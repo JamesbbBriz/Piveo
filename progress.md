@@ -1,0 +1,21 @@
+# 进度日志
+
+- 初始化规划文件，进入阶段1（梳理与实现边界）。
+- 完成 `services/openaiImages.ts`：增加模型不支持自动兜底、响应附带 `model_used/endpoint_used`。
+- 完成 `App.tsx`：新增错误自救条、重试链路、快捷提示词、素材复用回调、主区域加宽、连续编辑配置接入。
+- 完成 `components/CreativeSettingsSidebar.tsx` 重构：减少折叠，核心参数常显，系统/模特改为可选展开。
+- 完成 `components/ApiSettingsSidebar.tsx`：新增“测试连接”“推荐网关”“模型预设”与外部强制展开。
+- 完成 `components/AssetsModal.tsx` 与 `components/ChatMessage.tsx`：支持参考图复用与 lazy 图片。
+- 完成构建验证：`npx tsc -p tsconfig.json --noEmit`、`npm run build` 通过。
+- 补充文档：更新 `README.md` 常见报错排查与 `.env.example` 模型建议说明。
+- 按最新反馈继续优化：移除返回格式可视化；尺寸列表改为仅显示当前画幅匹配项并在生成时强制过滤；连续编辑说明文案改为“开启/关闭”行为解释。
+- 按最新反馈继续优化：将“系统指令/一致性模特”从左侧迁移到聊天输入框上方；左侧仅保留基础创作参数；新增 `PromptModelPanel` 并通过构建验证。
+- 按最新反馈继续优化：禁用自定义尺寸；引入 Gemini 2.5 Flash Image 固定比例-分辨率白名单（1:1/2:3/3:2/3:4/4:3/4:5/5:4/9:16/16:9/21:9）；画幅切换自动绑定官方支持尺寸。
+- 按最新反馈继续优化：将“连续编辑”开关移动到输入区右侧并新增 `i` 悬浮说明（4 个用户故事）；左侧不再重复展示该开关。
+- 新增持久化改造：`services/storage.ts` 升级为 `IndexedDB + localStorage 回退`，并在启动时自动迁移旧本地数据。
+- 新增左下角模型切换器：`components/ApiSettingsSidebar.tsx` 改为固定底部模型 switcher（拉取 `/v1/models`）+ 余额显示（60 秒自动刷新）。
+- 新增余额服务：`services/openaiImages.ts` 增加 `fetchBalance()`，按多个 billing 端点兼容解析，失败时降级“暂不可用”。
+- 适配异步存储：`App.tsx` 启动与保存流程改为异步持久化调用。
+- 按最新反馈调整：去掉“设置 section”复杂入口，改为左下角低调模型切换器+余额；地址/令牌固定走 `.env.local`；输入框焦点样式回到低调模式。
+- 余额逻辑补强：优先走 `/v1/dashboard/billing/subscription` + `/v1/dashboard/billing/usage` 组合计算剩余额度，并保留历史端点兜底。
+- 实测网关返回正常：`subscription` 返回 `hard_limit_usd=10000`，`usage` 返回 `total_usage=488`，可用于余额计算。

@@ -1,0 +1,5 @@
+{
+  "name": "TopSeller 图销冠工作室",
+  "description": "用于电商图片生成与编辑的中文创作工作台，支持 OpenAI 样式接口、系统指令、画幅控制和项目历史。",
+  "requestFramePermissions": []
+}

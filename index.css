@@ -1,0 +1,28 @@
+/* Extra CSS for the CDN Tailwind setup.
+   Vite will serve this file because index.html links to /index.css. */
+
+/* Hide scrollbars but keep scroll behavior (used for horizontal model strip). */
+.scrollbar-hide {
+  -ms-overflow-style: none; /* IE/Edge */
+  scrollbar-width: none; /* Firefox */
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+/* Lightweight custom scrollbar for elements that opt-in. */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #1e1e1e;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #3d3d3d;
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
