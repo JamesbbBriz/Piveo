@@ -186,6 +186,7 @@ export const listModels = async (opts?: ClientRequestOptions): Promise<string[]>
 
   const resp = await fetch(`${cfg.baseUrl}/v1/models`, {
     headers: buildAuthHeaders(cfg),
+    credentials: "include",
     signal: opts?.signal,
   });
   if (!resp.ok) {
@@ -264,6 +265,7 @@ export const fetchBalance = async (opts?: ClientRequestOptions): Promise<Balance
     const resp = await fetch(`${cfg.baseUrl}${path}`, {
       method: "GET",
       headers: buildAuthHeaders(cfg),
+      credentials: "include",
       signal: opts?.signal,
     });
     if (resp.status === 404 || resp.status === 405) {
@@ -410,6 +412,7 @@ const geminiImageViaChat = async (
         "Content-Type": "application/json",
         ...buildAuthHeaders(cfg),
       },
+      credentials: "include",
       body: JSON.stringify({
         model,
         // Some gateways may accept `size` for image models even on chat endpoint.
@@ -478,11 +481,6 @@ export const imagesGenerations = async (
       );
     }
 
-    if (isGeminiImageModel(model)) {
-      // 该网关对 Gemini 图片模型常走 /v1/chat/completions。
-      return geminiImageViaChat({ ...req, model: model as Model }, cfg, model, signal);
-    }
-
     const body: Record<string, any> = {
       prompt: req.prompt,
       model,
@@ -511,6 +509,7 @@ export const imagesGenerations = async (
           "Content-Type": "application/json",
           ...buildAuthHeaders(cfg),
         },
+        credentials: "include",
         body: JSON.stringify(body),
         signal,
       });
@@ -524,7 +523,17 @@ export const imagesGenerations = async (
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
-      throw new Error(`图片接口请求失败：HTTP ${resp.status} ${text}`.trim());
+      const generationErr = `图片接口请求失败：HTTP ${resp.status} ${text}`.trim();
+      // 对 Gemini 模型，若 generations 失败，回退到 chat/completions 再试一次。
+      if (isGeminiImageModel(model)) {
+        try {
+          return await geminiImageViaChat({ ...req, model: model as Model }, cfg, model, signal);
+        } catch (chatErr) {
+          const chatMsg = chatErr instanceof Error ? chatErr.message : String(chatErr);
+          throw new Error(`${generationErr}；回退 chat/completions 失败：${chatMsg}`);
+        }
+      }
+      throw new Error(generationErr);
     }
 
     const json = (await resp.json()) as 图片生成响应;
@@ -657,6 +666,7 @@ export const imagesEdits = async (
     headers: {
       ...buildAuthHeaders(cfg),
     },
+    credentials: "include",
     body: fd,
     signal,
   });

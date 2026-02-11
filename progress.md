@@ -12,6 +12,10 @@
   - 错误密码第 6 次 => 429；
   - build 与 tsc 均通过。
 - [部署准备] 已生成高强度 `AUTH_JWT_SECRET` 并写入 `.env.local`（脱敏确认）；保留 `AUTH_USER/AUTH_PASSWORD` 可按生产策略替换。
+- [上线排障] 针对控制台噪音与生图失败追加修复：
+  - `/auth/session` 未登录改为 `200 + ok:false`，减少浏览器红色 401 噪音；
+  - `openaiImages` 全部请求显式 `credentials: include`，确保会话 cookie 随请求发送；
+  - Gemini 出图改为“先走 `/v1/images/generations`，失败再回退 `/v1/chat/completions`”。
 
 - 初始化规划文件，进入阶段1（梳理与实现边界）。
 - 完成 `services/openaiImages.ts`：增加模型不支持自动兜底、响应附带 `model_used/endpoint_used`。

@@ -184,7 +184,8 @@ app.post("/auth/login", checkLoginRateLimit, async (req, res) => {
 app.get("/auth/session", (req, res) => {
   const username = getSessionUsername(req);
   if (!username) {
-    res.status(401).json({ ok: false, message: "未登录。" });
+    // 未登录态返回 200，减少前端控制台噪音；真正的 API 保护由 /api 中间件负责。
+    res.json({ ok: false, user: null });
     return;
   }
   res.json({ ok: true, user: { username } });
