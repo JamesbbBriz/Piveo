@@ -50,6 +50,14 @@ const rfToEnum = (rf: ImageResponseFormat): ResponseFormat => {
   return rf === "b64_json" ? ResponseFormat.B64json : ResponseFormat.Url;
 };
 
+type ImageInputMode = "url" | "b64";
+
+const detectImageInputMode = (value: string): ImageInputMode => {
+  const s = String(value || "").trim();
+  if (/^https?:\/\//i.test(s)) return "url";
+  return "b64";
+};
+
 export const generateResponse = async (
   currentMessageText: string,
   referenceImage: string | null, // Current upload
@@ -58,12 +66,12 @@ export const generateResponse = async (
   settings: SessionSettings,
   options: GenerateResponseOptions = {}
 ): Promise<GenerateResponseResult> => {
-  const imageInputs: string[] = [];
-  if (modelImage) imageInputs.push(modelImage);
-  if (referenceImage) imageInputs.push(referenceImage);
+  const imageInputsRaw: string[] = [];
+  if (modelImage) imageInputsRaw.push(modelImage);
+  if (referenceImage) imageInputsRaw.push(referenceImage);
   if (Array.isArray(options.extraImages) && options.extraImages.length) {
     for (const img of options.extraImages) {
-      if (typeof img === "string" && img.trim()) imageInputs.push(img.trim());
+      if (typeof img === "string" && img.trim()) imageInputsRaw.push(img.trim());
     }
   }
 
@@ -71,14 +79,40 @@ export const generateResponse = async (
   // image in the history for iterative edits.
   const lastMsg = history[history.length - 1];
   const hasNewImage = lastMsg?.parts?.some(p => p.type === 'image') ?? false;
+  let lastHistoryImage: string | null = null;
   if (settings.autoUseLastImage && !hasNewImage && !referenceImage) {
     for (let i = history.length - 2; i >= 0; i--) {
       const imgPart = history[i].parts.find(p => p.type === 'image' && p.imageUrl);
       if (imgPart?.imageUrl) {
-        imageInputs.push(imgPart.imageUrl);
+        lastHistoryImage = imgPart.imageUrl;
+        imageInputsRaw.push(imgPart.imageUrl);
         break;
       }
     }
+  }
+
+  // 网关要求同一次请求只用一种图片输入方式（URL 或 base64）。
+  // 优先级：当前上传图 > 额外编辑图 > 历史连续编辑图 > 一致性模特图。
+  const uniqueInputs = Array.from(new Set(imageInputsRaw.map((s) => String(s || "").trim()).filter(Boolean)));
+  const preferredMode: ImageInputMode | null = referenceImage
+    ? detectImageInputMode(referenceImage)
+    : (options.extraImages && options.extraImages.length > 0)
+      ? detectImageInputMode(options.extraImages[0])
+      : lastHistoryImage
+        ? detectImageInputMode(lastHistoryImage)
+        : modelImage
+          ? detectImageInputMode(modelImage)
+          : null;
+
+  const imageInputs =
+    preferredMode === null
+      ? uniqueInputs
+      : uniqueInputs.filter((img) => detectImageInputMode(img) === preferredMode);
+
+  if (preferredMode !== null && imageInputs.length !== uniqueInputs.length) {
+    console.warn(
+      `[images] 检测到混合图片输入（url + base64），已按 ${preferredMode} 模式过滤：${imageInputs.length}/${uniqueInputs.length}`
+    );
   }
 
   // --- ENHANCED SCALE LOGIC ---

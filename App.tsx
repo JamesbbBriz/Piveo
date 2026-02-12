@@ -73,8 +73,12 @@ const isLikelyCorsOrNetwork = (message: string): boolean =>
 const isLikelyGatewayTimeout = (message: string): boolean =>
   /http\s*504|gateway time-?out|error code 504|上游网关超时/i.test(message);
 
+const isLikelyMixedImageInput = (message: string): boolean =>
+  /请只使用一种图片输入方式|one image input|url or base64|文件上传、URL 或 base64/i.test(message);
+
 const getFriendlyErrorMessage = (message: string): string => {
   if (isLikelyModelUnsupported(message)) return "当前模型不支持生图，请切换到可用图片模型后重试。";
+  if (isLikelyMixedImageInput(message)) return "本次请求混用了 URL 和 base64 图片，已触发网关限制。请重试（系统将自动按单一格式发送）。";
   if (isLikelyGatewayTimeout(message)) return "上游网关超时（504），请重试或切换更快模型。";
   if (isLikelyMissingAuth(message)) return "未登录或会话已失效，请重新登录后重试。";
   if (isLikelyCorsOrNetwork(message)) return "网络或跨域错误，请优先使用 `/api` 代理地址。";
@@ -95,6 +99,13 @@ const getErrorAdvice = (message: string): string[] => {
       "把尺寸先设为 1:1（1024x1024）、每次生成张数设为 1，可显著降低超时概率。",
       "可切换到更快模型（如 gemini-2.5-flash-image）。",
       "若你用 Cloudflare 代理站点，长请求可能被 100 秒限制中断，生产建议给应用域名关闭代理（DNS only）。",
+    ];
+  }
+  if (isLikelyMixedImageInput(message)) {
+    return [
+      "你这次同时带了 URL 图和 base64 图，网关会直接拒绝（HTTP 400）。",
+      "重新发送一次即可，系统会自动只保留一种图片输入方式。",
+      "若你开启连续编辑并锁定模特，建议先上传同类型参考图后再生成。",
     ];
   }
   if (isLikelyMissingAuth(message)) {
