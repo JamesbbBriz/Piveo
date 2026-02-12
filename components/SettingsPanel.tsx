@@ -27,6 +27,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [isGeneratingModel, setIsGeneratingModel] = useState(false);
   const modelInputRef = useRef<HTMLInputElement>(null);
   const [customSize, setCustomSize] = useState("");
+  const [templateDropdownOpen, setTemplateDropdownOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState<{
     ratio: boolean;
     generation: boolean;
@@ -194,24 +195,32 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           系统指令
         </h3>
         <div className="flex items-center gap-2">
-          <div className="relative group">
-            <button className="text-xs text-banana-500 hover:text-banana-400 font-medium flex items-center gap-1">
+          <div className="relative">
+            <button
+              onClick={() => setTemplateDropdownOpen((v) => !v)}
+              className="text-xs text-banana-500 hover:text-banana-400 font-medium flex items-center gap-1"
+            >
               <Icon name="book" /> 模板
             </button>
-            <div className="absolute right-0 top-full mt-2 w-64 bg-dark-700 border border-dark-600 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
-              <div className="p-1">
-                {templates.map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => handleApplyTemplate(t.content)}
-                    className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-dark-600 rounded-md truncate"
-                    title={t.content}
-                  >
-                    {t.name}
-                  </button>
-                ))}
+            {templateDropdownOpen && (
+              <div className="absolute right-0 top-full mt-2 w-64 bg-dark-700 border border-dark-600 rounded-lg shadow-xl z-10">
+                <div className="p-1">
+                  {templates.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => {
+                        handleApplyTemplate(t.content);
+                        setTemplateDropdownOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-dark-600 rounded-md truncate"
+                      title={t.content}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

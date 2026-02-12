@@ -176,6 +176,21 @@ const toPositiveInt = (raw: unknown, fallback: number): number => {
 const imageRequestMaxRetries = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_REQUEST_RETRIES, 2);
 const imageRetryBaseDelayMs = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_RETRY_BASE_DELAY_MS, 1200);
 const RETRYABLE_STATUS = new Set([408, 425, 500, 502, 503, 504, 522, 524]);
+const FETCH_TIMEOUT_MS = 60_000;
+
+/** 合并用户取消信号和超时信号 */
+const withTimeout = (signal?: AbortSignal): AbortSignal => {
+  const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+};
+
+/** 指数退避 + ±20% jitter */
+const retryDelay = (attempt: number): number => {
+  const base = imageRetryBaseDelayMs * Math.pow(2, attempt);
+  const capped = Math.min(base, 15_000);
+  const jitter = capped * (0.8 + Math.random() * 0.4); // ±20%
+  return jitter;
+};
 
 const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -261,7 +276,7 @@ export const listModels = async (opts?: ClientRequestOptions): Promise<string[]>
   const resp = await fetch(`${cfg.baseUrl}/v1/models`, {
     headers: buildAuthHeaders(cfg),
     credentials: "include",
-    signal: opts?.signal,
+    signal: withTimeout(opts?.signal),
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
@@ -340,7 +355,7 @@ export const fetchBalance = async (opts?: ClientRequestOptions): Promise<Balance
       method: "GET",
       headers: buildAuthHeaders(cfg),
       credentials: "include",
-      signal: opts?.signal,
+      signal: withTimeout(opts?.signal),
     });
     if (resp.status === 404 || resp.status === 405) {
       throw new Error(`not_supported:${path}`);
@@ -466,8 +481,8 @@ const geminiImageViaChat = async (
   const created = Math.floor(Date.now() / 1000);
   const size = req.size ?? Size.The1024X1024;
 
-  const data: 图片对象[] = [];
-  for (let i = 0; i < n; i++) {
+  // 单次请求逻辑
+  const generateOne = async (): Promise<图片对象> => {
     if (signal?.aborted) throw new DOMException("已取消", "AbortError");
     const hasImages = Array.isArray(req.image) && req.image.length > 0;
     const content = hasImages
@@ -494,7 +509,7 @@ const geminiImageViaChat = async (
         size,
         messages: [{ role: "user", content }],
       }),
-      signal,
+      signal: withTimeout(signal),
     });
 
     const text = await resp.text();
@@ -523,10 +538,25 @@ const geminiImageViaChat = async (
       if (!url.startsWith("data:image/")) {
         throw new Error("当 response_format=b64_json 时，期望拿到 data url 图片。");
       }
-      data.push({ b64_json: extractBase64(url), revised_prompt: req.prompt });
+      return { b64_json: extractBase64(url), revised_prompt: req.prompt };
     } else {
-      data.push({ url, revised_prompt: req.prompt });
+      return { url, revised_prompt: req.prompt };
     }
+  };
+
+  // 并行发送所有请求，部分失败时仍收集成功结果
+  const results = await Promise.allSettled(Array.from({ length: n }, () => generateOne()));
+  const data: 图片对象[] = [];
+  const errors: string[] = [];
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      data.push(r.value);
+    } else {
+      errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+    }
+  }
+  if (data.length === 0) {
+    throw new Error(`对话接口出图全部失败（共 ${n} 张）：${errors[0]}`);
   }
 
   return {
@@ -590,14 +620,13 @@ export const imagesGenerations = async (
           },
           credentials: "include",
           body: JSON.stringify(body),
-          signal,
+          signal: withTimeout(signal),
         });
       } catch (e: any) {
         const msg = e?.message ? String(e.message) : String(e);
         if (attempt < imageRequestMaxRetries) {
           retryCount += 1;
-          const delay = Math.min(imageRetryBaseDelayMs * (attempt + 1), 5000);
-          await sleep(delay, signal);
+          await sleep(retryDelay(attempt), signal);
           continue;
         }
         throw new Error(
@@ -624,8 +653,7 @@ export const imagesGenerations = async (
       const shouldRetry = RETRYABLE_STATUS.has(resp.status) && attempt < imageRequestMaxRetries;
       if (shouldRetry) {
         retryCount += 1;
-        const delay = Math.min(imageRetryBaseDelayMs * (attempt + 1), 5000);
-        await sleep(delay, signal);
+        await sleep(retryDelay(attempt), signal);
         continue;
       }
       break;
@@ -704,7 +732,7 @@ const inputToBlob = async (
   }
 
   if (isHttpUrl(input)) {
-    const resp = await fetch(input, { signal });
+    const resp = await fetch(input, { signal: withTimeout(signal) });
     if (!resp.ok) throw new Error(`拉取图片失败：HTTP ${resp.status}`);
     const mimeType = resp.headers.get("content-type") || "application/octet-stream";
     const blob = await resp.blob();
@@ -760,28 +788,59 @@ export const imagesEdits = async (
     fd.append(k, String(v));
   }
 
-  const resp = await fetch(`${cfg.baseUrl}/v1/images/edits`, {
-    method: "POST",
-    headers: {
-      ...buildAuthHeaders(cfg),
-    },
-    credentials: "include",
-    body: fd,
-    signal,
-  });
+  let lastStatus = 0;
+  let lastText = "";
+  let retryCount = 0;
 
-  if (!resp.ok) {
+  for (let attempt = 0; attempt <= imageRequestMaxRetries; attempt++) {
+    let resp: Response;
+    try {
+      resp = await fetch(`${cfg.baseUrl}/v1/images/edits`, {
+        method: "POST",
+        headers: {
+          ...buildAuthHeaders(cfg),
+        },
+        credentials: "include",
+        body: fd,
+        signal: withTimeout(signal),
+      });
+    } catch (e: any) {
+      const msg = e?.message ? String(e.message) : String(e);
+      if (attempt < imageRequestMaxRetries) {
+        retryCount += 1;
+        await sleep(retryDelay(attempt), signal);
+        continue;
+      }
+      throw new Error(
+        `图片编辑网络错误：${msg}。` +
+          `请检查站点到上游网关连通性（生产环境通常不是 CORS，而是代理超时或网络抖动）。`
+      );
+    }
+
+    if (resp.ok) {
+      const json = (await resp.json()) as 图片生成响应;
+      if (!json || typeof json.created !== "number" || !Array.isArray(json.data)) {
+        throw new Error("图片编辑接口返回结构异常。");
+      }
+      return {
+        ...json,
+        model_used: req.model,
+        endpoint_used: "/v1/images/edits",
+      };
+    }
+
     const text = await resp.text().catch(() => "");
-    throw new Error(`图片编辑请求失败：HTTP ${resp.status} ${text}`.trim());
+    lastStatus = resp.status;
+    lastText = text;
+    const shouldRetry = RETRYABLE_STATUS.has(resp.status) && attempt < imageRequestMaxRetries;
+    if (shouldRetry) {
+      retryCount += 1;
+      await sleep(retryDelay(attempt), signal);
+      continue;
+    }
+    break;
   }
 
-  const json = (await resp.json()) as 图片生成响应;
-  if (!json || typeof json.created !== "number" || !Array.isArray(json.data)) {
-    throw new Error("图片编辑接口返回结构异常。");
-  }
-  return {
-    ...json,
-    model_used: req.model,
-    endpoint_used: "/v1/images/edits",
-  };
+  const retrySuffix = retryCount > 0 ? `（已自动重试 ${retryCount} 次）` : "";
+  throw new Error(`图片编辑请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}`.trim());
 };

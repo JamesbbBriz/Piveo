@@ -6,7 +6,7 @@ import { ChatMessage } from './components/ChatMessage';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import { Icon } from './components/Icon';
 import { AspectRatio, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter } from './types';
-import { initPersistentStorage, loadSessions, loadTemplates, loadModels, saveSessions, saveTemplates, saveModels } from './services/storage';
+import { initPersistentStorage, loadSessions, loadTemplates, loadModels, saveSessions, saveTemplates, saveModels, clearAll } from './services/storage';
 import { generateResponse, enhancePrompt } from './services/gemini';
 import { DEFAULT_ASPECT_RATIO } from './constants';
 import { ApiConfig, getEffectiveApiConfig, saveStoredApiConfig } from './services/apiConfig';
@@ -199,6 +199,8 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const saveSessionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSessionsRef = useRef<Session[] | null>(null);
   const lastRunRef = useRef<{
     prompt: string;
     image: string | null;
@@ -273,10 +275,38 @@ const App: React.FC = () => {
     };
   }, [authReady, authUser]);
 
+  // P1-7: sessions 保存添加防抖，避免频繁写入
   useEffect(() => {
     if (!hasHydratedStorage) return;
-    void saveSessions(sessions);
+    pendingSessionsRef.current = sessions;
+    if (saveSessionsTimerRef.current) clearTimeout(saveSessionsTimerRef.current);
+    saveSessionsTimerRef.current = setTimeout(() => {
+      saveSessionsTimerRef.current = null;
+      if (pendingSessionsRef.current) {
+        void saveSessions(pendingSessionsRef.current);
+        pendingSessionsRef.current = null;
+      }
+    }, 400);
+    return () => {
+      if (saveSessionsTimerRef.current) clearTimeout(saveSessionsTimerRef.current);
+    };
   }, [sessions, hasHydratedStorage]);
+
+  // P1-7: beforeunload 时强制 flush 未保存的 sessions
+  useEffect(() => {
+    const flushSessions = () => {
+      if (saveSessionsTimerRef.current) {
+        clearTimeout(saveSessionsTimerRef.current);
+        saveSessionsTimerRef.current = null;
+      }
+      if (pendingSessionsRef.current) {
+        void saveSessions(pendingSessionsRef.current);
+        pendingSessionsRef.current = null;
+      }
+    };
+    window.addEventListener("beforeunload", flushSessions);
+    return () => window.removeEventListener("beforeunload", flushSessions);
+  }, []);
   useEffect(() => {
     if (!hasHydratedStorage) return;
     void saveTemplates(templates);
@@ -390,6 +420,8 @@ const App: React.FC = () => {
     } catch {
       // ignore network error, still reset local auth state
     } finally {
+      // P1-12: 登出时清除持久化数据
+      await clearAll().catch(() => {});
       setHasHydratedStorage(false);
       setSessions([]);
       setCurrentSessionId(null);
@@ -436,6 +468,9 @@ const App: React.FC = () => {
       setInputText(enhancedText);
     } catch (e) {
       console.error(e);
+      // P1-8: prompt 增强失败时通知用户
+      setGenerationStage("提示词增强失败，将使用原始提示词");
+      setTimeout(() => setGenerationStage((prev) => prev === "提示词增强失败，将使用原始提示词" ? null : prev), 3000);
     } finally {
       setIsEnhancing(false);
     }
@@ -571,6 +606,11 @@ const App: React.FC = () => {
       }
 
       const msg = e instanceof Error ? e.message : String(e);
+      // P1-4: 401 未授权自动跳转登录页
+      const httpStatus = extractHttpStatus(msg);
+      if (httpStatus === 401 || isLikelyMissingAuth(msg)) {
+        setAuthUser(null);
+      }
       const friendly = getFriendlyErrorMessage(msg);
       setErrorDetails({
         message: msg,
@@ -602,7 +642,10 @@ const App: React.FC = () => {
       setIsGenerating(false);
       setGenerationStage(null);
       setGenerationProgress(null);
-      abortRef.current = null;
+      // 只清理当前请求对应的 controller，避免竞态覆盖新请求
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
     }
   };
 
@@ -684,11 +727,10 @@ const App: React.FC = () => {
     const model = apiConfig.defaultImageModel || "";
     const supportsEdits = /^gpt-image/i.test(model) || /^dall-e/i.test(model);
     if (supportsEdits) {
+      abortRef.current?.abort();
+      abortRef.current = new AbortController();
+      const controller = abortRef.current;
       try {
-        abortRef.current?.abort();
-        abortRef.current = new AbortController();
-        const controller = abortRef.current;
-
         setIsGenerating(true);
         setErrorDetails(null);
         setGenerationProgress(null);
@@ -750,9 +792,15 @@ const App: React.FC = () => {
         setIsGenerating(false);
         setGenerationStage(null);
         setGenerationProgress(null);
-        abortRef.current = null;
+        // 只清理当前请求对应的 controller，避免竞态覆盖新请求
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
       }
     }
+
+    // P1-9: imagesEdits 退化时通知用户
+    setGenerationStage("原生编辑失败，已切换为参考图模式");
 
     const augmentedPrompt =
       `${params.prompt}\n\n` +
@@ -1007,26 +1055,9 @@ const App: React.FC = () => {
                   <span className="text-[11px] text-gray-500">
                     {currentSession.settings.autoUseLastImage ? "开" : "关"}
                   </span>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      className="peer text-gray-400 hover:text-banana-400 transition-colors"
-                      aria-label="连续编辑使用说明"
-                      title="连续编辑使用说明"
-                    >
-                      <Icon name="info-circle" />
-                    </button>
-                    <div className="absolute bottom-full right-0 mb-2 w-[min(520px,92vw)] rounded-xl border border-dark-600 bg-dark-900/95 backdrop-blur px-3 py-3 shadow-2xl z-20 opacity-0 pointer-events-none transition-opacity peer-hover:opacity-100">
-                      <div className="text-xs font-semibold text-gray-200 mb-2">连续编辑怎么用</div>
-                      <div className="space-y-1.5">
-                        {continuityStories.map((line) => (
-                          <div key={line} className="text-[11px] leading-relaxed text-gray-300">
-                            {line}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
+                  <span className="text-[10px] text-gray-500 max-w-[220px] leading-tight">
+                    开启后，每次生成会自动使用上一张结果图作为参考
+                  </span>
                 </div>
               </div>
             </div>

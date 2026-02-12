@@ -21,6 +21,8 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
   onUseAsReference,
 }) => {
   const isUser = message.role === 'user';
+  // 触控可达：点击图片时 toggle 操作按钮，同时保留桌面端 hover 效果
+  const [showActionsIdx, setShowActionsIdx] = React.useState<number | null>(null);
 
   const downloadImage = (dataUrl: string) => {
     const link = document.createElement('a');
@@ -54,17 +56,21 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                 )}
                 {part.type === 'image' && part.imageUrl && (
                   <div className="relative group mt-2 rounded-lg overflow-hidden border border-dark-600 bg-black/20">
-                    <img 
-                      src={part.imageUrl} 
-                      alt="图片" 
-                      onClick={() => onPreviewImage(part.imageUrl!)}
+                    <img
+                      src={part.imageUrl}
+                      alt="图片"
+                      onClick={(e) => {
+                        // 点击图片 toggle 操作按钮（触控可达），桌面端同时保留 hover
+                        e.stopPropagation();
+                        setShowActionsIdx(showActionsIdx === idx ? null : idx);
+                      }}
                       loading="lazy"
                       decoding="async"
-                      className="max-w-full h-auto max-h-[400px] object-contain block cursor-zoom-in"
+                      className="max-w-full h-auto max-h-[400px] object-contain block cursor-pointer"
                     />
-                    
-                    {/* Hover Actions */}
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-3 pointer-events-none">
+
+                    {/* Hover + Click Toggle Actions */}
+                    <div className={`absolute inset-0 bg-black/40 transition-opacity flex flex-col items-center justify-center gap-3 ${showActionsIdx === idx ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto'}`}>
                       
                       {/* Standard Actions */}
                       <div className="pointer-events-auto flex gap-3">

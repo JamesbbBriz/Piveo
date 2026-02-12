@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
 
 interface MaskEditorModalProps {
@@ -120,6 +120,29 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
     };
   }, [baseImageUrl, reloadSeed]);
 
+  // P1-14: 同步 overlay canvas 的物理尺寸与底图 canvas 一致
+  const syncOverlaySize = useCallback(() => {
+    const imgCanvas = imgCanvasRef.current;
+    const overlayCanvas = overlayCanvasRef.current;
+    if (!imgCanvas || !overlayCanvas) return;
+    // overlay 的物理尺寸必须与底图 canvas 一致
+    if (overlayCanvas.width !== imgCanvas.width) overlayCanvas.width = imgCanvas.width;
+    if (overlayCanvas.height !== imgCanvas.height) overlayCanvas.height = imgCanvas.height;
+    // CSS 尺寸同步：确保视觉上完全对齐
+    const rendered = imgCanvas.getBoundingClientRect();
+    overlayCanvas.style.width = `${rendered.width}px`;
+    overlayCanvas.style.height = `${rendered.height}px`;
+  }, []);
+
+  useEffect(() => {
+    const imgCanvas = imgCanvasRef.current;
+    if (!imgCanvas || !isReady) return;
+    syncOverlaySize();
+    const ro = new ResizeObserver(() => syncOverlaySize());
+    ro.observe(imgCanvas);
+    return () => ro.disconnect();
+  }, [isReady, syncOverlaySize]);
+
   const getPoint = (evt: React.PointerEvent) => {
     const canvas = overlayCanvasRef.current;
     if (!canvas) return null;
@@ -186,10 +209,18 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
     }
     mctx.putImageData(mask, 0, 0);
 
-    return {
-      maskDataUrl: maskCanvas.toDataURL("image/png"),
-      maskOverlayDataUrl: overlay.toDataURL("image/png"),
-    };
+    try {
+      return {
+        maskDataUrl: maskCanvas.toDataURL("image/png"),
+        maskOverlayDataUrl: overlay.toDataURL("image/png"),
+      };
+    } catch (e) {
+      // CORS 导致 canvas 被污染时 toDataURL 会抛出 SecurityError
+      const msg = e instanceof DOMException && e.name === "SecurityError"
+        ? "无法导出遮罩：图片跨域受限，请尝试使用 b64_json 格式或下载后重新上传。"
+        : `导出遮罩失败：${e instanceof Error ? e.message : String(e)}`;
+      throw new Error(msg);
+    }
   };
 
   const submit = () => {
@@ -198,8 +229,12 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
       alert("请输入编辑提示词。");
       return;
     }
-    const { maskDataUrl, maskOverlayDataUrl } = buildMaskDataUrl();
-    onSubmit({ prompt: p, maskDataUrl, maskOverlayDataUrl });
+    try {
+      const { maskDataUrl, maskOverlayDataUrl } = buildMaskDataUrl();
+      onSubmit({ prompt: p, maskDataUrl, maskOverlayDataUrl });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    }
   };
 
   return (

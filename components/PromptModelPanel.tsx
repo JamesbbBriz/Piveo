@@ -25,6 +25,7 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
   const [isEditingTemplate, setIsEditingTemplate] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState("");
   const [isGeneratingModel, setIsGeneratingModel] = useState(false);
+  const [templateDropdownOpen, setTemplateDropdownOpen] = useState(false);
   const modelInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -111,24 +112,32 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
         <div className="border-t border-dark-700 p-3 space-y-3">
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <div className="relative group">
-                <button className="text-xs text-banana-500 hover:text-banana-400 font-medium flex items-center gap-1">
+              <div className="relative">
+                <button
+                  onClick={() => setTemplateDropdownOpen((v) => !v)}
+                  className="text-xs text-banana-500 hover:text-banana-400 font-medium flex items-center gap-1"
+                >
                   <Icon name="book" /> 模板
                 </button>
-                <div className="absolute left-0 top-full mt-2 w-56 bg-dark-700 border border-dark-600 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
-                  <div className="p-1">
-                    {templates.map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => applyTemplate(t.content)}
-                        className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-dark-600 rounded-md truncate"
-                        title={t.content}
-                      >
-                        {t.name}
-                      </button>
-                    ))}
+                {templateDropdownOpen && (
+                  <div className="absolute left-0 top-full mt-2 w-56 bg-dark-700 border border-dark-600 rounded-lg shadow-xl z-10">
+                    <div className="p-1">
+                      {templates.map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => {
+                            applyTemplate(t.content);
+                            setTemplateDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-dark-600 rounded-md truncate"
+                          title={t.content}
+                        >
+                          {t.name}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
               {!isEditingTemplate ? (
                 <button
@@ -142,8 +151,11 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
 
             <textarea
               value={localSystemPrompt}
-              onChange={(e) => setLocalSystemPrompt(e.target.value)}
-              onBlur={() => onUpdateSettings({ ...settings, systemPrompt: localSystemPrompt })}
+              onChange={(e) => {
+                const v = e.target.value;
+                setLocalSystemPrompt(v);
+                onUpdateSettings({ ...settings, systemPrompt: v });
+              }}
               className="w-full bg-dark-800 border border-dark-600 rounded-lg p-3 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-banana-500 focus:ring-1 focus:ring-banana-500 transition-colors resize-none h-24"
               placeholder="定义 AI 的工作方式..."
             />

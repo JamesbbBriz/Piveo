@@ -36,6 +36,11 @@ const safeLocalSet = (key: string, value: unknown) => {
   }
 };
 
+/** 重置连接缓存，下次操作会重新打开 */
+const resetDbPromise = () => {
+  dbPromise = null;
+};
+
 const openDb = async (): Promise<IDBDatabase | null> => {
   if (!hasWindow() || typeof indexedDB === "undefined") return null;
   if (!dbPromise) {
@@ -47,7 +52,12 @@ const openDb = async (): Promise<IDBDatabase | null> => {
           db.createObjectStore(STORE_NAME);
         }
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        const db = req.result;
+        // 监听断连事件，清除缓存以便下次重新连接
+        db.onclose = () => resetDbPromise();
+        resolve(db);
+      };
       req.onerror = () => reject(req.error || new Error("打开 IndexedDB 失败"));
     });
   }
@@ -55,33 +65,45 @@ const openDb = async (): Promise<IDBDatabase | null> => {
     return await dbPromise;
   } catch (e) {
     console.error("IndexedDB 不可用，将退回 localStorage：", e);
+    resetDbPromise();
     return null;
   }
 };
 
 const idbGet = async <T>(key: StoreKey): Promise<T | null> => {
-  const db = await openDb();
-  if (!db) return null;
-  return new Promise((resolve) => {
-    const tx = db.transaction(STORE_NAME, "readonly");
-    const store = tx.objectStore(STORE_NAME);
-    const req = store.get(key);
-    req.onsuccess = () => resolve((req.result as T) ?? null);
-    req.onerror = () => resolve(null);
-  });
+  try {
+    const db = await openDb();
+    if (!db) return null;
+    return await new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.get(key);
+      req.onsuccess = () => resolve((req.result as T) ?? null);
+      req.onerror = () => resolve(null);
+    });
+  } catch (e) {
+    console.error(`idbGet(${key}) 失败，重置连接：`, e);
+    resetDbPromise();
+    return null;
+  }
 };
 
 const idbSet = async <T>(key: StoreKey, value: T): Promise<void> => {
-  const db = await openDb();
-  if (!db) return;
-  await new Promise<void>((resolve) => {
-    const tx = db.transaction(STORE_NAME, "readwrite");
-    const store = tx.objectStore(STORE_NAME);
-    store.put(value, key);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
-    tx.onabort = () => resolve();
-  });
+  try {
+    const db = await openDb();
+    if (!db) return;
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      const store = tx.objectStore(STORE_NAME);
+      store.put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    });
+  } catch (e) {
+    console.error(`idbSet(${key}) 失败，重置连接：`, e);
+    resetDbPromise();
+  }
 };
 
 const migrateLocalToIndexedDb = async () => {
@@ -111,9 +133,19 @@ export const initPersistentStorage = async (): Promise<void> => {
   await migrateLocalToIndexedDb();
 };
 
+/** 延迟写入 localStorage 作为备份（不阻塞主流程） */
+const deferLocalSet = (key: string, value: unknown) => {
+  const cb = () => safeLocalSet(key, value);
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(cb);
+  } else {
+    setTimeout(cb, 0);
+  }
+};
+
 export const saveSessions = async (sessions: Session[]): Promise<void> => {
-  safeLocalSet(SESSIONS_KEY, sessions);
   await idbSet("sessions", sessions);
+  deferLocalSet(SESSIONS_KEY, sessions);
 };
 
 export const loadSessions = async (): Promise<Session[]> => {
@@ -123,8 +155,8 @@ export const loadSessions = async (): Promise<Session[]> => {
 };
 
 export const saveTemplates = async (templates: SystemTemplate[]): Promise<void> => {
-  safeLocalSet(TEMPLATES_KEY, templates);
   await idbSet("templates", templates);
+  deferLocalSet(TEMPLATES_KEY, templates);
 };
 
 export const loadTemplates = async (): Promise<SystemTemplate[]> => {
@@ -134,13 +166,51 @@ export const loadTemplates = async (): Promise<SystemTemplate[]> => {
 };
 
 export const saveModels = async (models: ModelCharacter[]): Promise<void> => {
-  safeLocalSet(MODELS_KEY, models);
   await idbSet("models", models);
+  deferLocalSet(MODELS_KEY, models);
 };
 
 export const loadModels = async (): Promise<ModelCharacter[]> => {
   const idbData = await idbGet<ModelCharacter[]>("models");
   if (Array.isArray(idbData)) return idbData;
   return safeLocalGet<ModelCharacter[]>(MODELS_KEY, []);
+};
+
+/** 清除所有应用数据（IndexedDB + localStorage），供登出时调用 */
+export const clearAll = async (): Promise<void> => {
+  // 清除 localStorage
+  if (hasWindow()) {
+    try {
+      window.localStorage.removeItem(SESSIONS_KEY);
+      window.localStorage.removeItem(TEMPLATES_KEY);
+      window.localStorage.removeItem(MODELS_KEY);
+    } catch (e) {
+      console.error("清除 localStorage 失败：", e);
+    }
+  }
+
+  // 清除 IndexedDB：删除整个数据库并重置连接缓存
+  try {
+    const db = await openDb();
+    if (db) {
+      db.close();
+    }
+  } catch {
+    // 忽略
+  }
+  resetDbPromise();
+
+  if (hasWindow() && typeof indexedDB !== "undefined") {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const req = indexedDB.deleteDatabase(DB_NAME);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error || new Error("删除 IndexedDB 失败"));
+        req.onblocked = () => resolve(); // 被阻塞时也继续
+      });
+    } catch (e) {
+      console.error("删除 IndexedDB 失败：", e);
+    }
+  }
 };
 

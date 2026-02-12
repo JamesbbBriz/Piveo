@@ -129,6 +129,12 @@ export const ModelSwitcherFooter: React.FC<ModelSwitcherFooterProps> = ({ apiCon
             <div className="flex gap-2">
               <button
                 onClick={() => {
+                  // N-1: 校验 pendingModel 是否仍在模型列表中
+                  if (!models.includes(pendingModel)) {
+                    alert("该模型已不在可用列表中，请重新选择。");
+                    setPendingModel(null);
+                    return;
+                  }
                   onUpdateApiConfig({ ...apiConfig, defaultImageModel: pendingModel });
                   setPendingModel(null);
                 }}

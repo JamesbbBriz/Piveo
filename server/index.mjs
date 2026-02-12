@@ -89,6 +89,18 @@ const LOGIN_MAX_ATTEMPTS = Number(process.env.AUTH_LOGIN_MAX_ATTEMPTS || 5);
 const LOGIN_BLOCK_MS = Number(process.env.AUTH_LOGIN_BLOCK_MS || 30 * 60 * 1000);
 const loginAttempts = new Map();
 
+// 每 30 分钟清理过期的登录限流条目，防止内存泄漏
+const LOGIN_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  const expiryThreshold = LOGIN_WINDOW_MS + LOGIN_BLOCK_MS;
+  for (const [key, state] of loginAttempts) {
+    if (now - state.windowStart > expiryThreshold) {
+      loginAttempts.delete(key);
+    }
+  }
+}, LOGIN_CLEANUP_INTERVAL_MS).unref();
+
 const getClientIp = (req) => {
   const xff = String(req.headers["x-forwarded-for"] || "");
   if (xff) return xff.split(",")[0].trim();
@@ -223,8 +235,8 @@ app.use(
     target: targetProxy,
     changeOrigin: true,
     secure: true,
-    proxyTimeout: Number(process.env.UPSTREAM_PROXY_TIMEOUT_MS || 120000),
-    timeout: Number(process.env.UPSTREAM_TIMEOUT_MS || 125000),
+    proxyTimeout: Number(process.env.UPSTREAM_PROXY_TIMEOUT_MS || 90000),
+    timeout: Number(process.env.UPSTREAM_TIMEOUT_MS || 95000),
     pathRewrite: { "^/api": "" },
     on: {
       proxyReq: (proxyReq, req) => {
@@ -240,6 +252,8 @@ app.use(
       },
       error: (err, _req, res) => {
         console.error(`[UPSTREAM] proxy error: ${err?.code || "unknown"} ${err?.message || "unknown error"}`);
+        // 响应已结束或已销毁时不再写入，避免 ERR_STREAM_WRITE_AFTER_END
+        if (res.writableEnded || res.destroyed) return;
         if (!res.headersSent) {
           res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
         }

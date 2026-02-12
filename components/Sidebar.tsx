@@ -114,8 +114,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <Icon name="image" className="text-sm opacity-70" />
                       <span className="truncate text-sm">{session.title}</span>
                     </div>
-                    <button 
-                      onClick={(e) => onDeleteSession(session.id, e)}
+                    <button
+                      onClick={(e) => {
+                        if (window.confirm("确定要删除此会话吗？所有聊天记录和图片将无法恢复。")) {
+                          onDeleteSession(session.id, e);
+                        } else {
+                          e.stopPropagation();
+                        }
+                      }}
                       className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition-opacity p-1"
                     >
                       <Icon name="trash-alt" />
