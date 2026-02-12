@@ -175,7 +175,7 @@ const toPositiveInt = (raw: unknown, fallback: number): number => {
 
 const imageRequestMaxRetries = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_REQUEST_RETRIES, 2);
 const imageRetryBaseDelayMs = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_RETRY_BASE_DELAY_MS, 1200);
-const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504, 522, 524]);
+const RETRYABLE_STATUS = new Set([408, 425, 500, 502, 503, 504, 522, 524]);
 
 const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -602,7 +602,7 @@ export const imagesGenerations = async (
         }
         throw new Error(
           `图片接口网络错误：${msg}。` +
-            `如果在浏览器开发环境出现，多半是 CORS。建议使用 /api 代理或让 ${cfg.baseUrl} 开启 CORS。`
+            `请检查站点到上游网关连通性（生产环境通常不是 CORS，而是代理超时或网络抖动）。`
         );
       }
 

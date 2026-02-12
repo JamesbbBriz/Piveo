@@ -106,9 +106,9 @@ const getErrorAdvice = (message: string): string[] => {
   }
   if (isLikelyCorsOrNetwork(message)) {
     return [
-      "开发环境建议接口地址填 /api，避免浏览器跨域。",
-      "确认 .env.local 的 VITE_API_PROXY_TARGET=https://n.lconai.com。",
-      "确认本机网络能访问目标网关。",
+      "先检查应用服务器到上游网关的网络连通性与超时情况。",
+      "生产环境通常不是 CORS，优先排查反向代理与上游稳定性。",
+      "确认服务端环境变量 UPSTREAM_API_BASE_URL / UPSTREAM_AUTHORIZATION 正确。",
     ];
   }
   return [

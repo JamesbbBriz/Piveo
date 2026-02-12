@@ -13,7 +13,6 @@ dotenv.config();
 
 const app = express();
 app.disable("x-powered-by");
-app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 
 const IS_PROD = process.env.NODE_ENV === "production";
@@ -30,11 +29,25 @@ const PASSWORD_HASH = await bcrypt.hash(AUTH_PASSWORD, 10);
 const users = new Map([[AUTH_USERNAME, { username: AUTH_USERNAME, passwordHash: PASSWORD_HASH }]]);
 
 const targetProxy = (process.env.UPSTREAM_API_BASE_URL || process.env.VITE_API_PROXY_TARGET || "https://n.lconai.com").trim();
-const upstreamAuthorization = (
+const normalizeAuthorization = (raw) => {
+  let v = String(raw || "").trim();
+  if (
+    (v.startsWith('"') && v.endsWith('"')) ||
+    (v.startsWith("'") && v.endsWith("'"))
+  ) {
+    v = v.slice(1, -1).trim();
+  }
+  if (/^sk-[\w-]+$/i.test(v)) {
+    v = `Bearer ${v}`;
+  }
+  return v;
+};
+
+const upstreamAuthorization = normalizeAuthorization(
   process.env.UPSTREAM_AUTHORIZATION ||
   process.env.VITE_AUTHORIZATION ||
   (process.env.VITE_API_KEY ? `Bearer ${process.env.VITE_API_KEY}` : "")
-).trim();
+);
 
 if (IS_PROD && JWT_SECRET === "dev-only-change-me") {
   throw new Error("生产环境必须配置 AUTH_JWT_SECRET，不能使用默认值。");
@@ -148,7 +161,7 @@ app.get("/auth/health", (_req, res) => {
   res.json({ ok: true, authUserCount: users.size });
 });
 
-app.post("/auth/login", checkLoginRateLimit, async (req, res) => {
+app.post("/auth/login", express.json({ limit: "1mb" }), checkLoginRateLimit, async (req, res) => {
   const username = String(req.body?.username || "").trim();
   const password = String(req.body?.password || "");
   const rateKey = String(res.locals.loginRateKey || "");
@@ -210,16 +223,28 @@ app.use(
     target: targetProxy,
     changeOrigin: true,
     secure: true,
+    proxyTimeout: Number(process.env.UPSTREAM_PROXY_TIMEOUT_MS || 120000),
+    timeout: Number(process.env.UPSTREAM_TIMEOUT_MS || 125000),
     pathRewrite: { "^/api": "" },
-    onProxyReq: (proxyReq, req) => {
-      proxyReq.setHeader("Authorization", upstreamAuthorization);
-      proxyReq.setHeader("X-Auth-User", String(req.authUser || ""));
-    },
-    onError: (err, _req, res) => {
-      if (!res.headersSent) {
-        res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
-      }
-      res.end(JSON.stringify({ ok: false, message: `上游网关请求失败：${err.message || "unknown error"}` }));
+    on: {
+      proxyReq: (proxyReq, req) => {
+        proxyReq.setHeader("Authorization", upstreamAuthorization);
+        proxyReq.setHeader("X-Auth-User", String(req.authUser || ""));
+      },
+      proxyRes: (proxyRes, req) => {
+        if ((proxyRes.statusCode || 0) >= 500) {
+          console.warn(
+            `[UPSTREAM] ${req.method} ${req.originalUrl} -> ${proxyRes.statusCode} (${targetProxy})`
+          );
+        }
+      },
+      error: (err, _req, res) => {
+        console.error(`[UPSTREAM] proxy error: ${err?.code || "unknown"} ${err?.message || "unknown error"}`);
+        if (!res.headersSent) {
+          res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
+        }
+        res.end(JSON.stringify({ ok: false, message: `上游网关请求失败：${err.message || "unknown error"}` }));
+      },
     },
   })
 );
@@ -240,4 +265,6 @@ const port = Number(process.env.AUTH_PORT || process.env.PORT || 3101);
 app.listen(port, () => {
   console.log(`Auth server running on http://localhost:${port}`);
   console.log(`Seed user: ${AUTH_USERNAME}`);
+  console.log(`[UPSTREAM] target: ${targetProxy}`);
+  console.log(`[UPSTREAM] auth configured: ${upstreamAuthorization ? "yes" : "no"}`);
 });

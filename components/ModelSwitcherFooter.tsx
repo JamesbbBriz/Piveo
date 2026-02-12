@@ -50,10 +50,18 @@ export const ModelSwitcherFooter: React.FC<ModelSwitcherFooterProps> = ({ apiCon
       const now = Date.now();
       setBalanceUpdatedAt(now);
       setBalanceHint(r.amount === null ? "暂不可用" : `已更新 ${new Date(now).toLocaleTimeString("zh-CN", { hour12: false })}`);
-    } catch {
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const hint = /鉴权失败|401|403/i.test(msg)
+        ? "余额接口鉴权失败"
+        : /not_supported|404|405/i.test(msg)
+          ? "网关未开放余额接口"
+          : /timeout|504|502|503|gateway/i.test(msg)
+            ? "余额接口超时，请稍后重试"
+            : "余额暂不可用";
       setBalanceAmount(null);
       setBalanceUpdatedAt(null);
-      setBalanceHint("暂不可用");
+      setBalanceHint(hint);
     } finally {
       setLoadingBalance(false);
     }
