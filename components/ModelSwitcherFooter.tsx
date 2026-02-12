@@ -7,6 +7,7 @@ interface ModelSwitcherFooterProps {
   apiConfig: ApiConfig;
   onUpdateApiConfig: (cfg: ApiConfig) => void;
   refreshTick: number;
+  hasActiveFeature?: boolean;
 }
 
 const formatMoney = (amount: number | null, currency = "USD"): string => {
@@ -18,10 +19,11 @@ const formatMoney = (amount: number | null, currency = "USD"): string => {
   }
 };
 
-export const ModelSwitcherFooter: React.FC<ModelSwitcherFooterProps> = ({ apiConfig, onUpdateApiConfig, refreshTick }) => {
+export const ModelSwitcherFooter: React.FC<ModelSwitcherFooterProps> = ({ apiConfig, onUpdateApiConfig, refreshTick, hasActiveFeature = false }) => {
   const [models, setModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [loadingBalance, setLoadingBalance] = useState(false);
+  const [pendingModel, setPendingModel] = useState<string | null>(null);
   const [balanceAmount, setBalanceAmount] = useState<number | null>(null);
   const [balanceCurrency, setBalanceCurrency] = useState("USD");
   const [balanceHint, setBalanceHint] = useState("加载中...");
@@ -102,7 +104,14 @@ export const ModelSwitcherFooter: React.FC<ModelSwitcherFooterProps> = ({ apiCon
         </div>
         <select
           value={apiConfig.defaultImageModel}
-          onChange={(e) => onUpdateApiConfig({ ...apiConfig, defaultImageModel: e.target.value })}
+          onChange={(e) => {
+            const next = e.target.value;
+            if (hasActiveFeature && next !== apiConfig.defaultImageModel) {
+              setPendingModel(next);
+            } else {
+              onUpdateApiConfig({ ...apiConfig, defaultImageModel: next });
+            }
+          }}
           className="w-full bg-dark-800 border border-dark-600 rounded-md px-2.5 py-2 text-xs text-gray-200 focus:outline-none focus:border-dark-500"
         >
           {options.map((m) => (
@@ -111,6 +120,31 @@ export const ModelSwitcherFooter: React.FC<ModelSwitcherFooterProps> = ({ apiCon
             </option>
           ))}
         </select>
+
+        {pendingModel && (
+          <div className="mt-2 p-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 space-y-2">
+            <p className="text-[11px] text-amber-300">
+              当前有一致性功能开启，切换模型可能导致生成结果不一致。确认切换？
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  onUpdateApiConfig({ ...apiConfig, defaultImageModel: pendingModel });
+                  setPendingModel(null);
+                }}
+                className="flex-1 px-2 py-1.5 text-[11px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-md transition-colors"
+              >
+                确认切换
+              </button>
+              <button
+                onClick={() => setPendingModel(null)}
+                className="flex-1 px-2 py-1.5 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-300 border border-dark-600 rounded-md transition-colors"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="mt-3 text-[11px] text-gray-400">余额</div>
         <div className="text-sm text-gray-200">{formatMoney(balanceAmount, balanceCurrency)}</div>

@@ -994,12 +994,13 @@ const App: React.FC = () => {
                     <input
                       type="checkbox"
                       checked={currentSession.settings.autoUseLastImage}
-                      onChange={(e) =>
-                        handleUpdateSettings({
-                          ...currentSession.settings,
-                          autoUseLastImage: e.target.checked,
-                        })
-                      }
+                      onChange={(e) => {
+                        const next = { ...currentSession.settings, autoUseLastImage: e.target.checked };
+                        if (e.target.checked && next.selectedModelId !== null) {
+                          next.selectedModelId = null;
+                        }
+                        handleUpdateSettings(next);
+                      }}
                       className="h-4 w-4 accent-banana-500"
                     />
                   </label>

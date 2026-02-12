@@ -131,7 +131,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
 
-          <ModelSwitcherFooter apiConfig={apiConfig} onUpdateApiConfig={onUpdateApiConfig} refreshTick={balanceRefreshTick} />
+          <ModelSwitcherFooter apiConfig={apiConfig} onUpdateApiConfig={onUpdateApiConfig} refreshTick={balanceRefreshTick} hasActiveFeature={currentSettings.selectedModelId !== null || currentSettings.autoUseLastImage} />
         </div>
       </div>
     </>

@@ -48,7 +48,12 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
   };
 
   const selectModel = (id: string | null) => {
-    onUpdateSettings({ ...settings, selectedModelId: id === settings.selectedModelId ? null : id });
+    const newId = id === settings.selectedModelId ? null : id;
+    const updates: Partial<SessionSettings> = { selectedModelId: newId };
+    if (newId !== null && settings.autoUseLastImage) {
+      updates.autoUseLastImage = false;
+    }
+    onUpdateSettings({ ...settings, ...updates });
   };
 
   const genModel = async () => {
@@ -190,6 +195,18 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
                 </button>
               ))}
             </div>
+            {settings.selectedModelId && (
+              <button
+                onClick={() => onUpdateSettings({
+                  ...settings,
+                  selectedModelId: null,
+                  autoUseLastImage: true,
+                })}
+                className="w-full px-3 py-2 text-xs bg-banana-500/10 hover:bg-banana-500/20 text-banana-400 border border-banana-500/30 rounded-lg transition-colors flex items-center justify-center gap-1.5"
+              >
+                <Icon name="check-circle" /> 基底满意，切换连续编辑
+              </button>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={genModel}
