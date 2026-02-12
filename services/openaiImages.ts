@@ -166,6 +166,39 @@ const enableGeminiChatFallback = String((import.meta as any)?.env?.VITE_ENABLE_C
   .trim()
   .toLowerCase() === "true";
 
+const toPositiveInt = (raw: unknown, fallback: number): number => {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  const v = Math.floor(n);
+  return v >= 0 ? v : fallback;
+};
+
+const imageRequestMaxRetries = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_REQUEST_RETRIES, 2);
+const imageRetryBaseDelayMs = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_RETRY_BASE_DELAY_MS, 1200);
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504, 522, 524]);
+
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (ms <= 0) {
+      resolve();
+      return;
+    }
+    if (signal?.aborted) {
+      reject(new DOMException("已取消", "AbortError"));
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      if (signal) signal.removeEventListener("abort", onAbort);
+      reject(new DOMException("已取消", "AbortError"));
+    };
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+  });
+
 const chooseFallbackModel = (current: string, available: string[]): string | null => {
   const normalized = Array.from(
     new Set(
@@ -542,51 +575,75 @@ export const imagesGenerations = async (
       body[k] = v;
     }
 
-    let resp: Response;
-    try {
-      resp = await fetch(`${cfg.baseUrl}/v1/images/generations`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...buildAuthHeaders(cfg),
-        },
-        credentials: "include",
-        body: JSON.stringify(body),
-        signal,
-      });
-    } catch (e: any) {
-      const msg = e?.message ? String(e.message) : String(e);
-      throw new Error(
-        `图片接口网络错误：${msg}。` +
-          `如果在浏览器开发环境出现，多半是 CORS。建议使用 /api 代理或让 ${cfg.baseUrl} 开启 CORS。`
-      );
-    }
+    let lastStatus = 0;
+    let lastText = "";
+    let retryCount = 0;
 
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      const detail = extractErrorMessageFromPayload(text);
-      const generationErr = `图片接口请求失败：${formatHttpError(resp.status, text)}`.trim();
-      // 仅在显式开启 VITE_ENABLE_CHAT_IMAGE_FALLBACK=true 且为“模型不支持”时才回退 chat。
-      if (enableGeminiChatFallback && isGeminiImageModel(model) && includesUnsupportedModelError(detail)) {
-        try {
-          return await geminiImageViaChat({ ...req, model: model as Model }, cfg, model, signal);
-        } catch (chatErr) {
-          const chatMsg = chatErr instanceof Error ? chatErr.message : String(chatErr);
-          throw new Error(`${generationErr}；回退 chat/completions 失败：${chatMsg}`);
+    for (let attempt = 0; attempt <= imageRequestMaxRetries; attempt++) {
+      let resp: Response;
+      try {
+        resp = await fetch(`${cfg.baseUrl}/v1/images/generations`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...buildAuthHeaders(cfg),
+          },
+          credentials: "include",
+          body: JSON.stringify(body),
+          signal,
+        });
+      } catch (e: any) {
+        const msg = e?.message ? String(e.message) : String(e);
+        if (attempt < imageRequestMaxRetries) {
+          retryCount += 1;
+          const delay = Math.min(imageRetryBaseDelayMs * (attempt + 1), 5000);
+          await sleep(delay, signal);
+          continue;
         }
+        throw new Error(
+          `图片接口网络错误：${msg}。` +
+            `如果在浏览器开发环境出现，多半是 CORS。建议使用 /api 代理或让 ${cfg.baseUrl} 开启 CORS。`
+        );
       }
-      throw new Error(generationErr);
+
+      if (resp.ok) {
+        const json = (await resp.json()) as 图片生成响应;
+        if (!json || typeof json.created !== "number" || !Array.isArray(json.data)) {
+          throw new Error("图片接口返回结构异常。");
+        }
+        return {
+          ...json,
+          model_used: model,
+          endpoint_used: "/v1/images/generations",
+        };
+      }
+
+      const text = await resp.text().catch(() => "");
+      lastStatus = resp.status;
+      lastText = text;
+      const shouldRetry = RETRYABLE_STATUS.has(resp.status) && attempt < imageRequestMaxRetries;
+      if (shouldRetry) {
+        retryCount += 1;
+        const delay = Math.min(imageRetryBaseDelayMs * (attempt + 1), 5000);
+        await sleep(delay, signal);
+        continue;
+      }
+      break;
     }
 
-    const json = (await resp.json()) as 图片生成响应;
-    if (!json || typeof json.created !== "number" || !Array.isArray(json.data)) {
-      throw new Error("图片接口返回结构异常。");
+    const detail = extractErrorMessageFromPayload(lastText);
+    const retrySuffix = retryCount > 0 ? `（已自动重试 ${retryCount} 次）` : "";
+    const generationErr = `图片接口请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}`.trim();
+    // 仅在显式开启 VITE_ENABLE_CHAT_IMAGE_FALLBACK=true 且为“模型不支持”时才回退 chat。
+    if (enableGeminiChatFallback && isGeminiImageModel(model) && includesUnsupportedModelError(detail)) {
+      try {
+        return await geminiImageViaChat({ ...req, model: model as Model }, cfg, model, signal);
+      } catch (chatErr) {
+        const chatMsg = chatErr instanceof Error ? chatErr.message : String(chatErr);
+        throw new Error(`${generationErr}；回退 chat/completions 失败：${chatMsg}`);
+      }
     }
-    return {
-      ...json,
-      model_used: model,
-      endpoint_used: "/v1/images/generations",
-    };
+    throw new Error(generationErr);
   };
 
   const initialModel = (req.model ?? cfg.defaultImageModel).trim();

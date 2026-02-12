@@ -70,8 +70,12 @@ const isLikelyMissingAuth = (message: string): boolean =>
 const isLikelyCorsOrNetwork = (message: string): boolean =>
   /cors|network|failed to fetch|网络错误|预检/i.test(message);
 
+const isLikelyGatewayTimeout = (message: string): boolean =>
+  /http\s*504|gateway time-?out|error code 504|上游网关超时/i.test(message);
+
 const getFriendlyErrorMessage = (message: string): string => {
   if (isLikelyModelUnsupported(message)) return "当前模型不支持生图，请切换到可用图片模型后重试。";
+  if (isLikelyGatewayTimeout(message)) return "上游网关超时（504），请重试或切换更快模型。";
   if (isLikelyMissingAuth(message)) return "未登录或会话已失效，请重新登录后重试。";
   if (isLikelyCorsOrNetwork(message)) return "网络或跨域错误，请优先使用 `/api` 代理地址。";
   return `生成失败：${message}`;
@@ -83,6 +87,14 @@ const getErrorAdvice = (message: string): string[] => {
       "在左下角模型选择器切换为可用图片模型。",
       "推荐先用 gemini-2.5-flash-image 或 gpt-image-1.5。",
       "如果走公网地址失败，改成 /api 并在 .env.local 配置 VITE_API_PROXY_TARGET=https://n.lconai.com。",
+    ];
+  }
+  if (isLikelyGatewayTimeout(message)) {
+    return [
+      "这是上游服务超时，不是账号配置错误，先直接重试一次。",
+      "把尺寸先设为 1:1（1024x1024）、每次生成张数设为 1，可显著降低超时概率。",
+      "可切换到更快模型（如 gemini-2.5-flash-image）。",
+      "若你用 Cloudflare 代理站点，长请求可能被 100 秒限制中断，生产建议给应用域名关闭代理（DNS only）。",
     ];
   }
   if (isLikelyMissingAuth(message)) {
