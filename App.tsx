@@ -39,6 +39,7 @@ const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSet
     batchCount,
     batchSizes,
     autoUseLastImage: typeof raw?.autoUseLastImage === "boolean" ? raw.autoUseLastImage : true,
+    productImage: raw?.productImage ?? null,
   };
 };
 
@@ -164,6 +165,7 @@ const createNewSession = (templates: SystemTemplate[]): Session => {
       batchCount: 1,
       batchSizes: [getSupportedSizeForAspect(DEFAULT_ASPECT_RATIO)],
       autoUseLastImage: true,
+      productImage: null,
     }
   };
 };
@@ -519,6 +521,11 @@ const App: React.FC = () => {
       if (selectedModel) modelImage = selectedModel.imageUrl;
     }
 
+    let productImageUrl: string | null = null;
+    if (currentSession.settings.productImage) {
+      productImageUrl = currentSession.settings.productImage.imageUrl;
+    }
+
     const messagesToUse = customMessages || currentSession.messages;
     let updatedMessages = messagesToUse;
 
@@ -535,6 +542,7 @@ const App: React.FC = () => {
           prompt,
           image,
           modelImage,
+          productImageUrl,
           updatedMessages,
           currentSession.settings,
           {

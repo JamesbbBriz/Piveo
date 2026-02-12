@@ -32,6 +32,12 @@ export interface ModelCharacter {
   imageUrl: string; // Base64
 }
 
+export interface ProductImage {
+  id: string;
+  imageUrl: string;
+  createdAt: number;
+}
+
 export interface MessagePartMeta {
   // Unique-ish id for assets/exports; optional for backward compatibility.
   id?: string;
@@ -75,6 +81,7 @@ export interface SessionSettings {
   batchCount: number; // 1-10
   batchSizes: string[]; // empty => use aspectRatio mapping
   autoUseLastImage: boolean; // true => 自动沿用最近图片做连续编辑
+  productImage: ProductImage | null;
 }
 
 export interface AppState {

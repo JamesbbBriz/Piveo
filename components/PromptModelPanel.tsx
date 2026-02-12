@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ModelCharacter, SessionSettings, SystemTemplate } from "../types";
+import { ModelCharacter, ProductImage, SessionSettings, SystemTemplate } from "../types";
 import { generateModelCharacter } from "../services/gemini";
 import { Icon } from "./Icon";
 
@@ -27,6 +27,7 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
   const [isGeneratingModel, setIsGeneratingModel] = useState(false);
   const [templateDropdownOpen, setTemplateDropdownOpen] = useState(false);
   const modelInputRef = useRef<HTMLInputElement>(null);
+  const productInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLocalSystemPrompt(settings.systemPrompt);
@@ -95,6 +96,26 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
     e.target.value = "";
   };
 
+  const uploadProduct = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const product: ProductImage = {
+        id: Date.now().toString(),
+        imageUrl: reader.result as string,
+        createdAt: Date.now(),
+      };
+      onUpdateSettings({ ...settings, productImage: product });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  const removeProduct = () => {
+    onUpdateSettings({ ...settings, productImage: null });
+  };
+
   return (
     <div className="bg-dark-900/30 border border-dark-700 rounded-xl overflow-hidden">
       <button
@@ -105,6 +126,7 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
           <Icon name="sliders-h" />
           <span className="text-xs font-semibold">系统指令与一致性模特</span>
           <span className="text-[10px] text-gray-500">模特 {settings.selectedModelId ? "已锁定" : "未锁定"}</span>
+          {settings.productImage && <span className="text-[10px] text-banana-400">产品图 已设置</span>}
         </div>
         <Icon name={openPanel ? "chevron-up" : "chevron-down"} />
       </button>
@@ -178,6 +200,40 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
                 </button>
               </div>
             )}
+          </div>
+
+          <div className="border-t border-dark-700 pt-3 space-y-3">
+            <div className="text-[11px] text-gray-400">产品图</div>
+            {settings.productImage ? (
+              <div className="relative inline-block">
+                <img
+                  src={settings.productImage.imageUrl}
+                  alt="产品图"
+                  className="w-20 h-20 rounded-xl border border-banana-500 object-cover"
+                  loading="lazy"
+                  decoding="async"
+                />
+                <button
+                  onClick={removeProduct}
+                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-md"
+                  title="删除产品图"
+                >
+                  <Icon name="times" />
+                </button>
+              </div>
+            ) : (
+              <div className="w-20 h-20 rounded-xl border-2 border-dashed border-dark-600 flex items-center justify-center text-gray-600">
+                <Icon name="box-open" />
+              </div>
+            )}
+            <button
+              onClick={() => productInputRef.current?.click()}
+              className="px-3 py-2 text-xs bg-dark-700 hover:bg-dark-600 rounded text-gray-200 border border-dark-600 transition-colors"
+            >
+              <Icon name="upload" /> {settings.productImage ? "更换产品图" : "上传产品图"}
+            </button>
+            <input ref={productInputRef} type="file" accept="image/*" className="hidden" onChange={uploadProduct} />
+            <div className="text-[10px] text-gray-500">上传后每次生成都会带上此产品</div>
           </div>
 
           <div className="border-t border-dark-700 pt-3 space-y-3">

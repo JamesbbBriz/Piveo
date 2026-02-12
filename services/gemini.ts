@@ -62,11 +62,13 @@ export const generateResponse = async (
   currentMessageText: string,
   referenceImage: string | null, // Current upload
   modelImage: string | null, // Character consistency
+  productImage: string | null, // Product image
   history: Message[],
   settings: SessionSettings,
   options: GenerateResponseOptions = {}
 ): Promise<GenerateResponseResult> => {
   const imageInputsRaw: string[] = [];
+  if (productImage) imageInputsRaw.push(productImage);
   if (modelImage) imageInputsRaw.push(modelImage);
   if (referenceImage) imageInputsRaw.push(referenceImage);
   if (Array.isArray(options.extraImages) && options.extraImages.length) {
@@ -94,15 +96,17 @@ export const generateResponse = async (
   // 网关要求同一次请求只用一种图片输入方式（URL 或 base64）。
   // 优先级：当前上传图 > 额外编辑图 > 历史连续编辑图 > 一致性模特图。
   const uniqueInputs = Array.from(new Set(imageInputsRaw.map((s) => String(s || "").trim()).filter(Boolean)));
-  const preferredMode: ImageInputMode | null = referenceImage
-    ? detectImageInputMode(referenceImage)
-    : (options.extraImages && options.extraImages.length > 0)
-      ? detectImageInputMode(options.extraImages[0])
-      : lastHistoryImage
-        ? detectImageInputMode(lastHistoryImage)
-        : modelImage
-          ? detectImageInputMode(modelImage)
-          : null;
+  const preferredMode: ImageInputMode | null = productImage
+    ? detectImageInputMode(productImage)
+    : referenceImage
+      ? detectImageInputMode(referenceImage)
+      : (options.extraImages && options.extraImages.length > 0)
+        ? detectImageInputMode(options.extraImages[0])
+        : lastHistoryImage
+          ? detectImageInputMode(lastHistoryImage)
+          : modelImage
+            ? detectImageInputMode(modelImage)
+            : null;
 
   const imageInputs =
     preferredMode === null
@@ -159,11 +163,14 @@ export const generateResponse = async (
     const systemText = settings.systemPrompt?.trim()
       ? `系统指令：\n${settings.systemPrompt.trim()}\n\n`
       : "";
+    let imageContext = "";
+    if (productImage) imageContext += "\n图片说明：第一张是主要产品，请保持产品外观特征和细节。";
+    if (modelImage) imageContext += "\n有模特图作为人物一致性参考，请保持人物特征稳定。";
     const n = Math.min(Math.max(options.n ?? 1, 1), 10);
     const responseFormat = options.responseFormat ?? settings.responseFormat ?? "url";
     const sizeUsed = options.size ?? aspectRatioToSize(settings.aspectRatio);
     const sizeInstruction = sizeUsed ? `\n\n尺寸要求：请生成 ${sizeUsed} 的图片。` : "";
-    const promptUsed = `${systemText}${contextText}${finalPrompt} ${scaleInstruction}${sizeInstruction}`.trim();
+    const promptUsed = `${systemText}${imageContext}${contextText}${finalPrompt} ${scaleInstruction}${sizeInstruction}`.trim();
 
     const resp = await imagesGenerations(
       {
