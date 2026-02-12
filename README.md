@@ -17,6 +17,7 @@
    - `UPSTREAM_API_BASE_URL`：上游网关地址（默认 `https://n.lconai.com`）
    - 推荐开发环境：`VITE_API_BASE_URL=/api`（前端只打本地代理）
    - `VITE_DEFAULT_IMAGE_MODEL`：默认生图模型（默认：`gemini-2.5-flash-image`）
+   - `VITE_ENABLE_CHAT_IMAGE_FALLBACK`：是否启用 `chat/completions` 出图回退（默认关闭，建议不上线开启）
 3. 启动开发服务器（会同时启动前端和登录服务）：
    `npm run dev`
 
@@ -65,3 +66,7 @@
 - `Failed to generate model`
   - 原因：本质仍是图片生成接口失败（通常是模型或鉴权问题）。
   - 处理：检查 `.env.local` 中的 `UPSTREAM_AUTHORIZATION`、`UPSTREAM_API_BASE_URL`、默认模型配置。
+
+- `HTTP 504 / Gateway time-out`
+  - 原因：上游网关超时（Cloudflare 504），不是前端代码异常。
+  - 处理：重试一次；或切到更快模型（如 `gemini-2.5-flash-image`）；并确认没有走 `chat/completions` 回退链路。

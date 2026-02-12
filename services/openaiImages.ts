@@ -125,6 +125,47 @@ const includesUnsupportedModelError = (message: string): boolean =>
   /unsupported model/i.test(message) ||
   /模型.*不支持.*(图片|生图)/i.test(message);
 
+const isHtmlPayload = (text: string): boolean => /<!doctype html>|<html[\s>]/i.test(text);
+
+const extractErrorMessageFromPayload = (payload: string): string => {
+  const raw = String(payload || "").trim();
+  if (!raw) return "";
+
+  try {
+    const json = JSON.parse(raw);
+    const msg =
+      json?.error?.message ||
+      json?.message ||
+      json?.detail ||
+      json?.msg ||
+      json?.error_description;
+    if (typeof msg === "string" && msg.trim()) return msg.trim();
+  } catch {
+    // keep going
+  }
+
+  if (isHtmlPayload(raw)) {
+    const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(raw)?.[1];
+    const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(raw)?.[1];
+    const compact = String(title || h1 || "").replace(/\s+/g, " ").trim();
+    if (compact) return compact;
+    if (/gateway time-?out|error code 504/i.test(raw)) return "上游网关超时（504）";
+    if (/bad gateway|error code 502/i.test(raw)) return "上游网关错误（502）";
+    return "上游返回了 HTML 错误页";
+  }
+
+  return raw.replace(/\s+/g, " ").slice(0, 320);
+};
+
+const formatHttpError = (status: number, payload: string): string => {
+  const msg = extractErrorMessageFromPayload(payload);
+  return msg ? `HTTP ${status} ${msg}` : `HTTP ${status}`;
+};
+
+const enableGeminiChatFallback = String((import.meta as any)?.env?.VITE_ENABLE_CHAT_IMAGE_FALLBACK || "")
+  .trim()
+  .toLowerCase() === "true";
+
 const chooseFallbackModel = (current: string, available: string[]): string | null => {
   const normalized = Array.from(
     new Set(
@@ -432,8 +473,8 @@ const geminiImageViaChat = async (
     }
 
     if (!resp.ok) {
-      const msg = json?.error?.message || text;
-      throw new Error(`对话接口出图失败：HTTP ${resp.status} ${msg}`.trim());
+      const msg = typeof json?.error?.message === "string" ? json.error.message : text;
+      throw new Error(`对话接口出图失败：${formatHttpError(resp.status, msg)}`.trim());
     }
 
     const out = json?.choices?.[0]?.message?.content;
@@ -523,9 +564,10 @@ export const imagesGenerations = async (
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
-      const generationErr = `图片接口请求失败：HTTP ${resp.status} ${text}`.trim();
-      // 对 Gemini 模型，若 generations 失败，回退到 chat/completions 再试一次。
-      if (isGeminiImageModel(model)) {
+      const detail = extractErrorMessageFromPayload(text);
+      const generationErr = `图片接口请求失败：${formatHttpError(resp.status, text)}`.trim();
+      // 仅在显式开启 VITE_ENABLE_CHAT_IMAGE_FALLBACK=true 且为“模型不支持”时才回退 chat。
+      if (enableGeminiChatFallback && isGeminiImageModel(model) && includesUnsupportedModelError(detail)) {
         try {
           return await geminiImageViaChat({ ...req, model: model as Model }, cfg, model, signal);
         } catch (chatErr) {
