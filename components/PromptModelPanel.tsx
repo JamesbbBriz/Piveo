@@ -12,7 +12,7 @@ interface PromptModelPanelProps {
   onOpenBatchSet?: () => void;
 }
 
-export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
+const PromptModelPanelInner: React.FC<PromptModelPanelProps> = ({
   settings,
   onUpdateSettings,
   models,
@@ -311,3 +311,9 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
     </div>
   );
 };
+
+export const PromptModelPanel = React.memo(PromptModelPanelInner, (prev, next) =>
+  prev.settings === next.settings &&
+  prev.models === next.models &&
+  prev.onOpenBatchSet === next.onOpenBatchSet
+);

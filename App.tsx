@@ -7,7 +7,7 @@ import { ImagePreviewModal } from './components/ImagePreviewModal';
 import { Icon } from './components/Icon';
 import { AspectRatio, BatchJob, BatchJobStatus, BatchSlot, BatchVersion, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter } from './types';
 import { initPersistentStorage, loadBatchJobs, loadSessions, loadTemplates, loadModels, saveBatchJobs, saveSessions, saveTemplates, saveModels, clearAll, backupSessionsSync } from './services/storage';
-import { generateResponse, enhancePrompt } from './services/gemini';
+import { generateResponse, enhancePrompt, type GenerateResponseResult } from './services/gemini';
 import { DEFAULT_ASPECT_RATIO } from './constants';
 import { ApiConfig, getEffectiveApiConfig, saveStoredApiConfig } from './services/apiConfig';
 import { AssetsModal, type AssetItem } from './components/AssetsModal';
@@ -279,6 +279,8 @@ const App: React.FC = () => {
   const saveBatchJobsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingBatchJobsRef = useRef<BatchJob[] | null>(null);
   const latestBatchJobsRef = useRef<BatchJob[]>([]);
+  const sessionAssetCountCacheRef = useRef<Map<string, { messagesRef: Message[]; count: number }>>(new Map());
+  const batchAssetCountCacheRef = useRef<Map<string, { slotsRef: BatchSlot[]; count: number }>>(new Map());
   const lastRunRef = useRef<{
     prompt: string;
     image: string | null;
@@ -523,7 +525,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [currentSessionId, currentMessageCount, isGenerating]);
+  }, [currentSessionId, currentMessageCount]);
 
   const allAssets: AssetItem[] = useMemo(() => {
     if (!isAssetsOpen) return [];
@@ -533,11 +535,14 @@ const App: React.FC = () => {
       for (let mi = 0; mi < s.messages.length; mi++) {
         const m = s.messages[mi];
         if (m.role === "user") {
-          const t = m.parts
-            .filter((p) => p.type === "text" && p.text)
-            .map((p) => p.text)
-            .join(" ")
-            .trim();
+          let t = "";
+          for (let pi = 0; pi < m.parts.length; pi++) {
+            const p = m.parts[pi];
+            if (p.type === "text" && p.text) {
+              t += t ? ` ${p.text}` : p.text;
+            }
+          }
+          t = t.trim();
           if (t) lastUserText = t;
         }
         for (const p of m.parts) {
@@ -581,23 +586,62 @@ const App: React.FC = () => {
   }, [sessions, batchJobs, isAssetsOpen]);
 
   const totalAssetCount = useMemo(() => {
+    const sessionCache = sessionAssetCountCacheRef.current;
+    const batchCache = batchAssetCountCacheRef.current;
+    const nextSessionIds = new Set<string>();
+    const nextJobIds = new Set<string>();
+
     let count = 0;
     for (const s of sessions) {
-      for (const m of s.messages) {
-        for (const p of m.parts) {
-          if (p.type === "image" && p.imageUrl) count += 1;
+      nextSessionIds.add(s.id);
+      const cached = sessionCache.get(s.id);
+      if (cached && cached.messagesRef === s.messages) {
+        count += cached.count;
+        continue;
+      }
+      let sessionCount = 0;
+      for (let mi = 0; mi < s.messages.length; mi++) {
+        const m = s.messages[mi];
+        for (let pi = 0; pi < m.parts.length; pi++) {
+          const p = m.parts[pi];
+          if (p.type === "image" && p.imageUrl) sessionCount += 1;
         }
       }
+      sessionCache.set(s.id, { messagesRef: s.messages, count: sessionCount });
+      count += sessionCount;
     }
+    for (const key of Array.from(sessionCache.keys())) {
+      if (!nextSessionIds.has(key)) sessionCache.delete(key);
+    }
+
     for (const job of batchJobs) {
-      for (const slot of job.slots) {
-        for (const version of slot.versions) {
-          if (version.imageUrl) count += 1;
+      nextJobIds.add(job.id);
+      const cached = batchCache.get(job.id);
+      if (cached && cached.slotsRef === job.slots) {
+        count += cached.count;
+        continue;
+      }
+      let jobCount = 0;
+      for (let si = 0; si < job.slots.length; si++) {
+        const slot = job.slots[si];
+        for (let vi = 0; vi < slot.versions.length; vi++) {
+          if (slot.versions[vi].imageUrl) jobCount += 1;
         }
       }
+      batchCache.set(job.id, { slotsRef: job.slots, count: jobCount });
+      count += jobCount;
     }
+    for (const key of Array.from(batchCache.keys())) {
+      if (!nextJobIds.has(key)) batchCache.delete(key);
+    }
+
     return count;
   }, [sessions, batchJobs]);
+
+  const activeBatchJobCount = useMemo(
+    () => batchJobs.reduce((n, j) => n + (j.status !== "deleted" ? 1 : 0), 0),
+    [batchJobs]
+  );
 
   const toggleSidebar = useCallback(() => {
     setIsSidebarOpen((v) => !v);
@@ -607,45 +651,48 @@ const App: React.FC = () => {
     setIsAssetsOpen(true);
   }, []);
 
-  const openBatchRecords = useCallback(() => {
-    setCurrentView("batch");
-    if (selectedBatchJob) {
-      setSelectedBatchJobId(selectedBatchJob.id);
-    }
-  }, [selectedBatchJob]);
-
-  const handleNewSession = () => {
+  const handleNewSession = useCallback(() => {
     const newSession = createNewSession(templates);
-    setSessions([newSession, ...sessions]);
+    setSessions((prev) => [newSession, ...prev]);
     setCurrentSessionId(newSession.id);
     setCurrentView("chat");
     setInputText('');
     setSelectedImage(null);
-  };
+  }, [templates]);
 
-  const handleDeleteSession = (id: string, e: React.MouseEvent) => {
+  const handleDeleteSession = useCallback((id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const newSessions = sessions.filter(s => s.id !== id);
-    setSessions(newSessions);
-    if (currentSessionId === id) setCurrentSessionId(newSessions.length > 0 ? newSessions[0].id : null);
-    if (newSessions.length === 0) {
+    setSessions((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      if (next.length === 0) {
         const fresh = createNewSession(templates);
-        setSessions([fresh]);
         setCurrentSessionId(fresh.id);
-    }
-  };
+        return [fresh];
+      }
+      if (currentSessionId === id) {
+        setCurrentSessionId(next[0].id);
+      }
+      return next;
+    });
+  }, [currentSessionId, templates]);
 
-  const handleUpdateSettings = (newSettings: SessionSettings) => {
+  const handleUpdateSettings = useCallback((newSettings: SessionSettings) => {
     if (!currentSessionId) return;
     setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, settings: newSettings } : s));
-  };
+  }, [currentSessionId]);
 
-  const handleSaveTemplate = (newTemplate: SystemTemplate) => setTemplates(prev => [...prev, newTemplate]);
-  const handleAddModel = (newModel: ModelCharacter) => setModels(prev => [...prev, newModel]);
-  const handleUpdateApiConfig = (cfg: ApiConfig) => {
+  const handleSaveTemplate = useCallback((newTemplate: SystemTemplate) => {
+    setTemplates((prev) => [...prev, newTemplate]);
+  }, []);
+
+  const handleAddModel = useCallback((newModel: ModelCharacter) => {
+    setModels((prev) => [...prev, newModel]);
+  }, []);
+
+  const handleUpdateApiConfig = useCallback((cfg: ApiConfig) => {
     setApiConfig(cfg);
     saveStoredApiConfig(cfg);
-  };
+  }, []);
 
   const updateBatchJobById = useCallback((jobId: string, updater: (job: BatchJob) => BatchJob) => {
     setBatchJobs((prev) => prev.map((job) => (job.id === jobId ? updater(job) : job)));
@@ -891,18 +938,21 @@ const App: React.FC = () => {
       for (let i = 0; i < sizes.length; i++) {
         const size = sizes[i];
         setGenerationProgress({ current: i + 1, total: sizes.length });
-        stage = `正在生成（${i + 1}/${sizes.length}）· 尺寸 ${size} · 数量 ${batchCount}...`;
+        stage = `正在生成首图（${i + 1}/${sizes.length}）· 尺寸 ${size}...`;
         setGenerationStage(stage);
 
-        const result = await generateResponse(
+        // 固定本轮上下文：同一批次内后续补图不读取新生成结果，避免“越补越漂”。
+        const generationBaseMessages = updatedMessages;
+
+        const firstResult = await generateResponse(
           prompt,
           image,
           modelImage,
           productImageUrl,
-          updatedMessages,
+          generationBaseMessages,
           currentSession.settings,
           {
-            n: batchCount,
+            n: 1,
             size,
             responseFormat,
             extraImages: opts?.extraImages,
@@ -923,27 +973,32 @@ const App: React.FC = () => {
         };
 
         if (sizes.length > 1) {
-          aiMessage.parts.push({ type: "text", text: `尺寸：${result.sizeUsed}` });
+          aiMessage.parts.push({ type: "text", text: `尺寸：${firstResult.sizeUsed}` });
         }
         if (opts?.action) {
           aiMessage.parts.push({ type: "text", text: `操作：${opts.action}` });
         }
 
-        for (const url of result.images) {
+        const pushImagePart = (url: string, resultMeta: GenerateResponseResult) => {
           aiMessage.parts.push({
             type: "image",
             imageUrl: url,
             meta: {
               id: uuidv4(),
               createdAt: Date.now(),
-              prompt: result.promptUsed,
-              model: result.modelUsed || apiConfig.defaultImageModel,
-              size: result.sizeUsed,
-              responseFormat: result.responseFormat,
+              prompt: resultMeta.promptUsed,
+              model: resultMeta.modelUsed || apiConfig.defaultImageModel,
+              size: resultMeta.sizeUsed,
+              responseFormat: resultMeta.responseFormat,
               parentImageUrl: parentImageUrl || undefined,
               action: opts?.action,
             },
           });
+        };
+
+        const firstUrl = firstResult.images[0];
+        if (firstUrl) {
+          pushImagePart(firstUrl, firstResult);
         }
 
         if (aiMessage.parts.length === 0) {
@@ -951,9 +1006,89 @@ const App: React.FC = () => {
         }
 
         updatedMessages = [...updatedMessages, aiMessage];
+        const aiMessageId = aiMessage.id;
+        const patchLatestAiMessage = (nextPart: Message["parts"][number]) => {
+          updatedMessages = updatedMessages.map((m) =>
+            m.id === aiMessageId ? { ...m, parts: [...m.parts, nextPart] } : m
+          );
+          setSessions((prev) =>
+            prev.map((s) => (s.id === sessionId ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s))
+          );
+        };
         setSessions(prev => prev.map(s =>
           s.id === sessionId ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s
         ));
+
+        const remaining = batchCount - 1;
+        if (remaining > 0 && firstUrl) {
+          let done = 0;
+          let failed = 0;
+          let cursor = 0;
+          const maxParallel = Math.min(3, remaining);
+
+          const worker = async () => {
+            while (cursor < remaining) {
+              const idx = cursor++;
+              if (idx >= remaining) return;
+              if (controller.signal.aborted) return;
+
+              try {
+                const extra = await generateResponse(
+                  prompt,
+                  image,
+                  modelImage,
+                  productImageUrl,
+                  generationBaseMessages,
+                  currentSession.settings,
+                  {
+                    n: 1,
+                    size,
+                    responseFormat,
+                    extraImages: opts?.extraImages,
+                    disableAutoUseLastImage: Boolean(opts?.forceNoAutoReuse),
+                    signal: controller.signal,
+                  }
+                );
+                const extraUrl = extra.images[0];
+                if (!extraUrl) {
+                  failed += 1;
+                } else {
+                  setBalanceRefreshTick((v) => v + 1);
+                  patchLatestAiMessage({
+                    type: "image",
+                    imageUrl: extraUrl,
+                    meta: {
+                      id: uuidv4(),
+                      createdAt: Date.now(),
+                      prompt: extra.promptUsed,
+                      model: extra.modelUsed || apiConfig.defaultImageModel,
+                      size: extra.sizeUsed,
+                      responseFormat: extra.responseFormat,
+                      parentImageUrl: parentImageUrl || undefined,
+                      action: opts?.action,
+                    },
+                  });
+                }
+              } catch (err) {
+                if (isAbortError(err)) throw err;
+                failed += 1;
+              } finally {
+                done += 1;
+                stage = `首图已出，正在补齐（${done}/${remaining}）· 尺寸 ${size}...`;
+                setGenerationStage(stage);
+              }
+            }
+          };
+
+          await Promise.all(Array.from({ length: maxParallel }, () => worker()));
+
+          if (failed > 0) {
+            patchLatestAiMessage({
+              type: "text",
+              text: `补图完成：失败 ${failed} 张，可直接点击「重试」继续补齐。`,
+            });
+          }
+        }
       }
       return updatedMessages;
     } catch (e) {
@@ -1856,32 +1991,22 @@ const App: React.FC = () => {
         apiConfig={apiConfig}
         onUpdateApiConfig={handleUpdateApiConfig}
         onOpenAssets={openAssets}
-        onOpenBatchRecords={openBatchRecords}
         assetCount={totalAssetCount}
-        batchJobCount={batchJobs.filter((j) => j.status !== "deleted").length}
+        batchJobCount={activeBatchJobCount}
+        authUser={authUser}
+        authLoading={authLoading}
+        onLogout={handleLogout}
         currentSettings={currentSession.settings}
         onUpdateCurrentSettings={handleUpdateSettings}
         balanceRefreshTick={balanceRefreshTick}
         currentView={currentView}
         onViewChange={setCurrentView}
       />
-      <div className="flex-1 flex flex-col h-full relative">
-        <div className="absolute top-3 right-4 z-20 hidden lg:flex items-center gap-2">
-          <span className="text-xs text-gray-400 px-2 py-1 rounded border border-dark-600 bg-dark-800/70">
-            {authUser}
-          </span>
-          <button
-            onClick={handleLogout}
-            disabled={authLoading}
-            className="text-xs px-2.5 py-1.5 rounded border border-dark-600 bg-dark-800 hover:bg-dark-700 text-gray-200 disabled:opacity-60"
-          >
-            退出登录
-          </button>
-        </div>
+      <div className="flex-1 flex flex-col h-full min-h-0 relative">
         <div className="lg:hidden h-14 border-b border-dark-700 flex items-center px-4 justify-between bg-dark-800">
           <button onClick={() => setIsSidebarOpen(true)} className="text-gray-400"><Icon name="bars" /></button>
           <span className="font-semibold text-gray-200 truncate max-w-[200px]">
-            {currentView === "batch" ? (selectedBatchJob?.title || "套图记录") : currentSession.title}
+            {currentView === "batch" ? (selectedBatchJob?.title || "套图工作台") : currentSession.title}
           </span>
           <button
             onClick={handleLogout}
@@ -1897,7 +2022,6 @@ const App: React.FC = () => {
           onUpdateSettings={handleUpdateSettings}
           templates={templates}
           onSaveTemplate={handleSaveTemplate}
-          hasDesktopTopRightOverlay
         />
         {currentView === "chat" ? (
           <>
@@ -2091,7 +2215,7 @@ const App: React.FC = () => {
             </div>
           </>
         ) : (
-          <div className="flex-1 min-h-0">
+          <div className="flex-1 min-h-0 overflow-hidden">
             <BatchJobsPanel
               jobs={batchJobs}
               selectedJobId={selectedBatchJobId}

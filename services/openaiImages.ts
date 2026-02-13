@@ -177,11 +177,31 @@ const toPositiveInt = (raw: unknown, fallback: number): number => {
 const imageRequestMaxRetries = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_REQUEST_RETRIES, 2);
 const imageRetryBaseDelayMs = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_RETRY_BASE_DELAY_MS, 1200);
 const RETRYABLE_STATUS = new Set([408, 425, 500, 502, 503, 504, 522, 524]);
-const FETCH_TIMEOUT_MS = 60_000;
+const imageFetchTimeoutMs = Math.max(
+  1_000,
+  toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_FETCH_TIMEOUT_MS, 120_000)
+);
+
+const createRequestId = (): string => {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // fallback below
+  }
+  return `img_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+};
+
+const isLikelyTimeoutError = (e: unknown): boolean => {
+  const msg = e && typeof e === "object" && "message" in e ? String((e as any).message || "") : String(e || "");
+  const name = e && typeof e === "object" && "name" in e ? String((e as any).name || "") : "";
+  return /timeout|timed out|signal timed out/i.test(msg) || /timeout/i.test(name);
+};
 
 /** 合并用户取消信号和超时信号 */
 const withTimeout = (signal?: AbortSignal): AbortSignal => {
-  const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(imageFetchTimeoutMs);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 };
 
@@ -609,14 +629,18 @@ export const imagesGenerations = async (
     let lastStatus = 0;
     let lastText = "";
     let retryCount = 0;
+    let lastRequestId = "";
 
     for (let attempt = 0; attempt <= imageRequestMaxRetries; attempt++) {
       let resp: Response;
+      const requestId = createRequestId();
+      lastRequestId = requestId;
       try {
         resp = await fetch(`${cfg.baseUrl}/v1/images/generations`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            "X-Request-Id": requestId,
             ...buildAuthHeaders(cfg),
           },
           credentials: "include",
@@ -630,9 +654,13 @@ export const imagesGenerations = async (
           await sleep(retryDelay(attempt), signal);
           continue;
         }
+        const timeoutHint = isLikelyTimeoutError(e)
+          ? `（前端等待 ${Math.round(imageFetchTimeoutMs / 1000)} 秒后超时）`
+          : "";
+        const traceHint = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
         throw new Error(
-          `图片接口网络错误：${msg}。` +
-            `请检查站点到上游网关连通性（生产环境通常不是 CORS，而是代理超时或网络抖动）。`
+          `图片接口网络错误：${msg}${timeoutHint}。` +
+            `请检查站点到上游网关连通性（生产环境通常不是 CORS，而是代理超时或网络抖动）。${traceHint}`
         );
       }
 
@@ -662,7 +690,8 @@ export const imagesGenerations = async (
 
     const detail = extractErrorMessageFromPayload(lastText);
     const retrySuffix = retryCount > 0 ? `（已自动重试 ${retryCount} 次）` : "";
-    const generationErr = `图片接口请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}`.trim();
+    const traceSuffix = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
+    const generationErr = `图片接口请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}。${traceSuffix}`.trim();
     // 仅在显式开启 VITE_ENABLE_CHAT_IMAGE_FALLBACK=true 且为“模型不支持”时才回退 chat。
     if (enableGeminiChatFallback && isGeminiImageModel(model) && includesUnsupportedModelError(detail)) {
       try {
@@ -798,13 +827,17 @@ export const imagesEdits = async (
   let lastStatus = 0;
   let lastText = "";
   let retryCount = 0;
+  let lastRequestId = "";
 
   for (let attempt = 0; attempt <= imageRequestMaxRetries; attempt++) {
     let resp: Response;
+    const requestId = createRequestId();
+    lastRequestId = requestId;
     try {
       resp = await fetch(`${cfg.baseUrl}/v1/images/edits`, {
         method: "POST",
         headers: {
+          "X-Request-Id": requestId,
           ...buildAuthHeaders(cfg),
         },
         credentials: "include",
@@ -818,9 +851,13 @@ export const imagesEdits = async (
         await sleep(retryDelay(attempt), signal);
         continue;
       }
+      const timeoutHint = isLikelyTimeoutError(e)
+        ? `（前端等待 ${Math.round(imageFetchTimeoutMs / 1000)} 秒后超时）`
+        : "";
+      const traceHint = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
       throw new Error(
-        `图片编辑网络错误：${msg}。` +
-          `请检查站点到上游网关连通性（生产环境通常不是 CORS，而是代理超时或网络抖动）。`
+        `图片编辑网络错误：${msg}${timeoutHint}。` +
+          `请检查站点到上游网关连通性（生产环境通常不是 CORS，而是代理超时或网络抖动）。${traceHint}`
       );
     }
 
@@ -849,5 +886,6 @@ export const imagesEdits = async (
   }
 
   const retrySuffix = retryCount > 0 ? `（已自动重试 ${retryCount} 次）` : "";
-  throw new Error(`图片编辑请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}`.trim());
+  const traceSuffix = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
+  throw new Error(`图片编辑请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}。${traceSuffix}`.trim());
 };

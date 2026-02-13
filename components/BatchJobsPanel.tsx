@@ -118,12 +118,12 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   };
 
   return (
-    <div className="flex-1 min-h-0 flex overflow-hidden">
+    <div className="flex-1 min-h-0 h-full flex overflow-hidden">
       <aside className="w-[320px] border-r border-dark-700 bg-dark-800/70 flex flex-col min-h-0">
         <div className="p-3 border-b border-dark-700 space-y-2">
           <div className="text-sm font-semibold text-gray-100 flex items-center gap-2">
             <Icon name="layer-group" />
-            套图记录
+            套图工作台
           </div>
           <input
             value={query}
@@ -144,7 +144,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
           </select>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2 space-y-2">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain custom-scrollbar p-2 space-y-2">
           {filteredJobs.map((job) => {
             const active = selectedJob?.id === job.id;
             return (
@@ -248,7 +248,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain custom-scrollbar p-4 space-y-3">
               {selectedJob.slots.map((slot, idx) => {
                 const current = getActiveVersion(slot);
                 return (

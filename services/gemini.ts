@@ -1,9 +1,10 @@
 import { ImageResponseFormat, Message, SessionSettings, ProductScale } from "../types";
 import { imageObjToDataUrl, imagesGenerations, ResponseFormat } from "./openaiImages";
 import { getSupportedSizeForAspect } from "./sizeUtils";
+import { getEffectiveApiConfig } from "./apiConfig";
 
-const aspectRatioToSize = (aspectRatio: string): string => {
-  return getSupportedSizeForAspect(aspectRatio);
+const aspectRatioToSize = (aspectRatio: string, model?: string): string => {
+  return getSupportedSizeForAspect(aspectRatio, model);
 };
 
 export const enhancePrompt = async (originalPrompt: string): Promise<string> => {
@@ -73,6 +74,50 @@ const detectImageInputMode = (value: string): ImageInputMode => {
   return "b64";
 };
 
+const productFaceDetectionCache = new Map<string, boolean>();
+
+const buildImageCacheKey = (src: string): string => {
+  const s = String(src || "");
+  return `${s.length}:${s.slice(0, 128)}:${s.slice(-128)}`;
+};
+
+const loadImageElement = (src: string): Promise<HTMLImageElement> =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    if (/^https?:\/\//i.test(src)) {
+      img.crossOrigin = "anonymous";
+    }
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("load image failed"));
+    img.src = src;
+  });
+
+const detectHumanFaceInImage = async (src: string): Promise<boolean> => {
+  if (!src || typeof window === "undefined") return false;
+  const FaceDetectorCtor = (window as any)?.FaceDetector;
+  if (typeof FaceDetectorCtor !== "function") return false;
+
+  try {
+    const img = await loadImageElement(src);
+    const detector = new FaceDetectorCtor({ fastMode: true, maxDetectedFaces: 1 });
+    const faces = await detector.detect(img);
+    return Array.isArray(faces) && faces.length > 0;
+  } catch {
+    return false;
+  }
+};
+
+const detectProductImageHasFace = async (productImage: string | null): Promise<boolean> => {
+  if (!productImage) return false;
+  const key = buildImageCacheKey(productImage);
+  const cached = productFaceDetectionCache.get(key);
+  if (typeof cached === "boolean") return cached;
+
+  const hasFace = await detectHumanFaceInImage(productImage);
+  productFaceDetectionCache.set(key, hasFace);
+  return hasFace;
+};
+
 export const generateResponse = async (
   currentMessageText: string,
   referenceImage: string | null, // Current upload
@@ -82,15 +127,7 @@ export const generateResponse = async (
   settings: SessionSettings,
   options: GenerateResponseOptions = {}
 ): Promise<GenerateResponseResult> => {
-  const imageInputsRaw: string[] = [];
-  if (productImage) imageInputsRaw.push(productImage);
-  if (modelImage) imageInputsRaw.push(modelImage);
-  if (referenceImage) imageInputsRaw.push(referenceImage);
-  if (Array.isArray(options.extraImages) && options.extraImages.length) {
-    for (const img of options.extraImages) {
-      if (typeof img === "string" && img.trim()) imageInputsRaw.push(img.trim());
-    }
-  }
+  const productImageHasFace = await detectProductImageHasFace(productImage);
 
   // If user didn't provide a new image this turn, fall back to the most recent
   // image in the history for iterative edits.
@@ -102,25 +139,40 @@ export const generateResponse = async (
       const imgPart = history[i].parts.find(p => p.type === 'image' && p.imageUrl);
       if (imgPart?.imageUrl) {
         lastHistoryImage = imgPart.imageUrl;
-        imageInputsRaw.push(imgPart.imageUrl);
         break;
       }
     }
   }
 
+  const extraImages = Array.isArray(options.extraImages)
+    ? options.extraImages.map((img) => String(img || "").trim()).filter(Boolean)
+    : [];
+
+  // 当存在“当前参考图/连续编辑图”时，产品图只做兜底，不再并行注入，
+  // 避免产品图（尤其带人物的产品图）覆盖当前编辑语义。
+  const includeProductImage = Boolean(productImage) && !referenceImage && !lastHistoryImage;
+  const isProductAuxiliary = Boolean(productImage) && productImageHasFace;
+
+  const imageInputsRaw: string[] = [];
+  if (referenceImage) imageInputsRaw.push(referenceImage);
+  if (lastHistoryImage) imageInputsRaw.push(lastHistoryImage);
+  if (modelImage) imageInputsRaw.push(modelImage);
+  if (includeProductImage && productImage) imageInputsRaw.push(productImage);
+  for (const img of extraImages) imageInputsRaw.push(img);
+
   // 网关要求同一次请求只用一种图片输入方式（URL 或 base64）。
-  // 优先级：当前上传图 > 额外编辑图 > 历史连续编辑图 > 一致性模特图。
+  // 优先级：当前上传图 > 额外编辑图 > 历史连续编辑图 > 一致性模特图 > 产品图兜底。
   const uniqueInputs = Array.from(new Set(imageInputsRaw.map((s) => String(s || "").trim()).filter(Boolean)));
-  const preferredMode: ImageInputMode | null = productImage
-    ? detectImageInputMode(productImage)
-    : referenceImage
-      ? detectImageInputMode(referenceImage)
-      : (options.extraImages && options.extraImages.length > 0)
-        ? detectImageInputMode(options.extraImages[0])
-        : lastHistoryImage
-          ? detectImageInputMode(lastHistoryImage)
-          : modelImage
-            ? detectImageInputMode(modelImage)
+  const preferredMode: ImageInputMode | null = referenceImage
+    ? detectImageInputMode(referenceImage)
+    : extraImages.length > 0
+      ? detectImageInputMode(extraImages[0])
+      : lastHistoryImage
+        ? detectImageInputMode(lastHistoryImage)
+        : modelImage
+          ? detectImageInputMode(modelImage)
+          : (includeProductImage && productImage)
+            ? detectImageInputMode(productImage)
             : null;
 
   const imageInputs =
@@ -160,32 +212,26 @@ export const generateResponse = async (
   }
 
   try {
-    // Build a lightweight text context.
-    const historyLimit = 6;
-    const recentHistory = history.slice(-historyLimit);
-    const contextLines = recentHistory
-      .map(m => {
-        const t = m.parts
-          .filter(p => p.type === "text" && p.text)
-          .map(p => p.text)
-          .join(" ");
-        if (!t) return "";
-        return `${m.role === "user" ? "用户" : "助手"}：${t}`;
-      })
-      .filter(Boolean);
-
-    const contextText = contextLines.length ? `上下文：\n${contextLines.join("\n")}\n\n` : "";
+    // 这里不再拼接聊天历史文本，避免旧上下文干扰和额外时延。
+    // 连续编辑的一致性仍通过图片输入（product/model/reference/last image）保证。
     const systemText = settings.systemPrompt?.trim()
       ? `系统指令：\n${settings.systemPrompt.trim()}\n\n`
       : "";
     let imageContext = "";
-    if (productImage) imageContext += "\n图片说明：第一张是主要产品，请保持产品外观特征和细节。";
+    if (includeProductImage && !isProductAuxiliary) {
+      imageContext += "\n图片说明：第一张是主要产品，请保持产品外观特征和细节。";
+    }
+    if (includeProductImage && isProductAuxiliary) {
+      imageContext +=
+        "\n产品图检测到明显人脸：该图仅作辅助参考。请只参考产品本身的颜色、材质与结构，不要复刻其中人物主体、脸部与原构图。";
+    }
     if (modelImage) imageContext += "\n有模特图作为人物一致性参考，请保持人物特征稳定。";
     const n = Math.min(Math.max(options.n ?? 1, 1), 10);
     const responseFormat = options.responseFormat ?? settings.responseFormat ?? "url";
-    const sizeUsed = options.size ?? aspectRatioToSize(settings.aspectRatio);
+    const currentModel = getEffectiveApiConfig().defaultImageModel;
+    const sizeUsed = options.size ?? aspectRatioToSize(settings.aspectRatio, currentModel);
     const sizeInstruction = sizeUsed ? `\n\n尺寸要求：请生成 ${sizeUsed} 的图片。` : "";
-    const promptUsed = `${systemText}${imageContext}${contextText}${finalPrompt} ${scaleInstruction}${sizeInstruction}`.trim();
+    const promptUsed = `${systemText}${imageContext}${finalPrompt} ${scaleInstruction}${sizeInstruction}`.trim();
 
     const resp = await imagesGenerations(
       {

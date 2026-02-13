@@ -10,7 +10,7 @@ interface SystemPromptBarProps {
   hasDesktopTopRightOverlay?: boolean;
 }
 
-export const SystemPromptBar: React.FC<SystemPromptBarProps> = ({
+const SystemPromptBarInner: React.FC<SystemPromptBarProps> = ({
   settings,
   onUpdateSettings,
   templates,
@@ -171,3 +171,9 @@ export const SystemPromptBar: React.FC<SystemPromptBarProps> = ({
     </div>
   );
 };
+
+export const SystemPromptBar = React.memo(SystemPromptBarInner, (prev, next) =>
+  prev.settings === next.settings &&
+  prev.templates === next.templates &&
+  prev.hasDesktopTopRightOverlay === next.hasDesktopTopRightOverlay
+);

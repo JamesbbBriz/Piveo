@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -338,6 +339,13 @@ app.get("/auth/image-proxy", requireAuth, async (req, res) => {
 
 app.use(
   "/api",
+  (req, res, next) => {
+    const incoming = String(req.headers["x-request-id"] || "").trim();
+    const requestId = incoming || randomUUID();
+    req.requestId = requestId;
+    res.setHeader("X-Request-Id", requestId);
+    next();
+  },
   requireAuth,
   (req, res, next) => {
     if (!upstreamAuthorization) {
@@ -355,24 +363,47 @@ app.use(
     pathRewrite: { "^/api": "" },
     on: {
       proxyReq: (proxyReq, req) => {
+        const requestId = String(req.requestId || "");
         proxyReq.setHeader("Authorization", upstreamAuthorization);
         proxyReq.setHeader("X-Auth-User", String(req.authUser || ""));
+        if (requestId) {
+          proxyReq.setHeader("X-Request-Id", requestId);
+        }
+        if (req.originalUrl.includes("/v1/images/generations") || req.originalUrl.includes("/v1/images/edits")) {
+          console.info(`[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} -> ${targetProxy}`);
+        }
       },
       proxyRes: (proxyRes, req) => {
+        const requestId = String(req.requestId || "");
+        if (req.originalUrl.includes("/v1/images/generations") || req.originalUrl.includes("/v1/images/edits")) {
+          console.info(
+            `[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} <- ${proxyRes.statusCode || 0}`
+          );
+          return;
+        }
         if ((proxyRes.statusCode || 0) >= 500) {
           console.warn(
-            `[UPSTREAM] ${req.method} ${req.originalUrl} -> ${proxyRes.statusCode} (${targetProxy})`
+            `[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} -> ${proxyRes.statusCode} (${targetProxy})`
           );
         }
       },
-      error: (err, _req, res) => {
-        console.error(`[UPSTREAM] proxy error: ${err?.code || "unknown"} ${err?.message || "unknown error"}`);
+      error: (err, req, res) => {
+        const requestId = String(req?.requestId || "");
+        console.error(
+          `[UPSTREAM] ${requestId || "-"} proxy error: ${err?.code || "unknown"} ${err?.message || "unknown error"}`
+        );
         // 响应已结束或已销毁时不再写入，避免 ERR_STREAM_WRITE_AFTER_END
         if (res.writableEnded || res.destroyed) return;
         if (!res.headersSent) {
           res.writeHead(502, { "Content-Type": "application/json; charset=utf-8" });
         }
-        res.end(JSON.stringify({ ok: false, message: `上游网关请求失败：${err.message || "unknown error"}` }));
+        res.end(
+          JSON.stringify({
+            ok: false,
+            message: `上游网关请求失败：${err.message || "unknown error"}`,
+            request_id: requestId || undefined,
+          })
+        );
       },
     },
   })

@@ -8,6 +8,9 @@ interface ModelSwitcherFooterProps {
   onUpdateApiConfig: (cfg: ApiConfig) => void;
   refreshTick: number;
   hasActiveFeature?: boolean;
+  authUser?: string | null;
+  authLoading?: boolean;
+  onLogout?: () => void;
 }
 
 const formatMoney = (amount: number | null, currency = "USD"): string => {
@@ -19,7 +22,15 @@ const formatMoney = (amount: number | null, currency = "USD"): string => {
   }
 };
 
-export const ModelSwitcherFooter: React.FC<ModelSwitcherFooterProps> = ({ apiConfig, onUpdateApiConfig, refreshTick, hasActiveFeature = false }) => {
+const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
+  apiConfig,
+  onUpdateApiConfig,
+  refreshTick,
+  hasActiveFeature = false,
+  authUser = null,
+  authLoading = false,
+  onLogout,
+}) => {
   const [models, setModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [loadingBalance, setLoadingBalance] = useState(false);
@@ -187,7 +198,27 @@ export const ModelSwitcherFooter: React.FC<ModelSwitcherFooterProps> = ({ apiCon
             更新时间 {new Date(balanceUpdatedAt).toLocaleString("zh-CN", { hour12: false })}
           </div>
         )}
+        <div className="mt-2 pt-2 border-t border-dark-700 flex items-center justify-between gap-2">
+          <span className="text-[11px] text-gray-400 px-2 py-1 rounded border border-dark-600 bg-dark-800/70 truncate max-w-[110px]" title={authUser || "未登录"}>
+            {authUser || "未登录"}
+          </span>
+          <button
+            onClick={onLogout}
+            disabled={authLoading || !onLogout}
+            className="text-[11px] px-2.5 py-1.5 rounded border border-dark-600 bg-dark-800 hover:bg-dark-700 text-gray-200 disabled:opacity-60"
+          >
+            退出登录
+          </button>
+        </div>
       </div>
     </div>
   );
 };
+
+export const ModelSwitcherFooter = React.memo(ModelSwitcherFooterInner, (prev, next) =>
+  prev.apiConfig === next.apiConfig &&
+  prev.refreshTick === next.refreshTick &&
+  prev.hasActiveFeature === next.hasActiveFeature &&
+  prev.authUser === next.authUser &&
+  prev.authLoading === next.authLoading
+);

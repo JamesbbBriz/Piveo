@@ -17,6 +17,7 @@
    - `UPSTREAM_API_BASE_URL`：上游网关地址（默认 `https://n.lconai.com`）
    - 推荐开发环境：`VITE_API_BASE_URL=/api`（前端只打本地代理）
    - `VITE_DEFAULT_IMAGE_MODEL`：默认生图模型（默认：`gemini-2.5-flash-image`）
+   - `VITE_IMAGE_FETCH_TIMEOUT_MS`：前端等待图片接口超时时间（毫秒，默认 `120000`）
    - `VITE_ENABLE_CHAT_IMAGE_FALLBACK`：是否启用 `chat/completions` 出图回退（默认关闭，建议不上线开启）
    - `VITE_IMAGE_REQUEST_RETRIES`：图片请求自动重试次数（默认 `2`）
    - `VITE_IMAGE_RETRY_BASE_DELAY_MS`：重试基础延迟毫秒（默认 `1200`）

@@ -50,7 +50,10 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
   };
 
   return (
-    <div className={`flex w-full mb-6 ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div
+      className={`flex w-full mb-6 ${isUser ? 'justify-end' : 'justify-start'}`}
+      style={{ contentVisibility: "auto", containIntrinsicSize: "260px" }}
+    >
       <div className={`flex max-w-[88%] lg:max-w-[78%] gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
         
         {/* Avatar */}
