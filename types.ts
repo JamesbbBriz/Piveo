@@ -42,6 +42,7 @@ export interface ProductCatalogItem {
     height?: number;
     depth?: number;
   };
+  size?: string;
   description?: string;
   createdAt: number;
 }

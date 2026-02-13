@@ -54,6 +54,7 @@ export interface GenerateResponseOptions {
   productInfo?: {
     name?: string;
     dimensions?: { width?: number; height?: number; depth?: number };
+    size?: string;
     description?: string;
   };
 }
@@ -161,7 +162,9 @@ export const generateResponse = async (
     const pi = options.productInfo;
     const parts: string[] = [];
     if (pi.name) parts.push(`产品名称：${pi.name}`);
-    if (pi.dimensions) {
+    if (pi.size) {
+      parts.push(`产品实际尺寸：${pi.size}。请严格按照此尺寸比例渲染产品，确保产品与模特/场景的比例协调真实`);
+    } else if (pi.dimensions) {
       const dims: string[] = [];
       if (pi.dimensions.width) dims.push(`宽${pi.dimensions.width}cm`);
       if (pi.dimensions.height) dims.push(`高${pi.dimensions.height}cm`);

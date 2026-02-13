@@ -11,12 +11,10 @@ interface ProductsLibraryModalProps {
   onClose: () => void;
 }
 
-interface EditForm {
+interface AnnotateForm {
   name: string;
   category: string;
-  width: string;
-  height: string;
-  depth: string;
+  size: string;
   description: string;
 }
 
@@ -28,16 +26,44 @@ export const ProductsLibraryModal: React.FC<ProductsLibraryModalProps> = ({
   onClose,
 }) => {
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
-  const [editingProductId, setEditingProductId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<EditForm>({
+  const [annotatingProduct, setAnnotatingProduct] = useState<ProductCatalogItem | null>(null);
+  const [annotateForm, setAnnotateForm] = useState<AnnotateForm>({
     name: "",
     category: "",
-    width: "",
-    height: "",
-    depth: "",
+    size: "",
     description: "",
   });
+  const [awaitingPaste, setAwaitingPaste] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const pasteTargetRef = useRef<HTMLDivElement>(null);
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          onAddProduct({
+            id: crypto.randomUUID(),
+            name: `产品 ${products.length + 1}`,
+            imageUrl: reader.result as string,
+            createdAt: Date.now(),
+          });
+        };
+        reader.readAsDataURL(file);
+        setAwaitingPaste(false);
+        return;
+      }
+    }
+  };
+
+  const primePaste = () => {
+    pasteTargetRef.current?.focus();
+  };
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -56,56 +82,28 @@ export const ProductsLibraryModal: React.FC<ProductsLibraryModalProps> = ({
     e.target.value = "";
   };
 
-  const startEdit = (product: ProductCatalogItem) => {
-    setEditingProductId(product.id);
-    setEditForm({
+  const startAnnotate = (product: ProductCatalogItem) => {
+    setAnnotatingProduct(product);
+    setAnnotateForm({
       name: product.name,
       category: product.category || "",
-      width: product.dimensions?.width?.toString() || "",
-      height: product.dimensions?.height?.toString() || "",
-      depth: product.dimensions?.depth?.toString() || "",
+      size: product.size || "",
       description: product.description || "",
     });
   };
 
-  const saveEdit = (productId: string) => {
-    const trimmedName = editForm.name.trim();
+  const saveAnnotate = () => {
+    if (!annotatingProduct) return;
+    const trimmedName = annotateForm.name.trim();
     if (!trimmedName) return;
 
-    const width = parseFloat(editForm.width);
-    const height = parseFloat(editForm.height);
-    const depth = parseFloat(editForm.depth);
-
-    const dimensions: { width?: number; height?: number; depth?: number } = {};
-    if (width > 0) dimensions.width = width;
-    if (height > 0) dimensions.height = height;
-    if (depth > 0) dimensions.depth = depth;
-
-    const updates: Partial<Omit<ProductCatalogItem, 'id' | 'createdAt'>> = {
+    onUpdateProduct(annotatingProduct.id, {
       name: trimmedName,
-    };
-
-    const trimmedCategory = editForm.category.trim();
-    if (trimmedCategory) updates.category = trimmedCategory;
-
-    if (Object.keys(dimensions).length > 0) updates.dimensions = dimensions;
-
-    const trimmedDescription = editForm.description.trim();
-    if (trimmedDescription) updates.description = trimmedDescription;
-
-    onUpdateProduct(productId, updates);
-    setEditingProductId(null);
-  };
-
-  const cancelEdit = () => {
-    setEditingProductId(null);
-  };
-
-  const formatDimensions = (dimensions?: { width?: number; height?: number; depth?: number }) => {
-    if (!dimensions) return null;
-    const parts = [dimensions.width, dimensions.height, dimensions.depth].filter(v => v && v > 0);
-    if (parts.length === 0) return null;
-    return parts.join("×") + "cm";
+      category: annotateForm.category.trim() || undefined,
+      size: annotateForm.size.trim() || undefined,
+      description: annotateForm.description.trim() || undefined,
+    });
+    setAnnotatingProduct(null);
   };
 
   const inputClass = "px-2 py-1.5 text-xs rounded bg-dark-900 border border-dark-600 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-banana-500";
@@ -126,12 +124,34 @@ export const ProductsLibraryModal: React.FC<ProductsLibraryModalProps> = ({
                 {products.length} 个产品
               </span>
             </div>
-            <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-lg bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-200 flex items-center justify-center transition-colors"
-            >
-              <Icon name="times" />
-            </button>
+            <div className="flex items-center gap-2">
+              <div
+                ref={pasteTargetRef}
+                tabIndex={0}
+                onFocus={() => setAwaitingPaste(true)}
+                onBlur={() => setAwaitingPaste(false)}
+                onPaste={handlePaste}
+                className="sr-only"
+                aria-label="粘贴产品图片目标"
+              />
+              <button
+                onClick={primePaste}
+                className={`h-8 px-2.5 rounded-md border text-[11px] transition-colors ${
+                  awaitingPaste
+                    ? "border-banana-500/40 bg-banana-500/10 text-banana-400"
+                    : "border-dark-600 bg-dark-800 text-gray-300 hover:text-gray-100 hover:border-gray-500"
+                }`}
+                title="粘贴产品图"
+              >
+                粘贴产品
+              </button>
+              <button
+                onClick={onClose}
+                className="w-8 h-8 rounded-lg bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-200 flex items-center justify-center transition-colors"
+              >
+                <Icon name="times" />
+              </button>
+            </div>
           </div>
 
           {/* Content */}
@@ -181,20 +201,18 @@ export const ProductsLibraryModal: React.FC<ProductsLibraryModalProps> = ({
                         </span>
                       )}
                     </div>
-                    {formatDimensions(product.dimensions) && (
-                      <span className="text-[10px] text-gray-400">
-                        {formatDimensions(product.dimensions)}
-                      </span>
+                    {product.size && (
+                      <span className="text-[10px] text-gray-400">{product.size}</span>
                     )}
 
                     {/* Action buttons */}
                     <div className="flex gap-1 mt-0.5">
                       <button
-                        onClick={() => startEdit(product)}
+                        onClick={() => startAnnotate(product)}
                         className="flex-1 px-2 py-1 text-xs rounded bg-dark-800/80 border border-dark-600 text-gray-300 hover:border-banana-500 hover:text-banana-400 transition-colors"
                       >
-                        <Icon name="edit" className="mr-1" />
-                        编辑
+                        <Icon name="tag" className="mr-1" />
+                        标注
                       </button>
                       <button
                         onClick={() => {
@@ -222,71 +240,6 @@ export const ProductsLibraryModal: React.FC<ProductsLibraryModalProps> = ({
                   >
                     <Icon name="times" />
                   </button>
-
-                  {/* Edit form overlay */}
-                  {editingProductId === product.id && (
-                    <div className="absolute inset-0 bg-dark-900/95 p-3 flex flex-col gap-2 overflow-y-auto">
-                      <input
-                        type="text"
-                        placeholder="产品名称"
-                        value={editForm.name}
-                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                        className={inputClass}
-                        autoFocus
-                      />
-                      <input
-                        type="text"
-                        placeholder="分类（如：发饰、包包）"
-                        value={editForm.category}
-                        onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
-                        className={inputClass}
-                      />
-                      <div className="flex gap-1.5">
-                        <input
-                          type="number"
-                          placeholder="宽cm"
-                          value={editForm.width}
-                          onChange={(e) => setEditForm({ ...editForm, width: e.target.value })}
-                          className={`w-1/3 ${inputClass}`}
-                        />
-                        <input
-                          type="number"
-                          placeholder="高cm"
-                          value={editForm.height}
-                          onChange={(e) => setEditForm({ ...editForm, height: e.target.value })}
-                          className={`w-1/3 ${inputClass}`}
-                        />
-                        <input
-                          type="number"
-                          placeholder="深cm"
-                          value={editForm.depth}
-                          onChange={(e) => setEditForm({ ...editForm, depth: e.target.value })}
-                          className={`w-1/3 ${inputClass}`}
-                        />
-                      </div>
-                      <textarea
-                        placeholder="产品描述..."
-                        rows={2}
-                        value={editForm.description}
-                        onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                        className={`${inputClass} resize-none`}
-                      />
-                      <div className="flex gap-1 mt-auto">
-                        <button
-                          onClick={() => saveEdit(product.id)}
-                          className="flex-1 px-2 py-1.5 text-xs rounded bg-banana-500 text-dark-900 hover:bg-banana-400 font-medium transition-colors"
-                        >
-                          保存
-                        </button>
-                        <button
-                          onClick={cancelEdit}
-                          className="flex-1 px-2 py-1.5 text-xs rounded bg-dark-700 text-gray-300 hover:bg-dark-600 transition-colors"
-                        >
-                          取消
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
@@ -301,7 +254,11 @@ export const ProductsLibraryModal: React.FC<ProductsLibraryModalProps> = ({
 
           {/* Footer */}
           <div className="px-6 py-4 border-t border-dark-700 flex items-center justify-between bg-dark-900/60">
-            <p className="text-xs text-gray-500">提示：点击编辑可添加产品尺寸和描述</p>
+            <p className={`text-xs ${awaitingPaste ? "text-banana-400" : "text-gray-500"}`}>
+              {awaitingPaste
+                ? "现在直接按 Cmd/Ctrl + V 即可把剪贴板图片放进产品库。"
+                : "提示：点击标注可添加产品尺寸和描述"}
+            </p>
             <button
               onClick={onClose}
               className="px-4 py-2 text-sm rounded-lg bg-dark-800 hover:bg-dark-700 text-gray-200 border border-dark-600 transition-colors"
@@ -318,6 +275,77 @@ export const ProductsLibraryModal: React.FC<ProductsLibraryModalProps> = ({
           imageUrl={previewImageUrl}
           onClose={() => setPreviewImageUrl(null)}
         />
+      )}
+
+      {/* Annotate Modal */}
+      {annotatingProduct && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4" onClick={() => setAnnotatingProduct(null)}>
+          <div
+            className="bg-dark-900 border border-dark-700 rounded-xl w-full max-w-md shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3 border-b border-dark-700">
+              <h3 className="text-sm font-semibold text-gray-100">产品标注</h3>
+              <button onClick={() => setAnnotatingProduct(null)} className="text-gray-400 hover:text-gray-200">
+                <Icon name="times" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="flex gap-4">
+                <img
+                  src={annotatingProduct.imageUrl}
+                  alt={annotatingProduct.name}
+                  className="w-20 h-20 rounded-lg object-cover border border-dark-600 shrink-0"
+                />
+                <div className="flex-1 space-y-2">
+                  <input
+                    type="text"
+                    placeholder="产品名称"
+                    value={annotateForm.name}
+                    onChange={(e) => setAnnotateForm({ ...annotateForm, name: e.target.value })}
+                    className={inputClass + " w-full"}
+                    autoFocus
+                  />
+                  <input
+                    type="text"
+                    placeholder="分类（如：发饰、包包）"
+                    value={annotateForm.category}
+                    onChange={(e) => setAnnotateForm({ ...annotateForm, category: e.target.value })}
+                    className={inputClass + " w-full"}
+                  />
+                </div>
+              </div>
+              <input
+                type="text"
+                placeholder="尺寸（如：30×20×15cm、手掌大小、A4纸大小）"
+                value={annotateForm.size}
+                onChange={(e) => setAnnotateForm({ ...annotateForm, size: e.target.value })}
+                className={inputClass + " w-full"}
+              />
+              <textarea
+                placeholder="产品描述..."
+                rows={3}
+                value={annotateForm.description}
+                onChange={(e) => setAnnotateForm({ ...annotateForm, description: e.target.value })}
+                className={inputClass + " w-full resize-none"}
+              />
+            </div>
+            <div className="px-5 py-3 border-t border-dark-700 flex gap-2 justify-end">
+              <button
+                onClick={() => setAnnotatingProduct(null)}
+                className="px-4 py-1.5 text-xs rounded-lg bg-dark-700 text-gray-300 hover:bg-dark-600 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={saveAnnotate}
+                className="px-4 py-1.5 text-xs rounded-lg bg-banana-500 text-dark-900 hover:bg-banana-400 font-medium transition-colors"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

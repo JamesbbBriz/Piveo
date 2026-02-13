@@ -50,11 +50,13 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
     };
   }, []);
 
+  const QUICK_TIMEOUT_MS = 10_000;
+
   const loadModels = useCallback(async () => {
     const reqId = ++modelsReqIdRef.current;
     setLoadingModels(true);
     try {
-      const ids = await listModels({ api: apiConfig });
+      const ids = await listModels({ api: apiConfig, signal: AbortSignal.timeout(QUICK_TIMEOUT_MS) });
       if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
       const imageModels = ids.filter((m) => /image/i.test(m) && !/^sora-/i.test(m));
       const next = Array.from(new Set([apiConfig.defaultImageModel, ...(imageModels.length ? imageModels : ids)])).filter(Boolean);
@@ -75,7 +77,7 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
     const reqId = ++balanceReqIdRef.current;
     setLoadingBalance(true);
     try {
-      const r = await fetchBalance({ api: apiConfig });
+      const r = await fetchBalance({ api: apiConfig, signal: AbortSignal.timeout(QUICK_TIMEOUT_MS) });
       if (!mountedRef.current || reqId !== balanceReqIdRef.current) return;
       setBalanceAmount(r.amount);
       setBalanceCurrency(r.currency || "USD");
@@ -127,19 +129,6 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
   return (
     <div className="px-3 py-3 border-t border-dark-700">
       <div className="rounded-lg border border-dark-700 bg-dark-900/40 p-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] text-gray-400">模型</span>
-          <button
-            onClick={() => {
-              void loadModels();
-              void loadBalance();
-            }}
-            className="text-gray-500 hover:text-gray-300"
-            title="刷新模型与余额"
-          >
-            <Icon name={(loadingModels || loadingBalance) ? "spinner" : "arrows-rotate"} className={(loadingModels || loadingBalance) ? "fa-spin" : ""} />
-          </button>
-        </div>
         <select
           value={apiConfig.defaultImageModel}
           onChange={(e) => {
@@ -191,13 +180,19 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
         )}
 
         <div className="mt-3 text-[11px] text-gray-400">余额</div>
-        <div className="text-sm text-gray-200">{formatMoney(balanceAmount, balanceCurrency)}</div>
-        <div className="text-[10px] text-gray-500 mt-0.5">{balanceHint}</div>
-        {balanceUpdatedAt !== null && (
-          <div className="text-[10px] text-gray-600 mt-0.5">
-            更新时间 {new Date(balanceUpdatedAt).toLocaleString("zh-CN", { hour12: false })}
-          </div>
-        )}
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-gray-200">{formatMoney(balanceAmount, balanceCurrency)}</div>
+          <button
+            onClick={() => {
+              void loadModels();
+              void loadBalance();
+            }}
+            className="text-gray-500 hover:text-gray-300 p-1"
+            title="刷新模型与余额"
+          >
+            <Icon name={(loadingModels || loadingBalance) ? "spinner" : "arrows-rotate"} className={`text-xs ${(loadingModels || loadingBalance) ? "fa-spin" : ""}`} />
+          </button>
+        </div>
         <div className="mt-2 pt-2 border-t border-dark-700 flex items-center justify-between gap-2">
           <span className="text-[11px] text-gray-400 px-2 py-1 rounded border border-dark-600 bg-dark-800/70 truncate max-w-[110px]" title={authUser || "未登录"}>
             {authUser || "未登录"}

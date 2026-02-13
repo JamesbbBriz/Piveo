@@ -21,7 +21,36 @@ export const ModelsLibraryModal: React.FC<ModelsLibraryModalProps> = ({
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
+  const [awaitingPaste, setAwaitingPaste] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const pasteTargetRef = useRef<HTMLDivElement>(null);
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          onAddModel({
+            id: crypto.randomUUID(),
+            name: `自定义模特 ${models.length + 1}`,
+            imageUrl: reader.result as string,
+          });
+        };
+        reader.readAsDataURL(file);
+        setAwaitingPaste(false);
+        return;
+      }
+    }
+  };
+
+  const primePaste = () => {
+    pasteTargetRef.current?.focus();
+  };
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -74,12 +103,34 @@ export const ModelsLibraryModal: React.FC<ModelsLibraryModalProps> = ({
                 {models.length} 个模特
               </span>
             </div>
-            <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-lg bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-200 flex items-center justify-center transition-colors"
-            >
-              <Icon name="times" />
-            </button>
+            <div className="flex items-center gap-2">
+              <div
+                ref={pasteTargetRef}
+                tabIndex={0}
+                onFocus={() => setAwaitingPaste(true)}
+                onBlur={() => setAwaitingPaste(false)}
+                onPaste={handlePaste}
+                className="sr-only"
+                aria-label="粘贴模特图片目标"
+              />
+              <button
+                onClick={primePaste}
+                className={`h-8 px-2.5 rounded-md border text-[11px] transition-colors ${
+                  awaitingPaste
+                    ? "border-banana-500/40 bg-banana-500/10 text-banana-400"
+                    : "border-dark-600 bg-dark-800 text-gray-300 hover:text-gray-100 hover:border-gray-500"
+                }`}
+                title="粘贴模特图"
+              >
+                粘贴模特
+              </button>
+              <button
+                onClick={onClose}
+                className="w-8 h-8 rounded-lg bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-200 flex items-center justify-center transition-colors"
+              >
+                <Icon name="times" />
+              </button>
+            </div>
           </div>
 
           {/* Content */}
@@ -205,7 +256,11 @@ export const ModelsLibraryModal: React.FC<ModelsLibraryModalProps> = ({
 
           {/* Footer */}
           <div className="px-6 py-4 border-t border-dark-700 flex items-center justify-between bg-dark-900/60">
-            <p className="text-xs text-gray-500">提示：点击模特名称可以重命名</p>
+            <p className={`text-xs ${awaitingPaste ? "text-banana-400" : "text-gray-500"}`}>
+              {awaitingPaste
+                ? "现在直接按 Cmd/Ctrl + V 即可把剪贴板图片放进模特库。"
+                : "提示：点击模特名称可以重命名"}
+            </p>
             <button
               onClick={onClose}
               className="px-4 py-2 text-sm rounded-lg bg-dark-800 hover:bg-dark-700 text-gray-200 border border-dark-600 transition-colors"
