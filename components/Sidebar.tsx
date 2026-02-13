@@ -17,7 +17,9 @@ interface SidebarProps {
   apiConfig: ApiConfig;
   onUpdateApiConfig: (cfg: ApiConfig) => void;
   onOpenAssets: () => void;
+  onOpenModelsLibrary: () => void;
   assetCount: number;
+  modelCount: number;
   batchJobCount: number;
   authUser: string | null;
   authLoading: boolean;
@@ -40,7 +42,9 @@ const SidebarInner: React.FC<SidebarProps> = ({
   apiConfig,
   onUpdateApiConfig,
   onOpenAssets,
+  onOpenModelsLibrary,
   assetCount,
+  modelCount,
   batchJobCount,
   authUser,
   authLoading,
@@ -104,27 +108,42 @@ const SidebarInner: React.FC<SidebarProps> = ({
             </div>
 
             {/* Fixed Top Controls */}
-            <div className="px-3 py-2.5 border-b border-dark-700/60">
+            <div className="px-3 py-2.5 border-b border-dark-700/60 space-y-1.5">
               <button
                 onClick={() => {
                   onNewSession();
                   if (window.innerWidth < 1024) toggleSidebar();
                 }}
-                className="w-full h-9 flex items-center justify-center gap-1.5 bg-banana-500 hover:bg-banana-400 text-dark-900 font-semibold text-[14px] px-3 rounded-lg transition-colors"
+                className="w-full h-9 flex items-center justify-center gap-1.5 bg-banana-500 hover:bg-banana-400 text-dark-900 font-semibold text-[13px] px-2 rounded-lg transition-colors"
               >
                 <Icon name="plus" /> 新建项目
               </button>
-              <button
-                onClick={() => {
-                  onOpenAssets();
-                  if (window.innerWidth < 1024) toggleSidebar();
-                }}
-                className="w-full mt-1.5 h-9 flex items-center justify-center gap-1.5 bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 font-semibold text-[14px] px-3 rounded-lg transition-colors"
-                title="打开全局素材库"
-              >
-                <Icon name="images" /> 素材库
-                <span className="text-[10px] bg-dark-900/60 px-2 py-0.5 rounded text-gray-300">{assetCount}</span>
-              </button>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => {
+                    onOpenAssets();
+                    if (window.innerWidth < 1024) toggleSidebar();
+                  }}
+                  className="flex-1 h-8 flex items-center justify-center gap-1 bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 text-[12px] px-2 rounded-lg transition-colors"
+                  title="打开全局素材库"
+                >
+                  <Icon name="images" className="text-sm" />
+                  <span className="hidden sm:inline">素材库</span>
+                  <span className="text-[10px] bg-dark-900/60 px-1.5 py-0.5 rounded text-gray-300">{assetCount}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    onOpenModelsLibrary();
+                    if (window.innerWidth < 1024) toggleSidebar();
+                  }}
+                  className="flex-1 h-8 flex items-center justify-center gap-1 bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 text-[12px] px-2 rounded-lg transition-colors"
+                  title="打开模特库"
+                >
+                  <Icon name="users" className="text-sm" />
+                  <span className="hidden sm:inline">模特库</span>
+                  <span className="text-[10px] bg-dark-900/60 px-1.5 py-0.5 rounded text-gray-300">{modelCount}</span>
+                </button>
+              </div>
             </div>
 
             <div className="shrink-0 border-b border-dark-700/60">
@@ -198,6 +217,7 @@ export const Sidebar = React.memo(SidebarInner, (prev, next) =>
   prev.isOpen === next.isOpen &&
   prev.apiConfig === next.apiConfig &&
   prev.assetCount === next.assetCount &&
+  prev.modelCount === next.modelCount &&
   prev.batchJobCount === next.batchJobCount &&
   prev.authUser === next.authUser &&
   prev.authLoading === next.authLoading &&

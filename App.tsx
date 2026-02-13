@@ -21,6 +21,7 @@ import { getSession, login, logout } from './services/auth';
 import { BatchSetItem, BatchSetModal } from './components/BatchSetModal';
 import { BatchJobsPanel } from './components/BatchJobsPanel';
 import { downloadImageWithFormat, loadDownloadOptions } from './services/imageDownload';
+import { ModelsLibraryModal } from './components/ModelsLibraryModal';
 
 const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSettings => {
   const aspectRatioValues = getSupportedAspectRatios();
@@ -244,6 +245,7 @@ const App: React.FC = () => {
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
   const [isAssetsOpen, setIsAssetsOpen] = useState(false);
   const [isBatchSetOpen, setIsBatchSetOpen] = useState(false);
+  const [isModelsLibraryOpen, setIsModelsLibraryOpen] = useState(false);
   const [maskEditBaseUrl, setMaskEditBaseUrl] = useState<string | null>(null);
   const [maskEditContext, setMaskEditContext] = useState<{
     source: "chat";
@@ -701,6 +703,10 @@ const App: React.FC = () => {
       }));
     }
   }, [currentSessionId]);
+
+  const handleRenameModel = useCallback((modelId: string, newName: string) => {
+    setModels((prev) => prev.map((m) => (m.id === modelId ? { ...m, name: newName } : m)));
+  }, []);
 
   const handleUpdateApiConfig = useCallback((cfg: ApiConfig) => {
     setApiConfig(cfg);
@@ -2021,7 +2027,9 @@ const App: React.FC = () => {
         apiConfig={apiConfig}
         onUpdateApiConfig={handleUpdateApiConfig}
         onOpenAssets={openAssets}
+        onOpenModelsLibrary={() => setIsModelsLibraryOpen(true)}
         assetCount={totalAssetCount}
+        modelCount={models.length}
         batchJobCount={activeBatchJobCount}
         authUser={authUser}
         authLoading={authLoading}
@@ -2301,6 +2309,15 @@ const App: React.FC = () => {
             void handleBatchSetSubmit(items);
           }}
         />
+        {isModelsLibraryOpen && (
+          <ModelsLibraryModal
+            models={models}
+            onAddModel={handleAddModel}
+            onDeleteModel={handleDeleteModel}
+            onRenameModel={handleRenameModel}
+            onClose={() => setIsModelsLibraryOpen(false)}
+          />
+        )}
         {errorDetails && isErrorModalOpen && (
           <ErrorDetailsModal
             error={errorDetails}

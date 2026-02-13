@@ -102,6 +102,8 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | BatchJobStatus>("all");
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [awaitingProductPaste, setAwaitingProductPaste] = useState(false);
+  const [awaitingModelPaste, setAwaitingModelPaste] = useState(false);
 
   const filteredJobs = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -149,6 +151,48 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
       window.alert(`上传失败：${err instanceof Error ? err.message : String(err)}`);
     }
     e.target.value = "";
+  };
+
+  const handleProductPaste = async (jobId: string, e: React.ClipboardEvent) => {
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        e.preventDefault();
+        const file = items[i].getAsFile();
+        if (file) {
+          try {
+            const dataUrl = await fileToDataUrl(file);
+            onUpdateJobImages(jobId, { productImageUrl: dataUrl });
+            setAwaitingProductPaste(false);
+          } catch (err) {
+            console.error("粘贴产品图失败：", err);
+            window.alert(`粘贴失败：${err instanceof Error ? err.message : String(err)}`);
+          }
+          return;
+        }
+      }
+    }
+  };
+
+  const handleModelPaste = async (jobId: string, e: React.ClipboardEvent) => {
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        e.preventDefault();
+        const file = items[i].getAsFile();
+        if (file) {
+          try {
+            const dataUrl = await fileToDataUrl(file);
+            onUpdateJobImages(jobId, { modelImageUrl: dataUrl });
+            setAwaitingModelPaste(false);
+          } catch (err) {
+            console.error("粘贴模特图失败：", err);
+            window.alert(`粘贴失败：${err instanceof Error ? err.message : String(err)}`);
+          }
+          return;
+        }
+      }
+    }
   };
 
   return (
@@ -292,79 +336,129 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
               <div className="text-xs text-gray-400 mb-2">套图专用图片（可选）</div>
               <div className="grid grid-cols-2 gap-3">
                 {/* 产品图上传区 */}
-                <div className="rounded-lg border border-dark-700 bg-dark-800/40 p-2 flex flex-col">
+                <div className="rounded-lg border border-dark-700 bg-dark-800/40 p-2 flex flex-col gap-2">
                   {selectedJob.productImageUrl ? (
                     <>
                       <img
                         src={selectedJob.productImageUrl}
                         alt="产品图"
-                        className="w-full h-32 object-cover rounded-md border border-dark-600 bg-black/20 cursor-pointer hover:opacity-90 transition-opacity"
+                        className="w-full h-28 object-cover rounded-md border border-dark-600 bg-black/20 cursor-pointer hover:opacity-90 transition-opacity"
                         onClick={() => setPreviewImageUrl(selectedJob.productImageUrl!)}
                       />
-                      <button
-                        onClick={() => {
-                          if (window.confirm('确定要删除产品图吗？')) {
-                            onUpdateJobImages(selectedJob.id, { productImageUrl: null });
-                          }
-                        }}
-                        disabled={selectedJob.status === "deleted"}
-                        className="mt-2 px-2 py-1 text-[10px] rounded border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50"
-                      >
-                        删除产品图
-                      </button>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => setAwaitingProductPaste(true)}
+                          className={`flex-1 px-2 py-1 text-[10px] rounded border transition-colors ${
+                            awaitingProductPaste
+                              ? "border-banana-500/40 bg-banana-500/10 text-banana-400"
+                              : "border-dark-600 bg-dark-800 text-gray-300 hover:border-gray-500"
+                          }`}
+                        >
+                          粘贴更换
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (window.confirm('确定要删除产品图吗？')) {
+                              onUpdateJobImages(selectedJob.id, { productImageUrl: null });
+                            }
+                          }}
+                          disabled={selectedJob.status === "deleted"}
+                          className="flex-1 px-2 py-1 text-[10px] rounded border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50"
+                        >
+                          删除
+                        </button>
+                      </div>
                     </>
                   ) : (
-                    <label className="w-full h-32 rounded-md border-2 border-dashed border-dark-600 bg-dark-900/40 text-xs text-gray-500 flex flex-col items-center justify-center cursor-pointer hover:border-gray-500 hover:text-gray-400 transition-colors">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onFocus={() => setAwaitingProductPaste(true)}
+                      onBlur={() => setAwaitingProductPaste(false)}
+                      onPaste={(e) => handleProductPaste(selectedJob.id, e)}
+                      className={`w-full h-28 rounded-md border-2 border-dashed flex flex-col items-center justify-center text-xs cursor-pointer transition-colors outline-none ${
+                        awaitingProductPaste
+                          ? "border-banana-500 bg-banana-500/10 text-banana-400"
+                          : "border-dark-600 bg-dark-900/40 text-gray-500 hover:border-gray-500 hover:text-gray-400"
+                      }`}
+                      onClick={() => document.getElementById(`product-input-${selectedJob.id}`)?.click()}
+                    >
                       <Icon name="image" className="text-2xl mb-1" />
-                      <span>点击上传产品图</span>
+                      <span>{awaitingProductPaste ? "按 Cmd/Ctrl+V 粘贴" : "点击或粘贴产品图"}</span>
                       <input
+                        id={`product-input-${selectedJob.id}`}
                         type="file"
                         accept="image/*"
                         className="hidden"
                         onChange={(e) => handleProductImageUpload(selectedJob.id, e)}
                         disabled={selectedJob.status === "deleted"}
                       />
-                    </label>
+                    </div>
                   )}
-                  <div className="mt-1 text-[10px] text-gray-500 text-center">产品图</div>
+                  <div className="text-[10px] text-gray-500 text-center">产品图</div>
                 </div>
 
                 {/* 模特图上传区 */}
-                <div className="rounded-lg border border-dark-700 bg-dark-800/40 p-2 flex flex-col">
+                <div className="rounded-lg border border-dark-700 bg-dark-800/40 p-2 flex flex-col gap-2">
                   {selectedJob.modelImageUrl ? (
                     <>
                       <img
                         src={selectedJob.modelImageUrl}
                         alt="固定模特"
-                        className="w-full h-32 object-cover rounded-md border border-dark-600 bg-black/20 cursor-pointer hover:opacity-90 transition-opacity"
+                        className="w-full h-28 object-cover rounded-md border border-dark-600 bg-black/20 cursor-pointer hover:opacity-90 transition-opacity"
                         onClick={() => setPreviewImageUrl(selectedJob.modelImageUrl!)}
                       />
-                      <button
-                        onClick={() => {
-                          if (window.confirm('确定要删除固定模特图吗？')) {
-                            onUpdateJobImages(selectedJob.id, { modelImageUrl: null });
-                          }
-                        }}
-                        disabled={selectedJob.status === "deleted"}
-                        className="mt-2 px-2 py-1 text-[10px] rounded border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50"
-                      >
-                        删除模特图
-                      </button>
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => setAwaitingModelPaste(true)}
+                          className={`flex-1 px-2 py-1 text-[10px] rounded border transition-colors ${
+                            awaitingModelPaste
+                              ? "border-banana-500/40 bg-banana-500/10 text-banana-400"
+                              : "border-dark-600 bg-dark-800 text-gray-300 hover:border-gray-500"
+                          }`}
+                        >
+                          粘贴更换
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (window.confirm('确定要删除固定模特图吗？')) {
+                              onUpdateJobImages(selectedJob.id, { modelImageUrl: null });
+                            }
+                          }}
+                          disabled={selectedJob.status === "deleted"}
+                          className="flex-1 px-2 py-1 text-[10px] rounded border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50"
+                        >
+                          删除
+                        </button>
+                      </div>
                     </>
                   ) : (
-                    <label className="w-full h-32 rounded-md border-2 border-dashed border-dark-600 bg-dark-900/40 text-xs text-gray-500 flex flex-col items-center justify-center cursor-pointer hover:border-gray-500 hover:text-gray-400 transition-colors">
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onFocus={() => setAwaitingModelPaste(true)}
+                      onBlur={() => setAwaitingModelPaste(false)}
+                      onPaste={(e) => handleModelPaste(selectedJob.id, e)}
+                      className={`w-full h-28 rounded-md border-2 border-dashed flex flex-col items-center justify-center text-xs cursor-pointer transition-colors outline-none ${
+                        awaitingModelPaste
+                          ? "border-banana-500 bg-banana-500/10 text-banana-400"
+                          : "border-dark-600 bg-dark-900/40 text-gray-500 hover:border-gray-500 hover:text-gray-400"
+                      }`}
+                      onClick={() => document.getElementById(`model-input-${selectedJob.id}`)?.click()}
+                    >
                       <Icon name="user" className="text-2xl mb-1" />
-                      <span>点击上传固定模特</span>
+                      <span>{awaitingModelPaste ? "按 Cmd/Ctrl+V 粘贴" : "点击或粘贴模特图"}</span>
                       <input
+                        id={`model-input-${selectedJob.id}`}
                         type="file"
                         accept="image/*"
                         className="hidden"
                         onChange={(e) => handleModelImageUpload(selectedJob.id, e)}
                         disabled={selectedJob.status === "deleted"}
                       />
-                    </label>
+                    </div>
                   )}
-                  <div className="mt-1 text-[10px] text-gray-500 text-center">固定模特</div>
+                  <div className="text-[10px] text-gray-500 text-center">固定模特</div>
                 </div>
               </div>
             </div>
