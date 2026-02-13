@@ -12,7 +12,7 @@ import { DEFAULT_ASPECT_RATIO } from './constants';
 import { ApiConfig, getEffectiveApiConfig, saveStoredApiConfig } from './services/apiConfig';
 import { AssetsModal, type AssetItem } from './components/AssetsModal';
 import { ErrorDetailsModal, type ErrorDetails } from './components/ErrorDetailsModal';
-import { MaskEditorModal } from './components/MaskEditorModal';
+import { MaskEditorModal, type MaskEditorHistoryItem } from './components/MaskEditorModal';
 import { imagesEdits, imageObjToDataUrl, ResponseFormat } from './services/openaiImages';
 import { filterSizesByAspect, getSupportedAspectRatios, getSupportedSizeForAspect } from './services/sizeUtils';
 import { PromptModelPanel } from './components/PromptModelPanel';
@@ -141,6 +141,16 @@ const hashString = (input: string): string => {
   }
   return (h >>> 0).toString(16);
 };
+
+const isDataOrBlobUrl = (url: string): boolean => /^data:|^blob:/i.test(String(url || ""));
+
+const blobToDataUrl = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("文件读取失败"));
+    reader.readAsDataURL(blob);
+  });
 
 const findLastImageUrl = (messages: Message[]): string | null => {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -369,6 +379,45 @@ const App: React.FC = () => {
 
   const currentSession = sessions.find(s => s.id === currentSessionId) || sessions[0];
   const currentMessageCount = currentSession?.messages.length || 0;
+
+  const maskHistoryItems = useMemo<MaskEditorHistoryItem[]>(() => {
+    if (!currentSession) return [];
+    const seen = new Set<string>();
+    const items: MaskEditorHistoryItem[] = [];
+
+    for (let mi = currentSession.messages.length - 1; mi >= 0; mi--) {
+      const m = currentSession.messages[mi];
+      if (m.role !== "model") continue;
+      const messageAction = m.parts.find((p) => p.type === "text" && p.text?.startsWith("操作："))?.text?.replace("操作：", "").trim();
+      for (let pi = m.parts.length - 1; pi >= 0; pi--) {
+        const p = m.parts[pi];
+        if (p.type !== "image" || !p.imageUrl) continue;
+        if (seen.has(p.imageUrl)) continue;
+        seen.add(p.imageUrl);
+        const ts = p.meta?.createdAt || m.timestamp;
+        const timeLabel = new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const actionLabel = p.meta?.action || messageAction || "生成结果";
+        const subtitle = p.meta?.size ? `${timeLabel} · ${p.meta.size}` : timeLabel;
+        items.push({
+          id: p.meta?.id || `${m.id}-${pi}`,
+          imageUrl: p.imageUrl,
+          title: actionLabel,
+          subtitle,
+        });
+      }
+    }
+
+    if (maskEditBaseUrl && !seen.has(maskEditBaseUrl)) {
+      items.unshift({
+        id: `mask-current-${hashString(maskEditBaseUrl)}`,
+        imageUrl: maskEditBaseUrl,
+        title: "当前编辑图",
+        subtitle: "未进入历史",
+      });
+    }
+
+    return items;
+  }, [currentSession, maskEditBaseUrl]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -786,6 +835,24 @@ const App: React.FC = () => {
     setMaskEditBaseUrl(baseImageUrl);
   }, []);
 
+  const ensureImageDataUrl = useCallback(async (imageUrl: string, signal?: AbortSignal): Promise<string> => {
+    if (!imageUrl || isDataOrBlobUrl(imageUrl)) return imageUrl;
+    const target = /^https?:\/\//i.test(imageUrl)
+      ? `/auth/image-proxy?url=${encodeURIComponent(imageUrl)}`
+      : imageUrl;
+
+    const resp = await fetch(target, {
+      credentials: "include",
+      signal,
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`底图转码失败：HTTP ${resp.status} ${text}`.trim());
+    }
+    const blob = await resp.blob();
+    return await blobToDataUrl(blob);
+  }, []);
+
   const openBatchSetModal = useCallback(() => {
     if (isGenerating) return;
     setIsBatchSetOpen(true);
@@ -845,11 +912,15 @@ const App: React.FC = () => {
     }
   }, [currentSession, executeGeneration, inputText, isGenerating, selectedImage]);
 
-  const handleMaskSubmit = async (params: { prompt: string; maskDataUrl: string; maskOverlayDataUrl: string }) => {
-    if (!currentSession) return;
-    const base = maskEditBaseUrl;
-    setMaskEditBaseUrl(null);
-    if (!base) return;
+  const handleMaskSubmit = async (params: {
+    baseImageUrl: string;
+    prompt: string;
+    maskDataUrl: string;
+    maskOverlayDataUrl: string;
+  }): Promise<{ generatedImageUrls?: string[] }> => {
+    if (!currentSession) return { generatedImageUrls: [] };
+    const base = params.baseImageUrl;
+    if (!base) return { generatedImageUrls: [] };
 
     const userMsg: Message = {
       id: uuidv4(),
@@ -863,6 +934,7 @@ const App: React.FC = () => {
     };
 
     const updatedMessages = [...currentSession.messages, userMsg];
+    const updatedMessagesLength = updatedMessages.length;
     setSessions((prev) =>
       prev.map((s) => (s.id === currentSession.id ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s))
     );
@@ -929,7 +1001,13 @@ const App: React.FC = () => {
           prev.map((s) => (s.id === currentSession.id ? { ...s, messages: nextMessages, updatedAt: Date.now() } : s))
         );
         setBalanceRefreshTick((v) => v + 1);
-        return;
+        const generatedImageUrls = aiMessage.parts
+          .filter((p) => p.type === "image" && p.imageUrl)
+          .map((p) => p.imageUrl as string);
+        if (generatedImageUrls.length === 0) {
+          throw new Error("局部编辑未返回新图片，请重试。");
+        }
+        return { generatedImageUrls };
       } catch (e) {
         // Fall back to the non-native approach below.
         console.warn("images/edits 失败，自动退化为参考图编辑：", e);
@@ -953,10 +1031,35 @@ const App: React.FC = () => {
       `${params.prompt}\n\n` +
       `说明：第二张参考图是遮罩提示图，红色区域是需要修改的区域；其它区域尽量保持不变，并严格保持人物/风格一致性。`;
 
-    await executeGeneration(augmentedPrompt, base, updatedMessages, {
+    let fallbackBase = base;
+    if (!isDataOrBlobUrl(base)) {
+      try {
+        fallbackBase = await ensureImageDataUrl(base);
+      } catch (e) {
+        console.warn("底图转 data URL 失败，继续使用原图 URL：", e);
+      }
+    }
+
+    const nextMessages = await executeGeneration(augmentedPrompt, fallbackBase, updatedMessages, {
       action: "局部编辑",
       extraImages: [params.maskOverlayDataUrl],
+      forceNoAutoReuse: true,
     });
+
+    const generatedImageUrls: string[] = [];
+    if (Array.isArray(nextMessages)) {
+      for (let i = updatedMessagesLength; i < nextMessages.length; i++) {
+        const m = nextMessages[i];
+        if (m.role !== "model") continue;
+        for (const p of m.parts) {
+          if (p.type === "image" && p.imageUrl) generatedImageUrls.push(p.imageUrl);
+        }
+      }
+    }
+    if (generatedImageUrls.length === 0) {
+      throw new Error("局部编辑未生成新图。请检查模型、网络或提示词后重试。");
+    }
+    return { generatedImageUrls };
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -1292,6 +1395,8 @@ const App: React.FC = () => {
         {maskEditBaseUrl && (
           <MaskEditorModal
             baseImageUrl={maskEditBaseUrl}
+            historyItems={maskHistoryItems}
+            onSelectBaseImage={setMaskEditBaseUrl}
             onClose={() => setMaskEditBaseUrl(null)}
             onSubmit={handleMaskSubmit}
           />
