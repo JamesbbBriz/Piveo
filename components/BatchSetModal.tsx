@@ -200,7 +200,7 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
             disabled={totalCount <= 0}
             className="px-3 py-1.5 text-xs rounded-md border border-banana-500 bg-banana-500 text-dark-900 font-semibold hover:bg-banana-400 disabled:opacity-50"
           >
-            开始出套图
+            创建套图任务
           </button>
         </div>
       </div>
