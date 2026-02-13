@@ -1649,6 +1649,121 @@ const App: React.FC = () => {
     }
   }, [appendBatchActionLog, batchJobs, buildBatchSlotPrompt, currentSession, inputText, isBatchGenerating, runBatchSlotGeneration, updateBatchJobById]);
 
+  const handleRunAllBatchSlots = useCallback(async (jobId: string, mode: "pending_only" | "all") => {
+    const job = batchJobs.find((j) => j.id === jobId);
+    if (!job || !currentSession || isBatchGenerating) return;
+    if (job.status === "deleted" || job.status === "archived") return;
+
+    const slotsToRun = mode === "all"
+      ? job.slots
+      : job.slots.filter((s) => s.status === "pending" || s.status === "failed");
+
+    if (slotsToRun.length === 0) return;
+
+    batchAbortRef.current?.abort();
+    batchAbortRef.current = new AbortController();
+    const controller = batchAbortRef.current;
+
+    setIsBatchGenerating(true);
+    setBatchGenerationProgress(null);
+    setCurrentView("batch");
+    setSelectedBatchJobId(jobId);
+
+    for (let i = 0; i < slotsToRun.length; i++) {
+      if (controller.signal.aborted) break;
+      const slot = slotsToRun[i];
+      const slotIndex = job.slots.findIndex((s) => s.id === slot.id);
+
+      setBatchGenerationProgress({
+        currentSlot: i + 1,
+        totalSlots: slotsToRun.length,
+        currentSlotLabel: slot.title,
+      });
+
+      updateBatchJobById(jobId, (target) => {
+        const nextSlots = target.slots.map((s) => (s.id === slot.id ? { ...s, status: "running", error: undefined } : s));
+        const next = { ...target, slots: nextSlots, status: "running", updatedAt: nowTs() };
+        return appendBatchActionLog(next, "slot_run_start", { slotId: slot.id, index: slotIndex });
+      });
+
+      try {
+        const slotPrompt = buildBatchSlotPrompt({
+          basePrompt: job.basePrompt || inputText.trim(),
+          total: job.slots.length,
+          index: slotIndex,
+          scene: slot.type,
+          sceneLabel: slot.title,
+          note: slot.promptTemplate,
+        });
+
+        const generated = await runBatchSlotGeneration({
+          jobId,
+          slotId: slot.id,
+          slotLabel: slot.title,
+          slotPrompt,
+          referenceImage: job.referenceImageUrl || null,
+          productImage: job.productImageUrl || null,
+          modelImage: job.modelImageUrl || null,
+        });
+
+        if (!generated.length) throw new Error("未返回图片");
+        setBalanceRefreshTick((v) => v + 1);
+        updateBatchJobById(jobId, (target) => {
+          const nextSlots = target.slots.map((s) => {
+            if (s.id !== slot.id) return s;
+            const prevLast = s.versions[s.versions.length - 1];
+            const appended = generated.map((v, idx) => ({
+              ...v,
+              index: s.versions.length + idx + 1,
+              source: s.versions.length === 0 ? "generate" : "rerun",
+              parentVersionId: prevLast?.id,
+            }));
+            return {
+              ...s,
+              status: "completed" as const,
+              versions: [
+                ...s.versions.map((v) => ({ ...v, isPrimary: false })),
+                ...appended.map((v, idx) => ({ ...v, isPrimary: idx === 0 })),
+              ],
+              activeVersionId: appended[0]?.id || s.activeVersionId,
+            };
+          });
+          const next = {
+            ...target,
+            slots: nextSlots,
+            status: mapSlotStatusToJobStatus(nextSlots),
+            updatedAt: nowTs(),
+          };
+          return appendBatchActionLog(next, "slot_run_success", { slotId: slot.id, generatedCount: generated.length });
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        updateBatchJobById(jobId, (target) => {
+          const nextSlots = target.slots.map((s) => (s.id === slot.id ? { ...s, status: "failed", error: msg } : s));
+          const next = {
+            ...target,
+            slots: nextSlots,
+            status: mapSlotStatusToJobStatus(nextSlots),
+            updatedAt: nowTs(),
+          };
+          return appendBatchActionLog(next, "slot_run_failed", { slotId: slot.id, error: msg });
+        });
+      }
+    }
+
+    updateBatchJobById(jobId, (target) => {
+      const finalStatus = mapSlotStatusToJobStatus(target.slots);
+      const next = { ...target, status: finalStatus, updatedAt: nowTs() };
+      return appendBatchActionLog(next, "job_finished", { status: finalStatus });
+    });
+
+    setIsBatchGenerating(false);
+    setBatchGenerationProgress(null);
+    if (batchAbortRef.current === controller) {
+      batchAbortRef.current = null;
+    }
+  }, [appendBatchActionLog, batchJobs, buildBatchSlotPrompt, currentSession, inputText, isBatchGenerating, runBatchSlotGeneration, updateBatchJobById]);
+
   const handleMaskSubmit = async (params: {
     baseImageUrl: string;
     prompt: string;
@@ -2268,6 +2383,7 @@ const App: React.FC = () => {
               jobs={batchJobs}
               selectedJobId={selectedBatchJobId}
               isBusy={isBatchGenerating}
+              models={models}
               onSelectJob={(jobId) => setSelectedBatchJobId(jobId)}
               onRunSlot={(jobId, slotId) => {
                 void handleRunSingleBatchSlot(jobId, slotId);
@@ -2284,6 +2400,10 @@ const App: React.FC = () => {
               }}
               onCancelGeneration={cancelBatchGeneration}
               onUpdateJobImages={handleUpdateBatchJobImages}
+              onRunAllSlots={(jobId, mode) => {
+                void handleRunAllBatchSlots(jobId, mode);
+              }}
+              onCreateJob={openBatchSetModal}
             />
           </div>
         )}

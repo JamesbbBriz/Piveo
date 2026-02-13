@@ -1,13 +1,15 @@
 import React, { useMemo, useState } from "react";
-import { BatchJob, BatchJobStatus, BatchSlot, BatchVersion } from "../types";
+import { BatchJob, BatchJobStatus, BatchSlot, BatchVersion, ModelCharacter } from "../types";
 import { Icon } from "./Icon";
 import { ImagePreviewModal } from "./ImagePreviewModal";
+import { ModelPickerModal } from "./ModelPickerModal";
 import { fileToDataUrl } from "../services/imageData";
 
 interface BatchJobsPanelProps {
   jobs: BatchJob[];
   selectedJobId: string | null;
   isBusy?: boolean;
+  models: ModelCharacter[];
   onSelectJob: (jobId: string) => void;
   onRunSlot: (jobId: string, slotId: string) => void;
   onSetPrimaryVersion: (jobId: string, slotId: string, versionId: string) => void;
@@ -29,6 +31,8 @@ interface BatchJobsPanelProps {
     productImageUrl?: string | null;
     modelImageUrl?: string | null;
   }) => void;
+  onRunAllSlots?: (jobId: string, mode: "pending_only" | "all") => void;
+  onCreateJob?: () => void;
 }
 
 const STATUS_OPTIONS: Array<{ value: "all" | BatchJobStatus; label: string }> = [
@@ -86,6 +90,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   jobs,
   selectedJobId,
   isBusy,
+  models,
   onSelectJob,
   onRunSlot,
   onSetPrimaryVersion,
@@ -98,12 +103,15 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   onDownloadVersion,
   onCancelGeneration,
   onUpdateJobImages,
+  onRunAllSlots,
+  onCreateJob,
 }) => {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | BatchJobStatus>("all");
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [awaitingProductPaste, setAwaitingProductPaste] = useState(false);
   const [awaitingModelPaste, setAwaitingModelPaste] = useState(false);
+  const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
 
   const filteredJobs = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -221,6 +229,15 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
               </option>
             ))}
           </select>
+          {onCreateJob && (
+            <button
+              onClick={onCreateJob}
+              className="w-full h-8 rounded-md border border-banana-500/40 bg-banana-500/10 text-banana-400 text-xs font-medium hover:bg-banana-500/20 transition-colors flex items-center justify-center gap-1.5"
+            >
+              <Icon name="plus" />
+              新建套图任务
+            </button>
+          )}
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain custom-scrollbar p-2 space-y-2">
@@ -286,6 +303,24 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {onRunAllSlots && selectedJob.status !== "deleted" && selectedJob.status !== "archived" && selectedJob.status !== "running" && (
+                  <button
+                    disabled={Boolean(isBusy)}
+                    onClick={() => {
+                      const hasCompleted = selectedJob.slots.some((s) => s.status === "completed");
+                      if (hasCompleted) {
+                        const choice = window.confirm("存在已完成的槽位。\n\n点击「确定」= 全部重跑\n点击「取消」= 只跑未完成的");
+                        onRunAllSlots(selectedJob.id, choice ? "all" : "pending_only");
+                      } else {
+                        onRunAllSlots(selectedJob.id, "all");
+                      }
+                    }}
+                    className="px-3 py-1.5 text-xs rounded-md border border-banana-500 bg-banana-500/20 text-banana-300 font-medium hover:bg-banana-500/30 disabled:opacity-50 transition-colors"
+                  >
+                    <Icon name="play" className="mr-1" />
+                    开始工作
+                  </button>
+                )}
                 <button
                   onClick={() => onDuplicateJob(selectedJob.id)}
                   className="px-2.5 py-1.5 text-xs rounded-md border border-dark-600 bg-dark-900 text-gray-200 hover:bg-dark-700"
@@ -410,6 +445,12 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                       />
                       <div className="flex gap-1">
                         <button
+                          onClick={() => setIsModelPickerOpen(true)}
+                          className="flex-1 px-2 py-1 text-[10px] rounded border border-dark-600 bg-dark-800 text-gray-300 hover:border-gray-500"
+                        >
+                          模特库
+                        </button>
+                        <button
                           onClick={() => setAwaitingModelPaste(true)}
                           className={`flex-1 px-2 py-1 text-[10px] rounded border transition-colors ${
                             awaitingModelPaste
@@ -433,29 +474,38 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                       </div>
                     </>
                   ) : (
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onFocus={() => setAwaitingModelPaste(true)}
-                      onBlur={() => setAwaitingModelPaste(false)}
-                      onPaste={(e) => handleModelPaste(selectedJob.id, e)}
-                      className={`w-full h-28 rounded-md border-2 border-dashed flex flex-col items-center justify-center text-xs cursor-pointer transition-colors outline-none ${
-                        awaitingModelPaste
-                          ? "border-banana-500 bg-banana-500/10 text-banana-400"
-                          : "border-dark-600 bg-dark-900/40 text-gray-500 hover:border-gray-500 hover:text-gray-400"
-                      }`}
-                      onClick={() => document.getElementById(`model-input-${selectedJob.id}`)?.click()}
-                    >
-                      <Icon name="user" className="text-2xl mb-1" />
-                      <span>{awaitingModelPaste ? "按 Cmd/Ctrl+V 粘贴" : "点击或粘贴模特图"}</span>
-                      <input
-                        id={`model-input-${selectedJob.id}`}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => handleModelImageUpload(selectedJob.id, e)}
-                        disabled={selectedJob.status === "deleted"}
-                      />
+                    <div className="flex flex-col gap-1.5">
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onFocus={() => setAwaitingModelPaste(true)}
+                        onBlur={() => setAwaitingModelPaste(false)}
+                        onPaste={(e) => handleModelPaste(selectedJob.id, e)}
+                        className={`w-full h-20 rounded-md border-2 border-dashed flex flex-col items-center justify-center text-xs cursor-pointer transition-colors outline-none ${
+                          awaitingModelPaste
+                            ? "border-banana-500 bg-banana-500/10 text-banana-400"
+                            : "border-dark-600 bg-dark-900/40 text-gray-500 hover:border-gray-500 hover:text-gray-400"
+                        }`}
+                        onClick={() => document.getElementById(`model-input-${selectedJob.id}`)?.click()}
+                      >
+                        <Icon name="user" className="text-lg mb-0.5" />
+                        <span className="text-[10px]">{awaitingModelPaste ? "按 Cmd/Ctrl+V 粘贴" : "点击上传或粘贴"}</span>
+                        <input
+                          id={`model-input-${selectedJob.id}`}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleModelImageUpload(selectedJob.id, e)}
+                          disabled={selectedJob.status === "deleted"}
+                        />
+                      </div>
+                      <button
+                        onClick={() => setIsModelPickerOpen(true)}
+                        className="w-full py-1.5 text-[10px] rounded border border-banana-500/40 bg-banana-500/10 text-banana-400 hover:bg-banana-500/20 transition-colors"
+                      >
+                        <Icon name="users" className="mr-1" />
+                        从模特库选择
+                      </button>
                     </div>
                   )}
                   <div className="text-[10px] text-gray-500 text-center">固定模特</div>
@@ -616,6 +666,16 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
       <ImagePreviewModal
         imageUrl={previewImageUrl}
         onClose={() => setPreviewImageUrl(null)}
+      />
+    )}
+    {isModelPickerOpen && selectedJob && (
+      <ModelPickerModal
+        models={models}
+        onSelect={(model) => {
+          onUpdateJobImages(selectedJob.id, { modelImageUrl: model.imageUrl });
+          setIsModelPickerOpen(false);
+        }}
+        onClose={() => setIsModelPickerOpen(false)}
       />
     )}
   </>
