@@ -22,6 +22,7 @@ import { BatchSetItem, BatchSetModal } from './components/BatchSetModal';
 import { BatchJobsPanel } from './components/BatchJobsPanel';
 import { downloadImageWithFormat, loadDownloadOptions } from './services/imageDownload';
 import { ModelsLibraryModal } from './components/ModelsLibraryModal';
+import { urlToDataUrl } from './services/imageData';
 
 const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSettings => {
   const aspectRatioValues = getSupportedAspectRatios();
@@ -788,18 +789,30 @@ const App: React.FC = () => {
       }
     );
 
-    const generated: BatchVersion[] = result.images.map((url, idx) => ({
-      id: uuidv4(),
-      slotId: params.slotId,
-      index: idx + 1,
-      imageUrl: url,
-      model: result.modelUsed || apiConfig.defaultImageModel,
-      promptUsed: result.promptUsed,
-      size: result.sizeUsed,
-      createdAt: nowTs(),
-      source: "generate",
-      isPrimary: idx === 0,
-    }));
+    // 转换临时 URL 为持久化 data URL
+    const generated: BatchVersion[] = await Promise.all(
+      result.images.map(async (url, idx) => {
+        let persistentUrl = url;
+        try {
+          persistentUrl = await urlToDataUrl(url);
+        } catch (e) {
+          console.warn('批量任务图片转换失败，使用原 URL:', e);
+        }
+
+        return {
+          id: uuidv4(),
+          slotId: params.slotId,
+          index: idx + 1,
+          imageUrl: persistentUrl,
+          model: result.modelUsed || apiConfig.defaultImageModel,
+          promptUsed: result.promptUsed,
+          size: result.sizeUsed,
+          createdAt: nowTs(),
+          source: "generate",
+          isPrimary: idx === 0,
+        };
+      })
+    );
 
     return generated;
   }, [apiConfig.defaultImageModel, currentSession]);
@@ -1000,10 +1013,18 @@ const App: React.FC = () => {
           aiMessage.parts.push({ type: "text", text: `操作：${opts.action}` });
         }
 
-        const pushImagePart = (url: string, resultMeta: GenerateResponseResult) => {
+        const pushImagePart = async (url: string, resultMeta: GenerateResponseResult) => {
+          // 将临时 URL 转换为 data URL 持久化存储
+          let persistentUrl = url;
+          try {
+            persistentUrl = await urlToDataUrl(url);
+          } catch (e) {
+            console.warn('图片转换失败，使用原 URL:', e);
+          }
+
           aiMessage.parts.push({
             type: "image",
-            imageUrl: url,
+            imageUrl: persistentUrl,
             meta: {
               id: uuidv4(),
               createdAt: Date.now(),
@@ -1019,7 +1040,7 @@ const App: React.FC = () => {
 
         const firstUrl = firstResult.images[0];
         if (firstUrl) {
-          pushImagePart(firstUrl, firstResult);
+          await pushImagePart(firstUrl, firstResult);
         }
 
         if (aiMessage.parts.length === 0) {
@@ -1075,9 +1096,17 @@ const App: React.FC = () => {
                   failed += 1;
                 } else {
                   setBalanceRefreshTick((v) => v + 1);
+                  // 转换为持久化 URL
+                  let persistentUrl = extraUrl;
+                  try {
+                    persistentUrl = await urlToDataUrl(extraUrl);
+                  } catch (e) {
+                    console.warn('图片转换失败，使用原 URL:', e);
+                  }
+
                   patchLatestAiMessage({
                     type: "image",
-                    imageUrl: extraUrl,
+                    imageUrl: persistentUrl,
                     meta: {
                       id: uuidv4(),
                       createdAt: Date.now(),
@@ -1897,7 +1926,19 @@ const App: React.FC = () => {
           throw new Error("局部编辑未生成新图。");
         }
 
-        appendToBatch(generatedImageUrls, modelUsed, size);
+        // 转换为持久化 URL
+        const persistentUrls = await Promise.all(
+          generatedImageUrls.map(async (url) => {
+            try {
+              return await urlToDataUrl(url);
+            } catch (e) {
+              console.warn('遮罩编辑图片转换失败，使用原 URL:', e);
+              return url;
+            }
+          })
+        );
+
+        appendToBatch(persistentUrls, modelUsed, size);
         setBalanceRefreshTick((v) => v + 1);
         return { generatedImageUrls };
       } catch (e) {
