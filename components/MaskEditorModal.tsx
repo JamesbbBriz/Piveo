@@ -9,8 +9,8 @@ interface MaskEditorModalProps {
 }
 
 const clamp = (n: number, min: number, max: number) => Math.min(Math.max(n, min), max);
-const IMAGE_LOAD_TIMEOUT_MS = 5000;
-const IMAGE_TOTAL_TIMEOUT_MS = 12000;
+const IMAGE_LOAD_TIMEOUT_MS = 8000;
+const IMAGE_TOTAL_TIMEOUT_MS = 20000;
 
 const isDataOrBlobUrl = (url: string): boolean => /^data:|^blob:/i.test(String(url || ""));
 const isHttpUrl = (url: string): boolean => /^https?:\/\//i.test(String(url || ""));
@@ -135,6 +135,22 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
         img.src = src;
       });
 
+    const fetchToObjectUrl = async (src: string, timeoutMs = 12_000): Promise<string> => {
+      const controller = new AbortController();
+      const t = window.setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const resp = await fetch(src, {
+          credentials: "include",
+          signal: controller.signal,
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const blob = await resp.blob();
+        return URL.createObjectURL(blob);
+      } finally {
+        window.clearTimeout(t);
+      }
+    };
+
     const load = async () => {
       let lastError: unknown = null;
 
@@ -150,6 +166,25 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
         }
       }
 
+      // 最稳路径：HTTP 图片优先走服务端代理并转本地 object URL，再绘制到 canvas。
+      // 这样可以规避浏览器对第三方 URL 的加载不确定性（CORS/缓存/限速）。
+      if (isHttpUrl(baseImageUrl)) {
+        try {
+          const proxied = `/auth/image-proxy?url=${encodeURIComponent(baseImageUrl)}`;
+          objectUrl = await fetchToObjectUrl(proxied, 15000);
+          const img = await loadImage(objectUrl, false, 10000);
+          if (cancelled) return;
+          drawToCanvas(img);
+          return;
+        } catch (e) {
+          lastError = e;
+          if (objectUrl) {
+            URL.revokeObjectURL(objectUrl);
+            objectUrl = null;
+          }
+        }
+      }
+
       try {
         // 根本优化：优先直接加载原图 URL，命中浏览器缓存时几乎秒开（与预览一致）。
         const img = await loadImage(baseImageUrl, false);
@@ -160,15 +195,31 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
         lastError = e;
       }
 
+      // 备选路径：浏览器 <img src> 卡住时，改为 fetch -> blob -> object URL
       try {
-        if (!isHttpUrl(baseImageUrl)) throw new Error("不支持的图片地址");
-        const proxied = `/auth/image-proxy?url=${encodeURIComponent(baseImageUrl)}`;
-        const img = await loadImage(proxied, false);
+        objectUrl = await fetchToObjectUrl(baseImageUrl);
+        const img = await loadImage(objectUrl, false, 8000);
         if (cancelled) return;
         drawToCanvas(img);
         return;
       } catch (e) {
         lastError = e;
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = null;
+        }
+      }
+
+      if (isHttpUrl(baseImageUrl)) {
+        try {
+          const proxied = `/auth/image-proxy?url=${encodeURIComponent(baseImageUrl)}`;
+          const img = await loadImage(proxied, false);
+          if (cancelled) return;
+          drawToCanvas(img);
+          return;
+        } catch (e) {
+          lastError = e;
+        }
       }
 
       if (cancelled) return;
@@ -349,10 +400,7 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
         </div>
 
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-0">
-          <div className="relative p-4 overflow-auto" ref={containerRef}>
-            {loadState === "loading" && (
-              <div className="text-gray-500 text-sm">加载图片中...</div>
-            )}
+          <div className="relative p-4 overflow-auto flex items-start justify-center" ref={containerRef}>
             {loadState === "error" && (
               <div className="max-w-lg rounded-xl border border-red-500/30 bg-red-500/10 p-4 space-y-3">
                 <div className="text-sm text-red-200">图片加载失败，无法进入局部编辑。</div>
@@ -375,12 +423,15 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
                 </div>
               </div>
             )}
-            {loadState === "ready" && (
-              <div className="inline-block relative rounded-xl border border-dark-700 bg-black/20 overflow-hidden">
-                <canvas ref={imgCanvasRef} className="block max-w-full h-auto" />
+            {loadState !== "error" && (
+              <div className="inline-block relative max-w-full rounded-xl border border-dark-700 bg-black/20 overflow-hidden">
+                <canvas
+                  ref={imgCanvasRef}
+                  className="block w-auto h-auto max-w-full max-h-[calc(88vh-180px)]"
+                />
                 <canvas
                   ref={overlayCanvasRef}
-                  className="absolute inset-0 block max-w-full h-auto touch-none"
+                  className="absolute inset-0 touch-none"
                   onPointerDown={(e) => {
                     if (!isReady) return;
                     (e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
@@ -412,6 +463,11 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
                     lastPointRef.current = null;
                   }}
                 />
+                {loadState === "loading" && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-dark-900/60">
+                    <div className="text-gray-400 text-sm">加载图片中...</div>
+                  </div>
+                )}
               </div>
             )}
           </div>

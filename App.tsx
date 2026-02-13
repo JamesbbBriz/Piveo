@@ -18,6 +18,7 @@ import { filterSizesByAspect, getSupportedAspectRatios, getSupportedSizeForAspec
 import { PromptModelPanel } from './components/PromptModelPanel';
 import { SystemPromptBar } from './components/SystemPromptBar';
 import { getSession, login, logout } from './services/auth';
+import { BatchSetItem, BatchSetModal } from './components/BatchSetModal';
 
 const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSettings => {
   const aspectRatioValues = getSupportedAspectRatios();
@@ -160,6 +161,14 @@ const QUICK_PROMPT_PRESETS = [
   "把产品放大 20%，更突出主体。",
 ];
 
+const getBatchSceneDirective = (scene: BatchSetItem["scene"]): string => {
+  if (scene === "model") return "产出模特展示图，突出穿戴/持物效果，人物姿态自然。";
+  if (scene === "flatlay") return "产出平铺图，无人物干扰，重点展示产品轮廓、材质和完整结构。";
+  if (scene === "detail") return "产出细节特写图，聚焦工艺、纹理、缝线或关键局部。";
+  if (scene === "white") return "产出纯净白底电商图，产品边缘清晰、背景干净、无杂物。";
+  return "按自定义描述产出画面。";
+};
+
 const createNewSession = (templates: SystemTemplate[]): Session => {
   const defaultTemplate = templates.length > 0 ? templates[0].content : '';
   return {
@@ -199,6 +208,7 @@ const App: React.FC = () => {
   const [errorDetails, setErrorDetails] = useState<ErrorDetails | null>(null);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
   const [isAssetsOpen, setIsAssetsOpen] = useState(false);
+  const [isBatchSetOpen, setIsBatchSetOpen] = useState(false);
   const [maskEditBaseUrl, setMaskEditBaseUrl] = useState<string | null>(null);
   const [balanceRefreshTick, setBalanceRefreshTick] = useState(0);
   const [hasHydratedStorage, setHasHydratedStorage] = useState(false);
@@ -225,7 +235,13 @@ const App: React.FC = () => {
     prompt: string;
     image: string | null;
     customMessages?: Message[];
-    opts?: { action?: string; extraImages?: string[]; sizes?: string[] };
+    opts?: {
+      action?: string;
+      extraImages?: string[];
+      sizes?: string[];
+      batchCountOverride?: number;
+      forceNoAutoReuse?: boolean;
+    };
   } | null>(null);
 
   useEffect(() => {
@@ -536,13 +552,22 @@ const App: React.FC = () => {
     prompt: string,
     image: string | null,
     customMessages?: Message[],
-    opts?: { action?: string; extraImages?: string[]; sizes?: string[] }
+    opts?: {
+      action?: string;
+      extraImages?: string[];
+      sizes?: string[];
+      batchCountOverride?: number;
+      forceNoAutoReuse?: boolean;
+    }
   ) => {
     if (!currentSession) return;
     lastRunRef.current = { prompt, image, customMessages, opts };
 
     const sessionId = currentSession.id;
-    const batchCount = currentSession.settings.batchCount || 1;
+    const batchCount = Math.min(
+      Math.max(opts?.batchCountOverride ?? (currentSession.settings.batchCount || 1), 1),
+      10
+    );
     const responseFormat: ImageResponseFormat = "url";
 
     const baseSize = aspectRatioToSize(currentSession.settings.aspectRatio);
@@ -600,6 +625,7 @@ const App: React.FC = () => {
             size,
             responseFormat,
             extraImages: opts?.extraImages,
+            disableAutoUseLastImage: Boolean(opts?.forceNoAutoReuse),
             signal: controller.signal,
           }
         );
@@ -648,6 +674,7 @@ const App: React.FC = () => {
           s.id === sessionId ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s
         ));
       }
+      return updatedMessages;
     } catch (e) {
       if (isAbortError(e)) {
         const cancelMsg: Message = {
@@ -660,7 +687,7 @@ const App: React.FC = () => {
         setSessions(prev => prev.map(s =>
           s.id === sessionId ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s
         ));
-        return;
+        return updatedMessages;
       }
 
       const msg = e instanceof Error ? e.message : String(e);
@@ -696,6 +723,7 @@ const App: React.FC = () => {
       setSessions(prev => prev.map(s =>
         s.id === sessionId ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s
       ));
+      return updatedMessages;
     } finally {
       setIsGenerating(false);
       setGenerationStage(null);
@@ -757,6 +785,65 @@ const App: React.FC = () => {
   const openMaskEdit = useCallback((baseImageUrl: string) => {
     setMaskEditBaseUrl(baseImageUrl);
   }, []);
+
+  const openBatchSetModal = useCallback(() => {
+    if (isGenerating) return;
+    setIsBatchSetOpen(true);
+  }, [isGenerating]);
+
+  const handleBatchSetSubmit = useCallback(async (items: BatchSetItem[]) => {
+    if (!currentSession || isGenerating || items.length === 0) return;
+    setIsBatchSetOpen(false);
+
+    const basePrompt = inputText.trim();
+    const fixedReferenceImage = selectedImage;
+    let messageCursor = currentSession.messages;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const sceneDirective = getBatchSceneDirective(item.scene);
+      const slotPrompt = [
+        basePrompt ? `整体要求：${basePrompt}` : "整体要求：围绕当前产品产出电商可用图片。",
+        `当前任务：这是套图第 ${i + 1} 张（共 ${items.length} 张），类型为「${item.sceneLabel}」。`,
+        sceneDirective,
+        item.note ? `单独要求：${item.note}` : "",
+        "输出要求：构图完整、主体清晰、光线自然、可直接用于电商展示。",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const slotLabel = `套图 ${i + 1}/${items.length} · ${item.sceneLabel}`;
+      const userMessage: Message = {
+        id: uuidv4(),
+        role: "user",
+        parts: [
+          {
+            type: "text",
+            text: `(${slotLabel})${item.note ? ` ${item.note}` : ""}`,
+          },
+        ],
+        timestamp: Date.now(),
+      };
+      if (fixedReferenceImage) {
+        userMessage.parts.push({ type: "image", imageUrl: fixedReferenceImage });
+      }
+
+      messageCursor = [...messageCursor, userMessage];
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === currentSession.id ? { ...s, messages: messageCursor, updatedAt: Date.now() } : s
+        )
+      );
+
+      const nextMessages = await executeGeneration(slotPrompt, fixedReferenceImage, messageCursor, {
+        action: slotLabel,
+        batchCountOverride: 1,
+        forceNoAutoReuse: true,
+      });
+      if (!nextMessages) break;
+      messageCursor = nextMessages;
+    }
+  }, [currentSession, executeGeneration, inputText, isGenerating, selectedImage]);
 
   const handleMaskSubmit = async (params: { prompt: string; maskDataUrl: string; maskOverlayDataUrl: string }) => {
     if (!currentSession) return;
@@ -1141,6 +1228,7 @@ const App: React.FC = () => {
                   onUpdateSettings={handleUpdateSettings}
                   models={models}
                   onAddModel={handleAddModel}
+                  onOpenBatchSet={openBatchSetModal}
                 />
                 {selectedImage && (
                   <div className="relative inline-block self-start">
@@ -1186,6 +1274,13 @@ const App: React.FC = () => {
           onUsePrompt={(prompt) => {
             setInputText(prompt);
             setIsAssetsOpen(false);
+          }}
+        />
+        <BatchSetModal
+          isOpen={isBatchSetOpen}
+          onClose={() => setIsBatchSetOpen(false)}
+          onSubmit={(items) => {
+            void handleBatchSetSubmit(items);
           }}
         />
         {errorDetails && isErrorModalOpen && (

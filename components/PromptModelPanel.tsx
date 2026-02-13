@@ -9,6 +9,7 @@ interface PromptModelPanelProps {
   onUpdateSettings: (next: SessionSettings) => void;
   models: ModelCharacter[];
   onAddModel: (model: ModelCharacter) => void;
+  onOpenBatchSet?: () => void;
 }
 
 export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
@@ -16,6 +17,7 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
   onUpdateSettings,
   models,
   onAddModel,
+  onOpenBatchSet,
 }) => {
   const [isGeneratingModel, setIsGeneratingModel] = useState(false);
   const [awaitingProductPaste, setAwaitingProductPaste] = useState(false);
@@ -281,15 +283,27 @@ export const PromptModelPanel: React.FC<PromptModelPanelProps> = ({
         <div className="w-full xl:w-auto xl:min-w-[320px] rounded-lg border border-dark-600 bg-dark-800/60 px-3 py-2">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] text-gray-400">当前工作流</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
-              workflowMode === "锁定模特"
-                ? "border-banana-500/40 text-banana-400 bg-banana-500/10"
-                : workflowMode === "连续编辑"
-                  ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
-                  : "border-gray-500/40 text-gray-300 bg-dark-700"
-            }`}>
-              {workflowMode}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                workflowMode === "锁定模特"
+                  ? "border-banana-500/40 text-banana-400 bg-banana-500/10"
+                  : workflowMode === "连续编辑"
+                    ? "border-emerald-500/40 text-emerald-300 bg-emerald-500/10"
+                    : "border-gray-500/40 text-gray-300 bg-dark-700"
+              }`}>
+                {workflowMode}
+              </span>
+              {onOpenBatchSet && (
+                <button
+                  onClick={onOpenBatchSet}
+                  className="h-7 px-2.5 rounded-md border border-banana-500/40 bg-banana-500/10 text-[10px] text-banana-400 hover:bg-banana-500/20 transition-colors flex items-center gap-1"
+                  title="按规则批量生成套图"
+                >
+                  <Icon name="layer-group" />
+                  一键出套图
+                </button>
+              )}
+            </div>
           </div>
           <p className="mt-1 text-[10px] text-gray-500 leading-relaxed">{workflowHint}</p>
         </div>

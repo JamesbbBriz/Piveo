@@ -48,6 +48,7 @@ export interface GenerateResponseOptions {
   size?: string;
   responseFormat?: ImageResponseFormat;
   extraImages?: string[];
+  disableAutoUseLastImage?: boolean;
   signal?: AbortSignal;
 }
 
@@ -96,7 +97,7 @@ export const generateResponse = async (
   const lastMsg = history[history.length - 1];
   const hasNewImage = lastMsg?.parts?.some(p => p.type === 'image') ?? false;
   let lastHistoryImage: string | null = null;
-  if (settings.autoUseLastImage && !hasNewImage && !referenceImage) {
+  if (!options.disableAutoUseLastImage && settings.autoUseLastImage && !hasNewImage && !referenceImage) {
     for (let i = history.length - 2; i >= 0; i--) {
       const imgPart = history[i].parts.find(p => p.type === 'image' && p.imageUrl);
       if (imgPart?.imageUrl) {
