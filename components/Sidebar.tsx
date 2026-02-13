@@ -18,8 +18,10 @@ interface SidebarProps {
   onUpdateApiConfig: (cfg: ApiConfig) => void;
   onOpenAssets: () => void;
   onOpenModelsLibrary: () => void;
+  onOpenProductsLibrary: () => void;
   assetCount: number;
   modelCount: number;
+  productCount: number;
   batchJobCount: number;
   authUser: string | null;
   authLoading: boolean;
@@ -43,8 +45,10 @@ const SidebarInner: React.FC<SidebarProps> = ({
   onUpdateApiConfig,
   onOpenAssets,
   onOpenModelsLibrary,
+  onOpenProductsLibrary,
   assetCount,
   modelCount,
+  productCount,
   batchJobCount,
   authUser,
   authLoading,
@@ -142,6 +146,18 @@ const SidebarInner: React.FC<SidebarProps> = ({
                   <Icon name="users" className="text-sm" />
                   <span className="hidden sm:inline">模特库</span>
                   <span className="text-[10px] bg-dark-900/60 px-1.5 py-0.5 rounded text-gray-300">{modelCount}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    onOpenProductsLibrary();
+                    if (window.innerWidth < 1024) toggleSidebar();
+                  }}
+                  className="flex-1 h-8 flex items-center justify-center gap-1 bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 text-[12px] px-2 rounded-lg transition-colors"
+                  title="打开产品库"
+                >
+                  <Icon name="cube" className="text-sm" />
+                  <span className="hidden sm:inline">产品库</span>
+                  <span className="text-[10px] bg-dark-900/60 px-1.5 py-0.5 rounded text-gray-300">{productCount}</span>
                 </button>
               </div>
             </div>

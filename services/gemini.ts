@@ -51,6 +51,11 @@ export interface GenerateResponseOptions {
   extraImages?: string[];
   disableAutoUseLastImage?: boolean;
   signal?: AbortSignal;
+  productInfo?: {
+    name?: string;
+    dimensions?: { width?: number; height?: number; depth?: number };
+    description?: string;
+  };
 }
 
 export interface GenerateResponseResult {
@@ -150,6 +155,25 @@ export const generateResponse = async (
     scaleInstruction = "尺寸要求：让产品更显眼、更厚、更大。";
   }
 
+  // --- PRODUCT INFO ---
+  let productInfoInstruction = "";
+  if (options.productInfo) {
+    const pi = options.productInfo;
+    const parts: string[] = [];
+    if (pi.name) parts.push(`产品名称：${pi.name}`);
+    if (pi.dimensions) {
+      const dims: string[] = [];
+      if (pi.dimensions.width) dims.push(`宽${pi.dimensions.width}cm`);
+      if (pi.dimensions.height) dims.push(`高${pi.dimensions.height}cm`);
+      if (pi.dimensions.depth) dims.push(`深${pi.dimensions.depth}cm`);
+      if (dims.length) {
+        parts.push(`产品实际尺寸：${dims.join("×")}。请严格按照此尺寸比例渲染产品，确保产品与模特/场景的比例协调真实`);
+      }
+    }
+    if (pi.description) parts.push(`产品特征：${pi.description}`);
+    if (parts.length) productInfoInstruction = parts.join("。") + "。";
+  }
+
   let finalPrompt = currentMessageText || "生成图片。";
   const lower = finalPrompt.toLowerCase();
   if (
@@ -182,7 +206,8 @@ export const generateResponse = async (
     const currentModel = getEffectiveApiConfig().defaultImageModel;
     const sizeUsed = options.size ?? aspectRatioToSize(settings.aspectRatio, currentModel);
     const sizeInstruction = sizeUsed ? `\n\n尺寸要求：请生成 ${sizeUsed} 的图片。` : "";
-    const promptUsed = `${systemText}${imageContext}${finalPrompt} ${scaleInstruction}${sizeInstruction}`.trim();
+    const productContext = productInfoInstruction ? `\n${productInfoInstruction}` : "";
+    const promptUsed = `${systemText}${imageContext}${productContext}${finalPrompt} ${scaleInstruction}${sizeInstruction}`.trim();
 
     const resp = await imagesGenerations(
       {

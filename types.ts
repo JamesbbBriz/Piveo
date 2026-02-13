@@ -32,6 +32,20 @@ export interface ModelCharacter {
   imageUrl: string; // Base64
 }
 
+export interface ProductCatalogItem {
+  id: string;
+  name: string;
+  imageUrl: string;
+  category?: string;
+  dimensions?: {
+    width?: number;
+    height?: number;
+    depth?: number;
+  };
+  description?: string;
+  createdAt: number;
+}
+
 export interface ProductImage {
   id: string;
   imageUrl: string;

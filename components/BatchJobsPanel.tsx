@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from "react";
-import { BatchJob, BatchJobStatus, BatchSlot, BatchVersion, ModelCharacter } from "../types";
+import { BatchJob, BatchJobStatus, BatchSlot, BatchVersion, ModelCharacter, ProductCatalogItem } from "../types";
 import { Icon } from "./Icon";
 import { ImagePreviewModal } from "./ImagePreviewModal";
 import { ModelPickerModal } from "./ModelPickerModal";
+import { ProductPickerModal } from "./ProductPickerModal";
 import { fileToDataUrl } from "../services/imageData";
 
 interface BatchJobsPanelProps {
@@ -35,6 +36,7 @@ interface BatchJobsPanelProps {
   onCreateJob?: () => void;
   onUpdateJobBasePrompt?: (jobId: string, basePrompt: string) => void;
   onAddSlots?: (jobId: string) => void;
+  products?: ProductCatalogItem[];
 }
 
 const STATUS_OPTIONS: Array<{ value: "all" | BatchJobStatus; label: string }> = [
@@ -109,6 +111,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   onCreateJob,
   onUpdateJobBasePrompt,
   onAddSlots,
+  products,
 }) => {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | BatchJobStatus>("all");
@@ -116,6 +119,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   const [awaitingProductPaste, setAwaitingProductPaste] = useState(false);
   const [awaitingModelPaste, setAwaitingModelPaste] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
+  const [isProductPickerOpen, setIsProductPickerOpen] = useState(false);
 
   const filteredJobs = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -398,6 +402,14 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                         onClick={() => setPreviewImageUrl(selectedJob.productImageUrl!)}
                       />
                       <div className="flex gap-1">
+                        {products && products.length > 0 && (
+                          <button
+                            onClick={() => setIsProductPickerOpen(true)}
+                            className="flex-1 px-2 py-1 text-[10px] rounded border border-dark-600 bg-dark-800 text-gray-300 hover:border-gray-500"
+                          >
+                            产品库
+                          </button>
+                        )}
                         <button
                           onClick={() => setAwaitingProductPaste(true)}
                           className={`flex-1 px-2 py-1 text-[10px] rounded border transition-colors ${
@@ -422,29 +434,40 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                       </div>
                     </>
                   ) : (
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onFocus={() => setAwaitingProductPaste(true)}
-                      onBlur={() => setAwaitingProductPaste(false)}
-                      onPaste={(e) => handleProductPaste(selectedJob.id, e)}
-                      className={`w-full h-28 rounded-md border-2 border-dashed flex flex-col items-center justify-center text-xs cursor-pointer transition-colors outline-none ${
-                        awaitingProductPaste
-                          ? "border-banana-500 bg-banana-500/10 text-banana-400"
-                          : "border-dark-600 bg-dark-900/40 text-gray-500 hover:border-gray-500 hover:text-gray-400"
-                      }`}
-                      onClick={() => document.getElementById(`product-input-${selectedJob.id}`)?.click()}
-                    >
-                      <Icon name="image" className="text-2xl mb-1" />
-                      <span>{awaitingProductPaste ? "按 Cmd/Ctrl+V 粘贴" : "点击或粘贴产品图"}</span>
-                      <input
-                        id={`product-input-${selectedJob.id}`}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={(e) => handleProductImageUpload(selectedJob.id, e)}
-                        disabled={selectedJob.status === "deleted"}
-                      />
+                    <div className="flex flex-col gap-1.5">
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onFocus={() => setAwaitingProductPaste(true)}
+                        onBlur={() => setAwaitingProductPaste(false)}
+                        onPaste={(e) => handleProductPaste(selectedJob.id, e)}
+                        className={`w-full h-20 rounded-md border-2 border-dashed flex flex-col items-center justify-center text-xs cursor-pointer transition-colors outline-none ${
+                          awaitingProductPaste
+                            ? "border-banana-500 bg-banana-500/10 text-banana-400"
+                            : "border-dark-600 bg-dark-900/40 text-gray-500 hover:border-gray-500 hover:text-gray-400"
+                        }`}
+                        onClick={() => document.getElementById(`product-input-${selectedJob.id}`)?.click()}
+                      >
+                        <Icon name="image" className="text-lg mb-0.5" />
+                        <span className="text-[10px]">{awaitingProductPaste ? "按 Cmd/Ctrl+V 粘贴" : "点击上传或粘贴"}</span>
+                        <input
+                          id={`product-input-${selectedJob.id}`}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleProductImageUpload(selectedJob.id, e)}
+                          disabled={selectedJob.status === "deleted"}
+                        />
+                      </div>
+                      {products && products.length > 0 && (
+                        <button
+                          onClick={() => setIsProductPickerOpen(true)}
+                          className="w-full py-1.5 text-[10px] rounded border border-banana-500/40 bg-banana-500/10 text-banana-400 hover:bg-banana-500/20 transition-colors"
+                        >
+                          <Icon name="cube" className="mr-1" />
+                          从产品库选择
+                        </button>
+                      )}
                     </div>
                   )}
                   <div className="text-[10px] text-gray-500 text-center">产品图</div>
@@ -702,6 +725,16 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
           setIsModelPickerOpen(false);
         }}
         onClose={() => setIsModelPickerOpen(false)}
+      />
+    )}
+    {isProductPickerOpen && selectedJob && products && (
+      <ProductPickerModal
+        products={products}
+        onSelect={(product) => {
+          onUpdateJobImages(selectedJob.id, { productImageUrl: product.imageUrl });
+          setIsProductPickerOpen(false);
+        }}
+        onClose={() => setIsProductPickerOpen(false)}
       />
     )}
   </>

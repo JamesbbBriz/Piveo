@@ -5,8 +5,8 @@ import { Sidebar } from './components/Sidebar';
 import { ChatMessage } from './components/ChatMessage';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import { Icon } from './components/Icon';
-import { AspectRatio, BatchJob, BatchJobStatus, BatchSlot, BatchVersion, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter } from './types';
-import { initPersistentStorage, loadBatchJobs, loadSessions, loadTemplates, loadModels, saveBatchJobs, saveSessions, saveTemplates, saveModels, clearAll, backupSessionsSync } from './services/storage';
+import { AspectRatio, BatchJob, BatchJobStatus, BatchSlot, BatchVersion, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter, ProductCatalogItem } from './types';
+import { initPersistentStorage, loadBatchJobs, loadSessions, loadTemplates, loadModels, loadProducts, saveBatchJobs, saveSessions, saveTemplates, saveModels, saveProducts, clearAll, backupSessionsSync } from './services/storage';
 import { generateResponse, enhancePrompt, type GenerateResponseResult } from './services/gemini';
 import { DEFAULT_ASPECT_RATIO } from './constants';
 import { ApiConfig, getEffectiveApiConfig, saveStoredApiConfig } from './services/apiConfig';
@@ -22,6 +22,7 @@ import { BatchSetItem, BatchSetModal } from './components/BatchSetModal';
 import { BatchJobsPanel } from './components/BatchJobsPanel';
 import { downloadImageWithFormat, loadDownloadOptions } from './services/imageDownload';
 import { ModelsLibraryModal } from './components/ModelsLibraryModal';
+import { ProductsLibraryModal } from './components/ProductsLibraryModal';
 import { urlToDataUrl } from './services/imageData';
 
 const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSettings => {
@@ -248,6 +249,8 @@ const App: React.FC = () => {
   const [isBatchSetOpen, setIsBatchSetOpen] = useState(false);
   const [addSlotsTargetJobId, setAddSlotsTargetJobId] = useState<string | null>(null);
   const [isModelsLibraryOpen, setIsModelsLibraryOpen] = useState(false);
+  const [isProductsLibraryOpen, setIsProductsLibraryOpen] = useState(false);
+  const [products, setProducts] = useState<ProductCatalogItem[]>([]);
   const [maskEditBaseUrl, setMaskEditBaseUrl] = useState<string | null>(null);
   const [maskEditContext, setMaskEditContext] = useState<{
     source: "chat";
@@ -317,9 +320,10 @@ const App: React.FC = () => {
     let cancelled = false;
     const bootstrap = async () => {
       await initPersistentStorage();
-      const [loadedTemplates, loadedModels, loadedSessions, loadedBatchJobs] = await Promise.all([
+      const [loadedTemplates, loadedModels, loadedProducts, loadedSessions, loadedBatchJobs] = await Promise.all([
         loadTemplates(),
         loadModels(),
+        loadProducts(),
         loadSessions(),
         loadBatchJobs(),
       ]);
@@ -327,6 +331,7 @@ const App: React.FC = () => {
 
       setTemplates(loadedTemplates);
       setModels(loadedModels);
+      setProducts(loadedProducts);
       if (loadedSessions.length > 0) {
         const defaultTemplate = loadedTemplates.length > 0 ? loadedTemplates[0].content : "";
         const localizeLegacyText = (t: string): string => {
@@ -447,6 +452,10 @@ const App: React.FC = () => {
     if (!hasHydratedStorage) return;
     void saveModels(models);
   }, [models, hasHydratedStorage]);
+  useEffect(() => {
+    if (!hasHydratedStorage) return;
+    void saveProducts(products);
+  }, [products, hasHydratedStorage]);
 
   useEffect(() => {
     try {
@@ -709,6 +718,18 @@ const App: React.FC = () => {
     setModels((prev) => prev.map((m) => (m.id === modelId ? { ...m, name: newName } : m)));
   }, []);
 
+  const handleAddProduct = useCallback((product: ProductCatalogItem) => {
+    setProducts(prev => [...prev, product]);
+  }, []);
+
+  const handleUpdateProduct = useCallback((productId: string, updates: Partial<Omit<ProductCatalogItem, 'id' | 'createdAt'>>) => {
+    setProducts(prev => prev.map(p => p.id === productId ? { ...p, ...updates } : p));
+  }, []);
+
+  const handleDeleteProduct = useCallback((productId: string) => {
+    setProducts(prev => prev.filter(p => p.id !== productId));
+  }, []);
+
   const handleUpdateApiConfig = useCallback((cfg: ApiConfig) => {
     setApiConfig(cfg);
     saveStoredApiConfig(cfg);
@@ -853,6 +874,7 @@ const App: React.FC = () => {
       setCurrentView("chat");
       setTemplates([]);
       setModels([]);
+      setProducts([]);
       setSelectedImage(null);
       setInputText('');
       setAuthUser(null);
@@ -2234,8 +2256,10 @@ const App: React.FC = () => {
         onUpdateApiConfig={handleUpdateApiConfig}
         onOpenAssets={openAssets}
         onOpenModelsLibrary={() => setIsModelsLibraryOpen(true)}
+        onOpenProductsLibrary={() => setIsProductsLibraryOpen(true)}
         assetCount={totalAssetCount}
         modelCount={models.length}
+        productCount={products.length}
         batchJobCount={activeBatchJobCount}
         authUser={authUser}
         authLoading={authLoading}
@@ -2497,6 +2521,7 @@ const App: React.FC = () => {
               onCreateJob={openBatchSetModal}
               onUpdateJobBasePrompt={handleUpdateBatchJobBasePrompt}
               onAddSlots={handleOpenAddSlots}
+              products={products}
             />
           </div>
         )}
@@ -2529,6 +2554,15 @@ const App: React.FC = () => {
             onDeleteModel={handleDeleteModel}
             onRenameModel={handleRenameModel}
             onClose={() => setIsModelsLibraryOpen(false)}
+          />
+        )}
+        {isProductsLibraryOpen && (
+          <ProductsLibraryModal
+            products={products}
+            onAddProduct={handleAddProduct}
+            onUpdateProduct={handleUpdateProduct}
+            onDeleteProduct={handleDeleteProduct}
+            onClose={() => setIsProductsLibraryOpen(false)}
           />
         )}
         {errorDetails && isErrorModalOpen && (
