@@ -384,7 +384,12 @@ if (process.env.NODE_ENV === "production") {
   const distDir = path.resolve(__dirname, "../dist");
   if (fs.existsSync(distDir)) {
     app.use(express.static(distDir));
-    app.get("*", (req, res, next) => {
+    // Express 5 + path-to-regexp v8 不再支持 app.get("*")，使用无路径中间件做 SPA 回退。
+    app.use((req, res, next) => {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        next();
+        return;
+      }
       if (req.path.startsWith("/api/") || req.path === "/api" || req.path.startsWith("/auth/") || req.path === "/auth") {
         next();
         return;
