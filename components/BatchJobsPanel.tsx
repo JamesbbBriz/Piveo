@@ -33,6 +33,8 @@ interface BatchJobsPanelProps {
   }) => void;
   onRunAllSlots?: (jobId: string, mode: "pending_only" | "all") => void;
   onCreateJob?: () => void;
+  onUpdateJobBasePrompt?: (jobId: string, basePrompt: string) => void;
+  onAddSlots?: (jobId: string) => void;
 }
 
 const STATUS_OPTIONS: Array<{ value: "all" | BatchJobStatus; label: string }> = [
@@ -105,6 +107,8 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   onUpdateJobImages,
   onRunAllSlots,
   onCreateJob,
+  onUpdateJobBasePrompt,
+  onAddSlots,
 }) => {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | BatchJobStatus>("all");
@@ -364,6 +368,19 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* 基础提示词 */}
+            <div className="border-b border-dark-700 px-4 py-3">
+              <div className="text-[11px] text-gray-400 mb-1.5">基础提示词</div>
+              <textarea
+                value={selectedJob.basePrompt || ""}
+                onChange={(e) => onUpdateJobBasePrompt?.(selectedJob.id, e.target.value)}
+                placeholder="输入整体要求，例如：高端电商风格，突出产品质感..."
+                rows={2}
+                className="w-full rounded-md border border-dark-600 bg-dark-900 px-3 py-2 text-xs text-gray-200 placeholder-gray-500 resize-none focus:border-banana-500/50 focus:outline-none"
+                disabled={selectedJob.status === "deleted"}
+              />
             </div>
 
             {/* 套图专用图片上传区 */}
@@ -657,6 +674,15 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                   </section>
                 );
               })}
+              {selectedJob.status !== "deleted" && selectedJob.status !== "archived" && onAddSlots && (
+                <button
+                  onClick={() => onAddSlots(selectedJob.id)}
+                  className="w-full py-3 rounded-xl border-2 border-dashed border-dark-600 text-xs text-gray-400 hover:border-banana-500/40 hover:text-banana-400 transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Icon name="plus" />
+                  添加槽位
+                </button>
+              )}
             </div>
           </>
         )}

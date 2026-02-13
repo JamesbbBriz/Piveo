@@ -246,6 +246,7 @@ const App: React.FC = () => {
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
   const [isAssetsOpen, setIsAssetsOpen] = useState(false);
   const [isBatchSetOpen, setIsBatchSetOpen] = useState(false);
+  const [addSlotsTargetJobId, setAddSlotsTargetJobId] = useState<string | null>(null);
   const [isModelsLibraryOpen, setIsModelsLibraryOpen] = useState(false);
   const [maskEditBaseUrl, setMaskEditBaseUrl] = useState<string | null>(null);
   const [maskEditContext, setMaskEditContext] = useState<{
@@ -465,7 +466,6 @@ const App: React.FC = () => {
   useEffect(() => {
     if (batchJobs.length === 0) {
       if (selectedBatchJobId !== null) setSelectedBatchJobId(null);
-      if (currentView === "batch") setCurrentView("chat");
       return;
     }
     if (selectedBatchJobId && batchJobs.some((j) => j.id === selectedBatchJobId)) return;
@@ -1295,6 +1295,43 @@ const App: React.FC = () => {
 
   const handleBatchSetSubmit = useCallback(async (items: BatchSetItem[]) => {
     if (!currentSession || isBatchGenerating || items.length === 0) return;
+
+    // Adding slots to existing job
+    if (addSlotsTargetJobId) {
+      const targetJobId = addSlotsTargetJobId;
+      setAddSlotsTargetJobId(null);
+      setIsBatchSetOpen(false);
+
+      const existingJob = batchJobs.find(j => j.id === targetJobId);
+      if (!existingJob) return;
+
+      const size = aspectRatioToSize(currentSession.settings.aspectRatio);
+      const existingCount = existingJob.slots.length;
+
+      const newSlots: BatchSlot[] = items.map((item, i) => ({
+        id: uuidv4(),
+        jobId: targetJobId,
+        type: item.scene,
+        title: `套图 ${existingCount + i + 1}/${existingCount + items.length} · ${item.sceneLabel}`,
+        targetCount: 1,
+        promptTemplate: item.note.trim(),
+        size,
+        status: "pending" as const,
+        versions: [],
+      }));
+
+      updateBatchJobById(targetJobId, (job) => {
+        const next = {
+          ...job,
+          slots: [...job.slots, ...newSlots],
+          updatedAt: nowTs(),
+        };
+        return appendBatchActionLog(next, "slots_added", { addedCount: newSlots.length });
+      });
+
+      return;
+    }
+
     setIsBatchSetOpen(false);
     setCurrentView("batch");
 
@@ -1378,8 +1415,8 @@ const App: React.FC = () => {
           slotLabel: slot.title,
           slotPrompt,
           referenceImage: fixedReferenceImage,
-          productImage: job.productImageUrl || null,
-          modelImage: job.modelImageUrl || null,
+          productImage: initialJob.productImageUrl || null,
+          modelImage: initialJob.modelImageUrl || null,
         });
 
         if (!generated.length) {
@@ -1446,7 +1483,7 @@ const App: React.FC = () => {
     if (batchAbortRef.current === controller) {
       batchAbortRef.current = null;
     }
-  }, [appendBatchActionLog, authUser, buildBatchSlotPrompt, currentSession, inputText, isGenerating, runBatchSlotGeneration, selectedImage, updateBatchJobById]);
+  }, [addSlotsTargetJobId, appendBatchActionLog, authUser, batchJobs, buildBatchSlotPrompt, currentSession, inputText, isGenerating, runBatchSlotGeneration, selectedImage, updateBatchJobById]);
 
   const handleUpdateBatchJobImages = useCallback((
     jobId: string,
@@ -1458,6 +1495,19 @@ const App: React.FC = () => {
       updatedAt: nowTs(),
     }));
   }, [updateBatchJobById]);
+
+  const handleUpdateBatchJobBasePrompt = useCallback((jobId: string, basePrompt: string) => {
+    updateBatchJobById(jobId, (job) => ({
+      ...job,
+      basePrompt,
+      updatedAt: nowTs(),
+    }));
+  }, [updateBatchJobById]);
+
+  const handleOpenAddSlots = useCallback((jobId: string) => {
+    setAddSlotsTargetJobId(jobId);
+    setIsBatchSetOpen(true);
+  }, []);
 
   const handleArchiveBatchJob = useCallback((jobId: string) => {
     updateBatchJobById(jobId, (job) => {
@@ -2445,6 +2495,8 @@ const App: React.FC = () => {
                 void handleRunAllBatchSlots(jobId, mode);
               }}
               onCreateJob={openBatchSetModal}
+              onUpdateJobBasePrompt={handleUpdateBatchJobBasePrompt}
+              onAddSlots={handleOpenAddSlots}
             />
           </div>
         )}
@@ -2465,7 +2517,7 @@ const App: React.FC = () => {
         />
         <BatchSetModal
           isOpen={isBatchSetOpen}
-          onClose={() => setIsBatchSetOpen(false)}
+          onClose={() => { setIsBatchSetOpen(false); setAddSlotsTargetJobId(null); }}
           onSubmit={(items) => {
             void handleBatchSetSubmit(items);
           }}
