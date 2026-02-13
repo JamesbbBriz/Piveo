@@ -400,7 +400,7 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const port = Number(process.env.AUTH_PORT || process.env.PORT || 3101);
-const host = String(process.env.AUTH_HOST || "127.0.0.1").trim() || "127.0.0.1";
+const host = String(process.env.AUTH_HOST || "0.0.0.0").trim() || "0.0.0.0";
 let shuttingDown = false;
 
 const server = app.listen(port, host, () => {
