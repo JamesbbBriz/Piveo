@@ -9,6 +9,7 @@ interface PromptModelPanelProps {
   onUpdateSettings: (next: SessionSettings) => void;
   models: ModelCharacter[];
   onAddModel: (model: ModelCharacter) => void;
+  onDeleteModel?: (modelId: string) => void;
   onOpenBatchSet?: () => void;
 }
 
@@ -17,6 +18,7 @@ const PromptModelPanelInner: React.FC<PromptModelPanelProps> = ({
   onUpdateSettings,
   models,
   onAddModel,
+  onDeleteModel,
   onOpenBatchSet,
 }) => {
   const [isGeneratingModel, setIsGeneratingModel] = useState(false);
@@ -107,8 +109,10 @@ const PromptModelPanelInner: React.FC<PromptModelPanelProps> = ({
   };
 
   const removeProduct = () => {
-    setAwaitingProductPaste(false);
-    onUpdateSettings({ ...settings, productImage: null });
+    if (window.confirm('确定要删除产品图吗？')) {
+      setAwaitingProductPaste(false);
+      onUpdateSettings({ ...settings, productImage: null });
+    }
   };
 
   const primeProductPaste = () => {
@@ -232,18 +236,33 @@ const PromptModelPanelInner: React.FC<PromptModelPanelProps> = ({
                 <Icon name="ban" />
               </button>
               {models.map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => selectModel(m.id)}
-                  className={`relative h-10 w-10 shrink-0 rounded-lg overflow-hidden border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-banana-500/60 ${
-                    settings.selectedModelId === m.id
-                      ? "border-banana-500"
-                      : "border-dark-600 hover:border-gray-400"
-                  }`}
-                  title={m.name}
-                >
-                  <img src={m.imageUrl} alt={m.name} className="absolute inset-0 w-full h-full object-cover" loading="lazy" decoding="async" />
-                </button>
+                <div key={m.id} className="relative shrink-0">
+                  <button
+                    onClick={() => selectModel(m.id)}
+                    className={`relative h-10 w-10 rounded-lg overflow-hidden border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-banana-500/60 ${
+                      settings.selectedModelId === m.id
+                        ? "border-banana-500"
+                        : "border-dark-600 hover:border-gray-400"
+                    }`}
+                    title={m.name}
+                  >
+                    <img src={m.imageUrl} alt={m.name} className="absolute inset-0 w-full h-full object-cover" loading="lazy" decoding="async" />
+                  </button>
+                  {onDeleteModel && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (window.confirm(`确定要删除模特"${m.name}"吗？`)) {
+                          onDeleteModel(m.id);
+                        }
+                      }}
+                      className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] shadow-md hover:bg-red-600 transition-colors"
+                      title={`删除${m.name}`}
+                    >
+                      <Icon name="times" />
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
             <button

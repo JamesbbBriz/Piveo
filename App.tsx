@@ -689,6 +689,19 @@ const App: React.FC = () => {
     setModels((prev) => [...prev, newModel]);
   }, []);
 
+  const handleDeleteModel = useCallback((modelId: string) => {
+    setModels((prev) => prev.filter((m) => m.id !== modelId));
+    // If the deleted model was selected, deselect it
+    if (currentSessionId) {
+      setSessions(prev => prev.map(s => {
+        if (s.id === currentSessionId && s.settings.selectedModelId === modelId) {
+          return { ...s, settings: { ...s.settings, selectedModelId: null } };
+        }
+        return s;
+      }));
+    }
+  }, [currentSessionId]);
+
   const handleUpdateApiConfig = useCallback((cfg: ApiConfig) => {
     setApiConfig(cfg);
     saveStoredApiConfig(cfg);
@@ -2197,12 +2210,22 @@ const App: React.FC = () => {
                       onUpdateSettings={handleUpdateSettings}
                       models={models}
                       onAddModel={handleAddModel}
+                      onDeleteModel={handleDeleteModel}
                       onOpenBatchSet={openBatchSetModal}
                     />
                     {selectedImage && (
                       <div className="relative inline-block self-start">
                         <img src={selectedImage} alt="预览" className="h-20 rounded-lg border border-dark-600 object-cover shadow-lg" loading="lazy" decoding="async" />
-                        <button onClick={() => setSelectedImage(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-md"><Icon name="times" /></button>
+                        <button
+                          onClick={() => {
+                            if (window.confirm('确定要删除参考图吗？')) {
+                              setSelectedImage(null);
+                            }
+                          }}
+                          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-md hover:bg-red-600 transition-colors"
+                        >
+                          <Icon name="times" />
+                        </button>
                       </div>
                     )}
                     <div className="flex flex-wrap items-center gap-2">

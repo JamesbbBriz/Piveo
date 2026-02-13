@@ -266,7 +266,11 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                 )}
                 {selectedJob.status !== "deleted" && (
                   <button
-                    onClick={() => onSoftDeleteJob(selectedJob.id)}
+                    onClick={() => {
+                      if (window.confirm(`确定要删除任务"${selectedJob.title}"吗？`)) {
+                        onSoftDeleteJob(selectedJob.id);
+                      }
+                    }}
                     className="px-2.5 py-1.5 text-xs rounded-md border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20"
                   >
                     删除
@@ -298,7 +302,11 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                         onClick={() => setPreviewImageUrl(selectedJob.productImageUrl!)}
                       />
                       <button
-                        onClick={() => onUpdateJobImages(selectedJob.id, { productImageUrl: null })}
+                        onClick={() => {
+                          if (window.confirm('确定要删除产品图吗？')) {
+                            onUpdateJobImages(selectedJob.id, { productImageUrl: null });
+                          }
+                        }}
                         disabled={selectedJob.status === "deleted"}
                         className="mt-2 px-2 py-1 text-[10px] rounded border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50"
                       >
@@ -332,7 +340,11 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                         onClick={() => setPreviewImageUrl(selectedJob.modelImageUrl!)}
                       />
                       <button
-                        onClick={() => onUpdateJobImages(selectedJob.id, { modelImageUrl: null })}
+                        onClick={() => {
+                          if (window.confirm('确定要删除固定模特图吗？')) {
+                            onUpdateJobImages(selectedJob.id, { modelImageUrl: null });
+                          }
+                        }}
                         disabled={selectedJob.status === "deleted"}
                         className="mt-2 px-2 py-1 text-[10px] rounded border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50"
                       >
