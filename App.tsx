@@ -17,6 +17,7 @@ import { MaskEditorModal } from './components/MaskEditorModal';
 import { imagesEdits, imageObjToDataUrl, ResponseFormat } from './services/openaiImages';
 import { filterSizesByAspect, getSupportedAspectRatios, getSupportedSizeForAspect } from './services/sizeUtils';
 import { PromptModelPanel } from './components/PromptModelPanel';
+import { SystemPromptBar } from './components/SystemPromptBar';
 import { getSession, login, logout } from './services/auth';
 
 const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSettings => {
@@ -941,6 +942,12 @@ const App: React.FC = () => {
             退出
           </button>
         </div>
+        <SystemPromptBar
+          settings={currentSession.settings}
+          onUpdateSettings={handleUpdateSettings}
+          templates={templates}
+          onSaveTemplate={handleSaveTemplate}
+        />
         <div className="flex-1 overflow-y-auto p-4 lg:p-8 scroll-smooth">
           <div className="w-full max-w-none min-h-full flex flex-col pr-1 lg:pr-4">
             {currentSession.messages.length === 0 ? (
@@ -1022,8 +1029,6 @@ const App: React.FC = () => {
             <PromptModelPanel
               settings={currentSession.settings}
               onUpdateSettings={handleUpdateSettings}
-              templates={templates}
-              onSaveTemplate={handleSaveTemplate}
               models={models}
               onAddModel={handleAddModel}
             />
