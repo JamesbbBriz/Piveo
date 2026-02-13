@@ -90,3 +90,65 @@ export interface AppState {
   templates: SystemTemplate[];
   models: ModelCharacter[];
 }
+
+export type BatchSceneType = "model" | "flatlay" | "detail" | "white" | "custom";
+
+export type BatchJobStatus = "draft" | "running" | "completed" | "failed" | "archived" | "deleted";
+export type BatchSlotStatus = "pending" | "running" | "completed" | "failed";
+export type BatchVersionSource = "generate" | "rerun" | "mask-edit";
+
+export interface BatchVersion {
+  id: string;
+  slotId: string;
+  index: number;
+  imageUrl?: string;
+  blobKey?: string;
+  thumbnailUrl?: string;
+  model: string;
+  promptUsed: string;
+  size: string;
+  createdAt: number;
+  parentVersionId?: string;
+  isPrimary?: boolean;
+  source: BatchVersionSource;
+}
+
+export interface BatchSlot {
+  id: string;
+  jobId: string;
+  type: BatchSceneType;
+  title: string;
+  targetCount: number;
+  promptTemplate: string;
+  size: string;
+  status: BatchSlotStatus;
+  error?: string;
+  versions: BatchVersion[];
+  activeVersionId?: string;
+}
+
+export interface BatchActionLog {
+  id: string;
+  jobId: string;
+  action: string;
+  operator: string;
+  ts: number;
+  payload?: Record<string, unknown>;
+}
+
+export interface BatchJob {
+  id: string;
+  title: string;
+  projectId?: string;
+  productId?: string;
+  status: BatchJobStatus;
+  basePrompt: string;
+  referenceImageUrl?: string;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt?: number;
+  deletedAt?: number;
+  tags?: string[];
+  slots: BatchSlot[];
+  actionLogs: BatchActionLog[];
+}

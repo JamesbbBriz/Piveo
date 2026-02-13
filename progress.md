@@ -1,5 +1,15 @@
 # 进度日志
 
+- [套图账本化] 启动新任务并重置 `task_plan.md`：目标改为“独立任务账本 + 独立套图流程 + 可检索管理”。
+- [套图账本化] 完成现状审计：定位 `handleBatchSetSubmit` 仍写聊天消息、`storage.ts` 缺少 batch ledger 持久化。
+- [套图账本化] 明确改造路径：先数据层（types/storage），再生成链路，再 UI 入口与详情面板，最后联调验证。
+- [套图账本化] 已完成 types 扩展：新增 `BatchJob/BatchSlot/BatchVersion/BatchActionLog` 与状态枚举。
+- [套图账本化] 已完成 storage 扩展：`services/storage.ts` 增加 `loadBatchJobs/saveBatchJobs`，`clearAll` 覆盖 batch key。
+- [套图账本化] 已完成独立工作台：新增 `components/BatchJobsPanel.tsx`，支持筛选检索、任务详情、槽位版本管理。
+- [套图账本化] 已完成主流程迁移：`handleBatchSetSubmit` 不再写聊天消息，改为批量账本任务执行并记录 action logs。
+- [套图账本化] 已完成槽位闭环动作：单槽重跑、设主图、下载、局部编辑回写版本。
+- [套图账本化] 已完成验证：`npm run build` 通过；`NODE_ENV=production` 下 `/auth/health` 返回 200。
+
 - [安全加固] 按 `planning-with-files` 重启流程：完成 session catchup + 计划文件重置为“上线安全基线”任务。
 - [安全加固] 确认现状：登录已接入但 `/api` 未强制会话；前端仍持有 Authorization，需去敏。
 - [安全加固] 复现并定位 `ECONNREFUSED`：Vite 与 auth 端口行为已核实，后续以 `3101` 为默认 auth 端口。

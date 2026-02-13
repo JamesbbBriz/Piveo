@@ -1,21 +1,20 @@
 # 任务计划
 
 ## 目标
-将当前登录与网关接入升级为“可上线 MVP 安全基线”：
-1. API 密钥不再暴露到前端；
-2. `/api/*` 必须登录后访问；
-3. 登录接口增加防爆破限流；
-4. 保持现有 UI 与功能可用并通过构建验证。
+将“一键出套图”升级为独立任务账本流程，不依赖聊天消息，达成：
+1. 可追溯：保留任务/槽位/版本/操作日志；
+2. 可回收：支持归档/删除（软删除）状态流；
+3. 可检索：独立“套图记录”入口，可筛选检索与切换；
+4. 工作流闭环：套图生成不进入聊天区，支持槽位级重跑、下载、局部编辑。
 
 ## 阶段
-- [completed] 阶段1：会话恢复与现状审计（读取 planning files + diff）
-- [completed] 阶段2：后端鉴权收口（`/api` 强制会话 + 后端注入上游 Authorization）
-- [completed] 阶段3：前端去敏（移除前端 Authorization 必填依赖）
-- [completed] 阶段4：登录安全增强（限流、审计日志、错误语义）
-- [completed] 阶段5：文档与配置（`.env.example`、README 上线说明）
-- [completed] 阶段6：联调验证（登录、会话、出图、build、tsc）
+- [completed] 阶段1：数据模型与持久化（types + storage）
+- [completed] 阶段2：套图生成链路改造（从 chat message 写入改为 batch ledger 写入）
+- [completed] 阶段3：独立套图记录 UI（侧栏入口 + 任务列表 + 详情）
+- [completed] 阶段4：槽位操作闭环（重跑/设主图/下载/局部编辑）
+- [completed] 阶段5：联调验证与构建（build + start health）
 
 ## 错误记录
 | 时间 | 错误 | 处理 |
 |---|---|---|
-| 2026-02-11 | 端口 `3101` 已被其他服务占用，联调命中旧进程 | 使用临时端口 `4101/4102` 验证新逻辑，保留默认 `3101` 但提示先释放占用或改 `AUTH_PORT` |
+| 2026-02-13 | Coolify 部署崩溃：Express5 下 `app.get("*")` 引发 path-to-regexp 报错 | 改为 `app.use` SPA fallback（仅 GET/HEAD），并通过本地 `/auth/health` 验证 |

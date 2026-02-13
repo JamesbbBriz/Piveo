@@ -1,16 +1,17 @@
-import { Session, SystemTemplate, ModelCharacter } from "../types";
+import { BatchJob, ModelCharacter, Session, SystemTemplate } from "../types";
 import { DEFAULT_SYSTEM_TEMPLATES } from "../constants";
 
 const SESSIONS_KEY = "nanobanana_sessions_v1";
 const TEMPLATES_KEY = "nanobanana_templates_v1";
 const MODELS_KEY = "nanobanana_models_v1";
+const BATCH_JOBS_KEY = "nanobanana_batch_jobs_v1";
 
 const DB_NAME = "nanobanana_persistence_v2";
 const DB_VERSION = 1;
 const STORE_NAME = "kv";
 const LOCAL_BACKUP_MAX_BYTES = 2 * 1024 * 1024;
 
-type StoreKey = "sessions" | "templates" | "models";
+type StoreKey = "sessions" | "templates" | "models" | "batch_jobs";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -128,6 +129,12 @@ const migrateLocalToIndexedDb = async () => {
     const localModels = safeLocalGet<ModelCharacter[]>(MODELS_KEY, []);
     if (localModels.length) await idbSet("models", localModels);
   }
+
+  const existingBatchJobs = await idbGet<BatchJob[]>("batch_jobs");
+  if (!existingBatchJobs) {
+    const localBatchJobs = safeLocalGet<BatchJob[]>(BATCH_JOBS_KEY, []);
+    if (localBatchJobs.length) await idbSet("batch_jobs", localBatchJobs);
+  }
 };
 
 export const initPersistentStorage = async (): Promise<void> => {
@@ -207,6 +214,17 @@ export const loadModels = async (): Promise<ModelCharacter[]> => {
   return safeLocalGet<ModelCharacter[]>(MODELS_KEY, []);
 };
 
+export const saveBatchJobs = async (jobs: BatchJob[]): Promise<void> => {
+  await idbSet("batch_jobs", jobs);
+  deferLocalSet(BATCH_JOBS_KEY, jobs);
+};
+
+export const loadBatchJobs = async (): Promise<BatchJob[]> => {
+  const idbData = await idbGet<BatchJob[]>("batch_jobs");
+  if (Array.isArray(idbData)) return idbData;
+  return safeLocalGet<BatchJob[]>(BATCH_JOBS_KEY, []);
+};
+
 /** 清除所有应用数据（IndexedDB + localStorage），供登出时调用 */
 export const clearAll = async (): Promise<void> => {
   // 清除 localStorage
@@ -215,6 +233,7 @@ export const clearAll = async (): Promise<void> => {
       window.localStorage.removeItem(SESSIONS_KEY);
       window.localStorage.removeItem(TEMPLATES_KEY);
       window.localStorage.removeItem(MODELS_KEY);
+      window.localStorage.removeItem(BATCH_JOBS_KEY);
     } catch (e) {
       console.error("清除 localStorage 失败：", e);
     }

@@ -17,7 +17,9 @@ interface SidebarProps {
   apiConfig: ApiConfig;
   onUpdateApiConfig: (cfg: ApiConfig) => void;
   onOpenAssets: () => void;
+  onOpenBatchRecords: () => void;
   assetCount: number;
+  batchJobCount: number;
   currentSettings: SessionSettings;
   onUpdateCurrentSettings: (next: SessionSettings) => void;
   balanceRefreshTick: number;
@@ -34,7 +36,9 @@ const SidebarInner: React.FC<SidebarProps> = ({
   apiConfig,
   onUpdateApiConfig,
   onOpenAssets,
+  onOpenBatchRecords,
   assetCount,
+  batchJobCount,
   currentSettings,
   onUpdateCurrentSettings,
   balanceRefreshTick,
@@ -83,6 +87,17 @@ const SidebarInner: React.FC<SidebarProps> = ({
               >
                 <Icon name="images" /> 素材库
                 <span className="text-[10px] bg-dark-900/60 px-2 py-0.5 rounded text-gray-300">{assetCount}</span>
+              </button>
+              <button
+                onClick={() => {
+                  onOpenBatchRecords();
+                  if (window.innerWidth < 1024) toggleSidebar();
+                }}
+                className="w-full mt-1.5 h-9 flex items-center justify-center gap-1.5 bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 font-semibold text-[14px] px-3 rounded-lg transition-colors"
+                title="打开套图记录"
+              >
+                <Icon name="layer-group" /> 套图记录
+                <span className="text-[10px] bg-dark-900/60 px-2 py-0.5 rounded text-gray-300">{batchJobCount}</span>
               </button>
             </div>
 
@@ -149,6 +164,7 @@ export const Sidebar = React.memo(SidebarInner, (prev, next) =>
   prev.isOpen === next.isOpen &&
   prev.apiConfig === next.apiConfig &&
   prev.assetCount === next.assetCount &&
+  prev.batchJobCount === next.batchJobCount &&
   prev.currentSettings === next.currentSettings &&
   prev.balanceRefreshTick === next.balanceRefreshTick
 );

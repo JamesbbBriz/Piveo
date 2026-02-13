@@ -101,7 +101,7 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
           <div>
             <h3 className="text-sm font-semibold text-gray-100">一键出套图</h3>
             <p className="text-[11px] text-gray-400 mt-0.5">
-              先定义要出几张、每张是什么类型，生成后会逐张进入聊天记录，可单独微调和下载。
+              先定义要出几张、每张是什么类型。生成后进入独立套图工作台，不污染聊天区。
             </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-200">

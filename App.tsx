@@ -5,8 +5,8 @@ import { Sidebar } from './components/Sidebar';
 import { ChatMessage } from './components/ChatMessage';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import { Icon } from './components/Icon';
-import { AspectRatio, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter } from './types';
-import { initPersistentStorage, loadSessions, loadTemplates, loadModels, saveSessions, saveTemplates, saveModels, clearAll, backupSessionsSync } from './services/storage';
+import { AspectRatio, BatchJob, BatchJobStatus, BatchSlot, BatchVersion, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter } from './types';
+import { initPersistentStorage, loadBatchJobs, loadSessions, loadTemplates, loadModels, saveBatchJobs, saveSessions, saveTemplates, saveModels, clearAll, backupSessionsSync } from './services/storage';
 import { generateResponse, enhancePrompt } from './services/gemini';
 import { DEFAULT_ASPECT_RATIO } from './constants';
 import { ApiConfig, getEffectiveApiConfig, saveStoredApiConfig } from './services/apiConfig';
@@ -19,6 +19,8 @@ import { PromptModelPanel } from './components/PromptModelPanel';
 import { SystemPromptBar } from './components/SystemPromptBar';
 import { getSession, login, logout } from './services/auth';
 import { BatchSetItem, BatchSetModal } from './components/BatchSetModal';
+import { BatchJobsPanel } from './components/BatchJobsPanel';
+import { downloadImageWithFormat, loadDownloadOptions } from './services/imageDownload';
 
 const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSettings => {
   const aspectRatioValues = getSupportedAspectRatios();
@@ -179,6 +181,20 @@ const getBatchSceneDirective = (scene: BatchSetItem["scene"]): string => {
   return "按自定义描述产出画面。";
 };
 
+const mapSlotStatusToJobStatus = (slots: BatchSlot[]): BatchJobStatus => {
+  if (slots.length === 0) return "draft";
+  if (slots.some((s) => s.status === "running")) return "running";
+  if (slots.some((s) => s.status === "failed")) {
+    const allDoneOrFail = slots.every((s) => s.status === "completed" || s.status === "failed");
+    return allDoneOrFail ? "failed" : "running";
+  }
+  if (slots.every((s) => s.status === "completed")) return "completed";
+  if (slots.every((s) => s.status === "pending")) return "draft";
+  return "running";
+};
+
+const nowTs = () => Date.now();
+
 const createNewSession = (templates: SystemTemplate[]): Session => {
   const defaultTemplate = templates.length > 0 ? templates[0].content : '';
   return {
@@ -203,6 +219,9 @@ const createNewSession = (templates: SystemTemplate[]): Session => {
 const App: React.FC = () => {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [batchJobs, setBatchJobs] = useState<BatchJob[]>([]);
+  const [selectedBatchJobId, setSelectedBatchJobId] = useState<string | null>(null);
+  const [currentView, setCurrentView] = useState<"chat" | "batch">("chat");
   const [templates, setTemplates] = useState<SystemTemplate[]>([]);
   const [models, setModels] = useState<ModelCharacter[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -220,6 +239,15 @@ const App: React.FC = () => {
   const [isAssetsOpen, setIsAssetsOpen] = useState(false);
   const [isBatchSetOpen, setIsBatchSetOpen] = useState(false);
   const [maskEditBaseUrl, setMaskEditBaseUrl] = useState<string | null>(null);
+  const [maskEditContext, setMaskEditContext] = useState<{
+    source: "chat";
+  } | {
+    source: "batch";
+    jobId: string;
+    slotId: string;
+    versionId?: string;
+    historyItems: MaskEditorHistoryItem[];
+  } | null>(null);
   const [balanceRefreshTick, setBalanceRefreshTick] = useState(0);
   const [hasHydratedStorage, setHasHydratedStorage] = useState(false);
   const [authReady, setAuthReady] = useState(false);
@@ -241,6 +269,9 @@ const App: React.FC = () => {
   const saveSessionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSessionsRef = useRef<Session[] | null>(null);
   const latestSessionsRef = useRef<Session[]>([]);
+  const saveBatchJobsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingBatchJobsRef = useRef<BatchJob[] | null>(null);
+  const latestBatchJobsRef = useRef<BatchJob[]>([]);
   const lastRunRef = useRef<{
     prompt: string;
     image: string | null;
@@ -273,10 +304,11 @@ const App: React.FC = () => {
     let cancelled = false;
     const bootstrap = async () => {
       await initPersistentStorage();
-      const [loadedTemplates, loadedModels, loadedSessions] = await Promise.all([
+      const [loadedTemplates, loadedModels, loadedSessions, loadedBatchJobs] = await Promise.all([
         loadTemplates(),
         loadModels(),
         loadSessions(),
+        loadBatchJobs(),
       ]);
       if (cancelled) return;
 
@@ -313,6 +345,10 @@ const App: React.FC = () => {
         setSessions([newSession]);
         setCurrentSessionId(newSession.id);
       }
+      if (Array.isArray(loadedBatchJobs)) {
+        setBatchJobs(loadedBatchJobs);
+        setSelectedBatchJobId((prev) => prev || loadedBatchJobs[0]?.id || null);
+      }
       setHasHydratedStorage(true);
     };
     void bootstrap();
@@ -325,6 +361,10 @@ const App: React.FC = () => {
   useEffect(() => {
     latestSessionsRef.current = sessions;
   }, [sessions]);
+
+  useEffect(() => {
+    latestBatchJobsRef.current = batchJobs;
+  }, [batchJobs]);
 
   useEffect(() => {
     if (!hasHydratedStorage) return;
@@ -342,6 +382,22 @@ const App: React.FC = () => {
     };
   }, [sessions, hasHydratedStorage]);
 
+  useEffect(() => {
+    if (!hasHydratedStorage) return;
+    pendingBatchJobsRef.current = batchJobs;
+    if (saveBatchJobsTimerRef.current) clearTimeout(saveBatchJobsTimerRef.current);
+    saveBatchJobsTimerRef.current = setTimeout(() => {
+      saveBatchJobsTimerRef.current = null;
+      if (pendingBatchJobsRef.current) {
+        void saveBatchJobs(pendingBatchJobsRef.current);
+        pendingBatchJobsRef.current = null;
+      }
+    }, 400);
+    return () => {
+      if (saveBatchJobsTimerRef.current) clearTimeout(saveBatchJobsTimerRef.current);
+    };
+  }, [batchJobs, hasHydratedStorage]);
+
   // beforeunload 时强制 flush，并同步写一份 localStorage 紧急备份
   useEffect(() => {
     const flushSessions = () => {
@@ -356,6 +412,16 @@ const App: React.FC = () => {
         pendingSessionsRef.current = null;
       }
       backupSessionsSync(toFlush || latestSessionsRef.current);
+      if (saveBatchJobsTimerRef.current) {
+        clearTimeout(saveBatchJobsTimerRef.current);
+        saveBatchJobsTimerRef.current = null;
+      }
+      if (pendingBatchJobsRef.current) {
+        void saveBatchJobs(pendingBatchJobsRef.current);
+        pendingBatchJobsRef.current = null;
+      } else if (latestBatchJobsRef.current.length > 0) {
+        void saveBatchJobs(latestBatchJobsRef.current);
+      }
     };
     window.addEventListener("beforeunload", flushSessions);
     return () => window.removeEventListener("beforeunload", flushSessions);
@@ -379,8 +445,37 @@ const App: React.FC = () => {
 
   const currentSession = sessions.find(s => s.id === currentSessionId) || sessions[0];
   const currentMessageCount = currentSession?.messages.length || 0;
+  const selectedBatchJob = useMemo(
+    () => batchJobs.find((j) => j.id === selectedBatchJobId) || batchJobs[0] || null,
+    [batchJobs, selectedBatchJobId]
+  );
+
+  useEffect(() => {
+    if (batchJobs.length === 0) {
+      if (selectedBatchJobId !== null) setSelectedBatchJobId(null);
+      if (currentView === "batch") setCurrentView("chat");
+      return;
+    }
+    if (selectedBatchJobId && batchJobs.some((j) => j.id === selectedBatchJobId)) return;
+    setSelectedBatchJobId(batchJobs[0].id);
+  }, [batchJobs, currentView, selectedBatchJobId]);
 
   const maskHistoryItems = useMemo<MaskEditorHistoryItem[]>(() => {
+    if (maskEditContext?.source === "batch") {
+      const fromContext = Array.isArray(maskEditContext.historyItems) ? maskEditContext.historyItems : [];
+      if (maskEditBaseUrl && !fromContext.some((i) => i.imageUrl === maskEditBaseUrl)) {
+        return [
+          {
+            id: `mask-current-${hashString(maskEditBaseUrl)}`,
+            imageUrl: maskEditBaseUrl,
+            title: "当前编辑图",
+            subtitle: "未进入历史",
+          },
+          ...fromContext,
+        ];
+      }
+      return fromContext;
+    }
     if (!currentSession) return [];
     const seen = new Set<string>();
     const items: MaskEditorHistoryItem[] = [];
@@ -417,7 +512,7 @@ const App: React.FC = () => {
     }
 
     return items;
-  }, [currentSession, maskEditBaseUrl]);
+  }, [currentSession, maskEditBaseUrl, maskEditContext]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -456,8 +551,27 @@ const App: React.FC = () => {
         }
       }
     }
+    for (const job of batchJobs) {
+      for (const slot of job.slots) {
+        for (const version of slot.versions) {
+          if (!version.imageUrl) continue;
+          out.push({
+            id: version.id,
+            url: version.imageUrl,
+            sessionId: `batch:${job.id}`,
+            sessionTitle: `套图 · ${job.title}`,
+            createdAt: version.createdAt,
+            prompt: version.promptUsed,
+            model: version.model,
+            size: version.size,
+            responseFormat: "url",
+            parentImageUrl: version.parentVersionId,
+          });
+        }
+      }
+    }
     return out;
-  }, [sessions, isAssetsOpen]);
+  }, [sessions, batchJobs, isAssetsOpen]);
 
   const totalAssetCount = useMemo(() => {
     let count = 0;
@@ -468,8 +582,15 @@ const App: React.FC = () => {
         }
       }
     }
+    for (const job of batchJobs) {
+      for (const slot of job.slots) {
+        for (const version of slot.versions) {
+          if (version.imageUrl) count += 1;
+        }
+      }
+    }
     return count;
-  }, [sessions]);
+  }, [sessions, batchJobs]);
 
   const toggleSidebar = useCallback(() => {
     setIsSidebarOpen((v) => !v);
@@ -479,10 +600,18 @@ const App: React.FC = () => {
     setIsAssetsOpen(true);
   }, []);
 
+  const openBatchRecords = useCallback(() => {
+    setCurrentView("batch");
+    if (selectedBatchJob) {
+      setSelectedBatchJobId(selectedBatchJob.id);
+    }
+  }, [selectedBatchJob]);
+
   const handleNewSession = () => {
     const newSession = createNewSession(templates);
     setSessions([newSession, ...sessions]);
     setCurrentSessionId(newSession.id);
+    setCurrentView("chat");
     setInputText('');
     setSelectedImage(null);
   };
@@ -510,6 +639,95 @@ const App: React.FC = () => {
     setApiConfig(cfg);
     saveStoredApiConfig(cfg);
   };
+
+  const updateBatchJobById = useCallback((jobId: string, updater: (job: BatchJob) => BatchJob) => {
+    setBatchJobs((prev) => prev.map((job) => (job.id === jobId ? updater(job) : job)));
+  }, []);
+
+  const appendBatchActionLog = useCallback((job: BatchJob, action: string, payload?: Record<string, unknown>): BatchJob => {
+    const log = {
+      id: uuidv4(),
+      jobId: job.id,
+      action,
+      operator: authUser || "unknown",
+      ts: nowTs(),
+      payload,
+    };
+    return {
+      ...job,
+      updatedAt: nowTs(),
+      actionLogs: [...job.actionLogs, log],
+    };
+  }, [authUser]);
+
+  const selectedModelImage = useMemo(() => {
+    if (!currentSession?.settings.selectedModelId) return null;
+    return models.find((m) => m.id === currentSession.settings.selectedModelId)?.imageUrl || null;
+  }, [currentSession?.settings.selectedModelId, models]);
+
+  const selectedProductImage = currentSession?.settings.productImage?.imageUrl || null;
+
+  const buildBatchSlotPrompt = useCallback((params: {
+    basePrompt: string;
+    total: number;
+    index: number;
+    scene: BatchSetItem["scene"];
+    sceneLabel: string;
+    note: string;
+  }) => {
+    const sceneDirective = getBatchSceneDirective(params.scene);
+    return [
+      params.basePrompt ? `整体要求：${params.basePrompt}` : "整体要求：围绕当前产品产出电商可用图片。",
+      `当前任务：这是套图第 ${params.index + 1} 张（共 ${params.total} 张），类型为「${params.sceneLabel}」。`,
+      sceneDirective,
+      params.note ? `单独要求：${params.note}` : "",
+      "输出要求：构图完整、主体清晰、光线自然、可直接用于电商展示。",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }, []);
+
+  const runBatchSlotGeneration = useCallback(async (params: {
+    jobId: string;
+    slotId: string;
+    slotLabel: string;
+    slotPrompt: string;
+    referenceImage: string | null;
+  }): Promise<BatchVersion[]> => {
+    if (!currentSession) return [];
+    const size = aspectRatioToSize(currentSession.settings.aspectRatio);
+    const responseFormat: ImageResponseFormat = "url";
+    const result = await generateResponse(
+      params.slotPrompt,
+      params.referenceImage,
+      selectedModelImage,
+      selectedProductImage,
+      [],
+      currentSession.settings,
+      {
+        n: 1,
+        size,
+        responseFormat,
+        disableAutoUseLastImage: true,
+        signal: abortRef.current?.signal,
+      }
+    );
+
+    const generated: BatchVersion[] = result.images.map((url, idx) => ({
+      id: uuidv4(),
+      slotId: params.slotId,
+      index: idx + 1,
+      imageUrl: url,
+      model: result.modelUsed || apiConfig.defaultImageModel,
+      promptUsed: result.promptUsed,
+      size: result.sizeUsed,
+      createdAt: nowTs(),
+      source: "generate",
+      isPrimary: idx === 0,
+    }));
+
+    return generated;
+  }, [apiConfig.defaultImageModel, currentSession, selectedModelImage, selectedProductImage]);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -542,6 +760,9 @@ const App: React.FC = () => {
       setHasHydratedStorage(false);
       setSessions([]);
       setCurrentSessionId(null);
+      setBatchJobs([]);
+      setSelectedBatchJobId(null);
+      setCurrentView("chat");
       setTemplates([]);
       setModels([]);
       setSelectedImage(null);
@@ -831,8 +1052,26 @@ const App: React.FC = () => {
     await executeGeneration(variationPrompt, imageUrl, updatedMessages, { action: `变体：${type}` });
   }, [currentSession, executeGeneration, isGenerating]);
 
-  const openMaskEdit = useCallback((baseImageUrl: string) => {
+  const openMaskEditFromChat = useCallback((baseImageUrl: string) => {
+    setMaskEditContext({ source: "chat" });
     setMaskEditBaseUrl(baseImageUrl);
+  }, []);
+
+  const openMaskEditFromBatch = useCallback((params: {
+    jobId: string;
+    slotId: string;
+    versionId?: string;
+    baseImageUrl: string;
+    historyItems: MaskEditorHistoryItem[];
+  }) => {
+    setMaskEditContext({
+      source: "batch",
+      jobId: params.jobId,
+      slotId: params.slotId,
+      versionId: params.versionId,
+      historyItems: params.historyItems,
+    });
+    setMaskEditBaseUrl(params.baseImageUrl);
   }, []);
 
   const ensureImageDataUrl = useCallback(async (imageUrl: string, signal?: AbortSignal): Promise<string> => {
@@ -861,56 +1100,370 @@ const App: React.FC = () => {
   const handleBatchSetSubmit = useCallback(async (items: BatchSetItem[]) => {
     if (!currentSession || isGenerating || items.length === 0) return;
     setIsBatchSetOpen(false);
+    setCurrentView("batch");
 
+    const createdAt = nowTs();
     const basePrompt = inputText.trim();
     const fixedReferenceImage = selectedImage;
-    let messageCursor = currentSession.messages;
+    const size = aspectRatioToSize(currentSession.settings.aspectRatio);
+    const jobId = uuidv4();
+    const slots: BatchSlot[] = items.map((item, i) => ({
+      id: uuidv4(),
+      jobId,
+      type: item.scene,
+      title: `套图 ${i + 1}/${items.length} · ${item.sceneLabel}`,
+      targetCount: 1,
+      promptTemplate: item.note.trim(),
+      size,
+      status: "pending",
+      versions: [],
+    }));
 
-    for (let i = 0; i < items.length; i++) {
+    const initialJob: BatchJob = {
+      id: jobId,
+      title: basePrompt ? `套图任务：${basePrompt.slice(0, 20)}` : `套图任务 ${new Date(createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+      status: "draft",
+      basePrompt,
+      referenceImageUrl: fixedReferenceImage || undefined,
+      createdAt,
+      updatedAt: createdAt,
+      slots,
+      actionLogs: [
+        {
+          id: uuidv4(),
+          jobId,
+          action: "job_created",
+          operator: authUser || "unknown",
+          ts: createdAt,
+          payload: { slotCount: slots.length },
+        },
+      ],
+    };
+
+    setBatchJobs((prev) => [initialJob, ...prev]);
+    setSelectedBatchJobId(jobId);
+
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+    const controller = abortRef.current;
+
+    setIsGenerating(true);
+    setErrorDetails(null);
+    setGenerationProgress(null);
+    setGenerationStage("正在执行套图任务...");
+
+    for (let i = 0; i < slots.length; i++) {
+      if (controller.signal.aborted) break;
+      const slot = slots[i];
       const item = items[i];
-      const sceneDirective = getBatchSceneDirective(item.scene);
-      const slotPrompt = [
-        basePrompt ? `整体要求：${basePrompt}` : "整体要求：围绕当前产品产出电商可用图片。",
-        `当前任务：这是套图第 ${i + 1} 张（共 ${items.length} 张），类型为「${item.sceneLabel}」。`,
-        sceneDirective,
-        item.note ? `单独要求：${item.note}` : "",
-        "输出要求：构图完整、主体清晰、光线自然、可直接用于电商展示。",
-      ]
-        .filter(Boolean)
-        .join("\n");
+      const slotPrompt = buildBatchSlotPrompt({
+        basePrompt,
+        total: slots.length,
+        index: i,
+        scene: item.scene,
+        sceneLabel: item.sceneLabel,
+        note: item.note,
+      });
 
-      const slotLabel = `套图 ${i + 1}/${items.length} · ${item.sceneLabel}`;
-      const userMessage: Message = {
+      setGenerationProgress({ current: i + 1, total: slots.length });
+      setGenerationStage(`套图生成中（${i + 1}/${slots.length}）· ${item.sceneLabel}`);
+
+      updateBatchJobById(jobId, (job) => {
+        const nextSlots = job.slots.map((s) => (s.id === slot.id ? { ...s, status: "running", error: undefined } : s));
+        const next = { ...job, status: "running", updatedAt: nowTs(), slots: nextSlots };
+        return appendBatchActionLog(next, "slot_run_start", { slotId: slot.id, index: i });
+      });
+
+      try {
+        const generated = await runBatchSlotGeneration({
+          jobId,
+          slotId: slot.id,
+          slotLabel: slot.title,
+          slotPrompt,
+          referenceImage: fixedReferenceImage,
+        });
+
+        if (!generated.length) {
+          throw new Error("未返回图片");
+        }
+
+        setBalanceRefreshTick((v) => v + 1);
+        updateBatchJobById(jobId, (job) => {
+          const nextSlots = job.slots.map((s) => {
+            if (s.id !== slot.id) return s;
+            const prevLast = s.versions[s.versions.length - 1];
+            const appended = generated.map((v, idx) => ({
+              ...v,
+              index: s.versions.length + idx + 1,
+              source: s.versions.length === 0 ? "generate" : "rerun",
+              parentVersionId: prevLast?.id,
+            }));
+            const merged = [
+              ...s.versions.map((v) => ({ ...v, isPrimary: false })),
+              ...appended.map((v, idx) => ({ ...v, isPrimary: idx === 0 })),
+            ];
+            return {
+              ...s,
+              status: "completed" as const,
+              versions: merged,
+              activeVersionId: appended[0]?.id || s.activeVersionId,
+            };
+          });
+          const next = {
+            ...job,
+            slots: nextSlots,
+            status: mapSlotStatusToJobStatus(nextSlots),
+            updatedAt: nowTs(),
+          };
+          return appendBatchActionLog(next, "slot_run_success", { slotId: slot.id, generatedCount: generated.length });
+        });
+      } catch (e) {
+        const errorText = e instanceof Error ? e.message : String(e);
+        updateBatchJobById(jobId, (job) => {
+          const nextSlots = job.slots.map((s) => (s.id === slot.id ? { ...s, status: "failed", error: errorText } : s));
+          const next = {
+            ...job,
+            slots: nextSlots,
+            status: mapSlotStatusToJobStatus(nextSlots),
+            updatedAt: nowTs(),
+          };
+          return appendBatchActionLog(next, "slot_run_failed", { slotId: slot.id, error: errorText });
+        });
+      }
+    }
+
+    updateBatchJobById(jobId, (job) => {
+      const finalStatus = mapSlotStatusToJobStatus(job.slots);
+      const next = {
+        ...job,
+        status: finalStatus,
+        updatedAt: nowTs(),
+      };
+      return appendBatchActionLog(next, "job_finished", { status: finalStatus });
+    });
+
+    setIsGenerating(false);
+    setGenerationStage(null);
+    setGenerationProgress(null);
+    if (abortRef.current === controller) {
+      abortRef.current = null;
+    }
+  }, [appendBatchActionLog, authUser, buildBatchSlotPrompt, currentSession, inputText, isGenerating, runBatchSlotGeneration, selectedImage, updateBatchJobById]);
+
+  const handleArchiveBatchJob = useCallback((jobId: string) => {
+    updateBatchJobById(jobId, (job) => {
+      const next = {
+        ...job,
+        status: "archived" as const,
+        archivedAt: nowTs(),
+        updatedAt: nowTs(),
+      };
+      return appendBatchActionLog(next, "job_archived");
+    });
+  }, [appendBatchActionLog, updateBatchJobById]);
+
+  const handleRestoreBatchJob = useCallback((jobId: string) => {
+    updateBatchJobById(jobId, (job) => {
+      const slotDerived = mapSlotStatusToJobStatus(job.slots);
+      const recoveredStatus: BatchJobStatus = slotDerived === "archived" || slotDerived === "deleted" ? "draft" : slotDerived;
+      const next = {
+        ...job,
+        status: recoveredStatus,
+        archivedAt: undefined,
+        deletedAt: undefined,
+        updatedAt: nowTs(),
+      };
+      return appendBatchActionLog(next, "job_restored", { status: recoveredStatus });
+    });
+  }, [appendBatchActionLog, updateBatchJobById]);
+
+  const handleSoftDeleteBatchJob = useCallback((jobId: string) => {
+    updateBatchJobById(jobId, (job) => {
+      const next = {
+        ...job,
+        status: "deleted" as const,
+        deletedAt: nowTs(),
+        updatedAt: nowTs(),
+      };
+      return appendBatchActionLog(next, "job_deleted");
+    });
+  }, [appendBatchActionLog, updateBatchJobById]);
+
+  const handleRecoverDeletedBatchJob = useCallback((jobId: string) => {
+    updateBatchJobById(jobId, (job) => {
+      const recovered = mapSlotStatusToJobStatus(job.slots);
+      const next = {
+        ...job,
+        status: recovered === "deleted" ? "draft" : recovered,
+        deletedAt: undefined,
+        updatedAt: nowTs(),
+      };
+      return appendBatchActionLog(next, "job_recovered");
+    });
+  }, [appendBatchActionLog, updateBatchJobById]);
+
+  const handleDuplicateBatchJob = useCallback((jobId: string) => {
+    setBatchJobs((prev) => {
+      const source = prev.find((j) => j.id === jobId);
+      if (!source) return prev;
+      const ts = nowTs();
+      const newJobId = uuidv4();
+      const newSlots: BatchSlot[] = source.slots.map((s) => ({
+        ...s,
         id: uuidv4(),
-        role: "user",
-        parts: [
+        jobId: newJobId,
+        status: "pending",
+        error: undefined,
+        versions: [],
+        activeVersionId: undefined,
+      }));
+      const copy: BatchJob = {
+        ...source,
+        id: newJobId,
+        title: `${source.title}（副本）`,
+        status: "draft",
+        createdAt: ts,
+        updatedAt: ts,
+        archivedAt: undefined,
+        deletedAt: undefined,
+        slots: newSlots,
+        actionLogs: [
           {
-            type: "text",
-            text: `(${slotLabel})${item.note ? ` ${item.note}` : ""}`,
+            id: uuidv4(),
+            jobId: newJobId,
+            action: "job_copied",
+            operator: authUser || "unknown",
+            ts,
+            payload: { fromJobId: source.id },
           },
         ],
-        timestamp: Date.now(),
       };
-      if (fixedReferenceImage) {
-        userMessage.parts.push({ type: "image", imageUrl: fixedReferenceImage });
-      }
+      setSelectedBatchJobId(newJobId);
+      setCurrentView("batch");
+      return [copy, ...prev];
+    });
+  }, [authUser]);
 
-      messageCursor = [...messageCursor, userMessage];
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.id === currentSession.id ? { ...s, messages: messageCursor, updatedAt: Date.now() } : s
-        )
-      );
-
-      const nextMessages = await executeGeneration(slotPrompt, fixedReferenceImage, messageCursor, {
-        action: slotLabel,
-        batchCountOverride: 1,
-        forceNoAutoReuse: true,
+  const handleSetPrimaryBatchVersion = useCallback((jobId: string, slotId: string, versionId: string) => {
+    updateBatchJobById(jobId, (job) => {
+      const nextSlots = job.slots.map((slot) => {
+        if (slot.id !== slotId) return slot;
+        return {
+          ...slot,
+          activeVersionId: versionId,
+          versions: slot.versions.map((v) => ({ ...v, isPrimary: v.id === versionId })),
+        };
       });
-      if (!nextMessages) break;
-      messageCursor = nextMessages;
+      const next = {
+        ...job,
+        slots: nextSlots,
+        updatedAt: nowTs(),
+      };
+      return appendBatchActionLog(next, "slot_set_primary", { slotId, versionId });
+    });
+  }, [appendBatchActionLog, updateBatchJobById]);
+
+  const handleDownloadBatchVersion = useCallback(async (v: BatchVersion) => {
+    if (!v.imageUrl) return;
+    const options = loadDownloadOptions();
+    await downloadImageWithFormat(v.imageUrl, {
+      basename: `topseller-batch-${v.id}`,
+      format: options.format,
+      quality: options.quality,
+    });
+  }, []);
+
+  const handleRunSingleBatchSlot = useCallback(async (jobId: string, slotId: string) => {
+    const job = batchJobs.find((j) => j.id === jobId);
+    const slot = job?.slots.find((s) => s.id === slotId);
+    if (!job || !slot || !currentSession || isGenerating) return;
+    if (job.status === "deleted") return;
+
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+    const controller = abortRef.current;
+
+    setIsGenerating(true);
+    setGenerationProgress(null);
+    setGenerationStage(`正在重跑：${slot.title}`);
+    setCurrentView("batch");
+    setSelectedBatchJobId(jobId);
+
+    updateBatchJobById(jobId, (target) => {
+      const nextSlots = target.slots.map((s) => (s.id === slotId ? { ...s, status: "running", error: undefined } : s));
+      const next = { ...target, slots: nextSlots, status: "running", updatedAt: nowTs() };
+      return appendBatchActionLog(next, "slot_rerun_start", { slotId });
+    });
+
+    try {
+      const slotPrompt = buildBatchSlotPrompt({
+        basePrompt: job.basePrompt || inputText.trim(),
+        total: job.slots.length,
+        index: Math.max(0, job.slots.findIndex((s) => s.id === slotId)),
+        scene: slot.type,
+        sceneLabel: slot.title,
+        note: slot.promptTemplate,
+      });
+
+      const generated = await runBatchSlotGeneration({
+        jobId,
+        slotId,
+        slotLabel: slot.title,
+        slotPrompt,
+        referenceImage: job.referenceImageUrl || null,
+      });
+
+      if (!generated.length) throw new Error("未返回图片");
+      setBalanceRefreshTick((v) => v + 1);
+      updateBatchJobById(jobId, (target) => {
+        const nextSlots = target.slots.map((s) => {
+          if (s.id !== slotId) return s;
+          const prevLast = s.versions[s.versions.length - 1];
+          const appended = generated.map((v, idx) => ({
+            ...v,
+            index: s.versions.length + idx + 1,
+            source: "rerun" as const,
+            parentVersionId: prevLast?.id,
+          }));
+          return {
+            ...s,
+            status: "completed" as const,
+            versions: [
+              ...s.versions.map((v) => ({ ...v, isPrimary: false })),
+              ...appended.map((v, idx) => ({ ...v, isPrimary: idx === 0 })),
+            ],
+            activeVersionId: appended[0]?.id || s.activeVersionId,
+          };
+        });
+        const next = {
+          ...target,
+          slots: nextSlots,
+          status: mapSlotStatusToJobStatus(nextSlots),
+          updatedAt: nowTs(),
+        };
+        return appendBatchActionLog(next, "slot_rerun_success", { slotId, generatedCount: generated.length });
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      updateBatchJobById(jobId, (target) => {
+        const nextSlots = target.slots.map((s) => (s.id === slotId ? { ...s, status: "failed", error: msg } : s));
+        const next = {
+          ...target,
+          slots: nextSlots,
+          status: mapSlotStatusToJobStatus(nextSlots),
+          updatedAt: nowTs(),
+        };
+        return appendBatchActionLog(next, "slot_rerun_failed", { slotId, error: msg });
+      });
+    } finally {
+      setIsGenerating(false);
+      setGenerationStage(null);
+      setGenerationProgress(null);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
     }
-  }, [currentSession, executeGeneration, inputText, isGenerating, selectedImage]);
+  }, [appendBatchActionLog, batchJobs, buildBatchSlotPrompt, currentSession, inputText, isGenerating, runBatchSlotGeneration, updateBatchJobById]);
 
   const handleMaskSubmit = async (params: {
     baseImageUrl: string;
@@ -921,6 +1474,153 @@ const App: React.FC = () => {
     if (!currentSession) return { generatedImageUrls: [] };
     const base = params.baseImageUrl;
     if (!base) return { generatedImageUrls: [] };
+
+    if (maskEditContext?.source === "batch") {
+      const jobId = maskEditContext.jobId;
+      const slotId = maskEditContext.slotId;
+      const job = batchJobs.find((j) => j.id === jobId);
+      const slot = job?.slots.find((s) => s.id === slotId);
+      if (!job || !slot) {
+        throw new Error("套图槽位不存在或已被删除。");
+      }
+
+      abortRef.current?.abort();
+      abortRef.current = new AbortController();
+      const controller = abortRef.current;
+
+      setIsGenerating(true);
+      setErrorDetails(null);
+      setGenerationProgress(null);
+      setGenerationStage("正在执行套图局部编辑...");
+
+      const size = aspectRatioToSize(currentSession.settings.aspectRatio);
+      const model = apiConfig.defaultImageModel || "";
+      const supportsEdits = /^gpt-image/i.test(model) || /^dall-e/i.test(model);
+      let generatedImageUrls: string[] = [];
+      let modelUsed = model;
+
+      const appendToBatch = (urls: string[], resolvedModel: string, resolvedSize: string) => {
+        updateBatchJobById(jobId, (target) => {
+          const nextSlots = target.slots.map((s) => {
+            if (s.id !== slotId) return s;
+            const prevLast = s.versions[s.versions.length - 1];
+            const appended: BatchVersion[] = urls.map((url, idx) => ({
+              id: uuidv4(),
+              slotId: s.id,
+              index: s.versions.length + idx + 1,
+              imageUrl: url,
+              model: resolvedModel,
+              promptUsed: params.prompt,
+              size: resolvedSize,
+              createdAt: nowTs(),
+              parentVersionId: prevLast?.id || maskEditContext.versionId,
+              source: "mask-edit",
+              isPrimary: idx === 0,
+            }));
+            return {
+              ...s,
+              status: "completed" as const,
+              versions: [
+                ...s.versions.map((v) => ({ ...v, isPrimary: false })),
+                ...appended,
+              ],
+              activeVersionId: appended[0]?.id || s.activeVersionId,
+              error: undefined,
+            };
+          });
+          const next = {
+            ...target,
+            slots: nextSlots,
+            status: mapSlotStatusToJobStatus(nextSlots),
+            updatedAt: nowTs(),
+          };
+          return appendBatchActionLog(next, "slot_mask_edit_success", { slotId, generatedCount: urls.length });
+        });
+      };
+
+      try {
+        if (supportsEdits) {
+          const resp = await imagesEdits(
+            {
+              image: [base],
+              mask: params.maskDataUrl,
+              prompt: params.prompt,
+              n: 1,
+              size,
+              response_format: ResponseFormat.Url,
+              model,
+            },
+            { api: apiConfig, signal: controller.signal }
+          );
+          generatedImageUrls = (resp.data || [])
+            .map((o) => (o ? imageObjToDataUrl(o) : null))
+            .filter((u): u is string => Boolean(u));
+          modelUsed = resp.model_used || model;
+        }
+
+        if (!generatedImageUrls.length) {
+          const augmentedPrompt =
+            `${params.prompt}\n\n` +
+            `说明：第二张参考图是遮罩提示图，红色区域是需要修改的区域；其它区域尽量保持不变，并严格保持人物/风格一致性。`;
+
+          let fallbackBase = base;
+          if (!isDataOrBlobUrl(base)) {
+            try {
+              fallbackBase = await ensureImageDataUrl(base, controller.signal);
+            } catch (e) {
+              console.warn("底图转 data URL 失败，继续使用原图 URL：", e);
+            }
+          }
+
+          const result = await generateResponse(
+            augmentedPrompt,
+            fallbackBase,
+            selectedModelImage,
+            selectedProductImage,
+            [],
+            currentSession.settings,
+            {
+              n: 1,
+              size,
+              responseFormat: "url",
+              extraImages: [params.maskOverlayDataUrl],
+              disableAutoUseLastImage: true,
+              signal: controller.signal,
+            }
+          );
+          generatedImageUrls = result.images;
+          modelUsed = result.modelUsed || modelUsed;
+        }
+
+        if (!generatedImageUrls.length) {
+          throw new Error("局部编辑未生成新图。");
+        }
+
+        appendToBatch(generatedImageUrls, modelUsed, size);
+        setBalanceRefreshTick((v) => v + 1);
+        return { generatedImageUrls };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        updateBatchJobById(jobId, (target) => {
+          const nextSlots = target.slots.map((s) => (s.id === slotId ? { ...s, status: "failed", error: msg } : s));
+          const next = {
+            ...target,
+            slots: nextSlots,
+            status: mapSlotStatusToJobStatus(nextSlots),
+            updatedAt: nowTs(),
+          };
+          return appendBatchActionLog(next, "slot_mask_edit_failed", { slotId, error: msg });
+        });
+        throw e;
+      } finally {
+        setIsGenerating(false);
+        setGenerationStage(null);
+        setGenerationProgress(null);
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
+      }
+    }
 
     const userMsg: Message = {
       id: uuidv4(),
@@ -1131,7 +1831,10 @@ const App: React.FC = () => {
       <Sidebar
         sessions={sessions}
         currentSessionId={currentSessionId}
-        onSelectSession={setCurrentSessionId}
+        onSelectSession={(id) => {
+          setCurrentSessionId(id);
+          setCurrentView("chat");
+        }}
         onNewSession={handleNewSession}
         onDeleteSession={handleDeleteSession}
         isOpen={isSidebarOpen}
@@ -1139,7 +1842,9 @@ const App: React.FC = () => {
         apiConfig={apiConfig}
         onUpdateApiConfig={handleUpdateApiConfig}
         onOpenAssets={openAssets}
+        onOpenBatchRecords={openBatchRecords}
         assetCount={totalAssetCount}
+        batchJobCount={batchJobs.filter((j) => j.status !== "deleted").length}
         currentSettings={currentSession.settings}
         onUpdateCurrentSettings={handleUpdateSettings}
         balanceRefreshTick={balanceRefreshTick}
@@ -1159,7 +1864,9 @@ const App: React.FC = () => {
         </div>
         <div className="lg:hidden h-14 border-b border-dark-700 flex items-center px-4 justify-between bg-dark-800">
           <button onClick={() => setIsSidebarOpen(true)} className="text-gray-400"><Icon name="bars" /></button>
-          <span className="font-semibold text-gray-200 truncate max-w-[200px]">{currentSession.title}</span>
+          <span className="font-semibold text-gray-200 truncate max-w-[200px]">
+            {currentView === "batch" ? (selectedBatchJob?.title || "套图记录") : currentSession.title}
+          </span>
           <button
             onClick={handleLogout}
             disabled={authLoading}
@@ -1176,200 +1883,226 @@ const App: React.FC = () => {
           onSaveTemplate={handleSaveTemplate}
           hasDesktopTopRightOverlay
         />
-        <div className="flex-1 overflow-y-auto p-4 lg:p-8 scroll-smooth">
-          <div className="w-full max-w-none min-h-full flex flex-col pr-1 lg:pr-4">
-            {currentSession.messages.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-gray-500 opacity-50 mt-10">
-                <Icon name="image" className="text-6xl mb-4" />
-                <p className="text-lg text-center">写下指令，选择画幅比例，然后开始创作。</p>
-              </div>
-            ) : (
-              currentSession.messages.map(msg => (
-                <ChatMessage
-                  key={msg.id}
-                  message={msg}
-                  onPreviewImage={setPreviewImageUrl}
-                  onVariation={handleVariation}
-                  onMaskEdit={openMaskEdit}
-                  onUseAsReference={setSelectedImage}
-                />
-              ))
-            )}
-            {isGenerating && (
-              <div className="flex items-center gap-3 text-banana-400 mb-6 max-w-[70%]">
-                 <div className="w-8 h-8 rounded-full bg-banana-500 text-dark-900 flex items-center justify-center animate-pulse"><Icon name="robot" /></div>
-                 <div className="bg-dark-800 px-4 py-3 rounded-2xl rounded-tl-none border border-dark-700">
-                   <span className="text-sm flex gap-2 items-center">
-                    {generationStage || (currentSession.settings.selectedModelId ? "正在同步已锁定的人物..." : "正在整理视觉上下文...")}
-                   </span>
-                   <div className="mt-2 text-[11px] text-gray-400 flex items-center justify-between gap-3">
-                     <span>
-                       {generationProgress
-                         ? `进度：${generationProgress.current}/${generationProgress.total}`
-                         : "进度：准备中..."}
-                     </span>
-                     <button
-                       onClick={cancelGeneration}
-                       className="px-2 py-1 bg-dark-900 hover:bg-dark-700 text-gray-200 border border-dark-600 rounded-md"
-                       title="取消当前生成"
-                     >
-                       取消
-                     </button>
-                   </div>
-                 </div>
-              </div>
-            )}
-            <div ref={chatEndRef} className="h-4" />
-          </div>
-        </div>
-        <div className="bg-dark-800 border-t border-dark-700 p-4 lg:p-6">
-          <div className="w-full max-w-none flex flex-col gap-3 pr-1 lg:pr-4">
-            {errorDetails && (
-              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2">
-                <span className="text-xs text-red-300 truncate max-w-full">
-                  {getFriendlyErrorMessage(errorDetails.message)}
-                </span>
-                <button
-                  onClick={retryLastGeneration}
-                  disabled={!lastRunRef.current || isGenerating}
-                  className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md disabled:opacity-40"
-                >
-                  重试
-                </button>
-                <button
-                  onClick={() => setIsErrorModalOpen(true)}
-                  className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md"
-                >
-                  查看详情
-                </button>
-                <button
-                  onClick={() => {
-                    setErrorDetails(null);
-                    setIsErrorModalOpen(false);
-                  }}
-                  className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-300 border border-dark-600 rounded-md"
-                >
-                  忽略
-                </button>
-              </div>
-            )}
-            <div className="rounded-lg border border-dark-600 bg-dark-800/60 px-3 py-2">
-              <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    onClick={() => setIsAdvancedPanelOpen((v) => !v)}
-                    className="h-8 px-2.5 rounded-md border border-dark-600 bg-dark-800 hover:bg-dark-700 text-[11px] text-gray-200 transition-colors flex items-center gap-1.5"
-                  >
-                    <Icon name={isAdvancedPanelOpen ? "chevron-up" : "chevron-down"} />
-                    {isAdvancedPanelOpen ? "收起高级设置" : "展开高级设置"}
-                  </button>
-                  {currentSession.settings.productImage && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full border border-banana-500/30 bg-banana-500/10 text-banana-300">
-                      已设产品图
-                    </span>
-                  )}
-                  {currentSession.settings.selectedModelId && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full border border-banana-500/30 bg-banana-500/10 text-banana-300">
-                      已锁模特
-                    </span>
-                  )}
-                  {selectedImage && (
-                    <div className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
-                      <span>已设参考图</span>
-                      <button
-                        onClick={() => setIsAdvancedPanelOpen(true)}
-                        className="underline underline-offset-2 hover:text-emerald-200"
-                      >
-                        查看
-                      </button>
-                      <button
-                        onClick={() => setSelectedImage(null)}
-                        className="text-emerald-200 hover:text-white"
-                        title="清除参考图"
-                      >
-                        <Icon name="times" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-gray-300 font-medium">连续编辑</span>
-                  <label className="inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={currentSession.settings.autoUseLastImage}
-                      onChange={(e) => {
-                        const next = { ...currentSession.settings, autoUseLastImage: e.target.checked };
-                        if (e.target.checked && next.selectedModelId !== null) {
-                          next.selectedModelId = null;
-                        }
-                        handleUpdateSettings(next);
-                      }}
-                      className="h-4 w-4 accent-banana-500"
+        {currentView === "chat" ? (
+          <>
+            <div className="flex-1 overflow-y-auto p-4 lg:p-8 scroll-smooth">
+              <div className="w-full max-w-none min-h-full flex flex-col pr-1 lg:pr-4">
+                {currentSession.messages.length === 0 ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-gray-500 opacity-50 mt-10">
+                    <Icon name="image" className="text-6xl mb-4" />
+                    <p className="text-lg text-center">写下指令，选择画幅比例，然后开始创作。</p>
+                  </div>
+                ) : (
+                  currentSession.messages.map(msg => (
+                    <ChatMessage
+                      key={msg.id}
+                      message={msg}
+                      onPreviewImage={setPreviewImageUrl}
+                      onVariation={handleVariation}
+                      onMaskEdit={openMaskEditFromChat}
+                      onUseAsReference={setSelectedImage}
                     />
-                  </label>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
-                    currentSession.settings.autoUseLastImage
-                      ? "text-emerald-300 border-emerald-500/40 bg-emerald-500/10"
-                      : "text-gray-400 border-dark-500 bg-dark-700"
-                  }`}>
-                    {currentSession.settings.autoUseLastImage ? "已开启" : "已关闭"}
-                  </span>
-                </div>
-              </div>
-              {!isAdvancedPanelOpen && (
-                <p className="mt-1 text-[10px] text-gray-500 leading-relaxed">
-                  输入指令即可生成。产品/模特、快捷词在「高级设置」中按需展开，减少占用空间。
-                </p>
-              )}
-            </div>
-
-            {isAdvancedPanelOpen && (
-              <div className="space-y-2 rounded-lg border border-dark-700 bg-dark-900/30 p-2">
-                <PromptModelPanel
-                  settings={currentSession.settings}
-                  onUpdateSettings={handleUpdateSettings}
-                  models={models}
-                  onAddModel={handleAddModel}
-                  onOpenBatchSet={openBatchSetModal}
-                />
-                {selectedImage && (
-                  <div className="relative inline-block self-start">
-                    <img src={selectedImage} alt="预览" className="h-20 rounded-lg border border-dark-600 object-cover shadow-lg" loading="lazy" decoding="async" />
-                    <button onClick={() => setSelectedImage(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-md"><Icon name="times" /></button>
+                  ))
+                )}
+                {isGenerating && (
+                  <div className="flex items-center gap-3 text-banana-400 mb-6 max-w-[70%]">
+                     <div className="w-8 h-8 rounded-full bg-banana-500 text-dark-900 flex items-center justify-center animate-pulse"><Icon name="robot" /></div>
+                     <div className="bg-dark-800 px-4 py-3 rounded-2xl rounded-tl-none border border-dark-700">
+                       <span className="text-sm flex gap-2 items-center">
+                        {generationStage || (currentSession.settings.selectedModelId ? "正在同步已锁定的人物..." : "正在整理视觉上下文...")}
+                       </span>
+                       <div className="mt-2 text-[11px] text-gray-400 flex items-center justify-between gap-3">
+                         <span>
+                           {generationProgress
+                             ? `进度：${generationProgress.current}/${generationProgress.total}`
+                             : "进度：准备中..."}
+                         </span>
+                         <button
+                           onClick={cancelGeneration}
+                           className="px-2 py-1 bg-dark-900 hover:bg-dark-700 text-gray-200 border border-dark-600 rounded-md"
+                           title="取消当前生成"
+                         >
+                           取消
+                         </button>
+                       </div>
+                     </div>
                   </div>
                 )}
-                <div className="flex flex-wrap items-center gap-2">
-                  {QUICK_PROMPT_PRESETS.map((p) => (
+                <div ref={chatEndRef} className="h-4" />
+              </div>
+            </div>
+            <div className="bg-dark-800 border-t border-dark-700 p-4 lg:p-6">
+              <div className="w-full max-w-none flex flex-col gap-3 pr-1 lg:pr-4">
+                {errorDetails && (
+                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2">
+                    <span className="text-xs text-red-300 truncate max-w-full">
+                      {getFriendlyErrorMessage(errorDetails.message)}
+                    </span>
                     <button
-                      key={p}
-                      onClick={() => setInputText((prev) => (prev ? `${prev}\n${p}` : p))}
+                      onClick={retryLastGeneration}
+                      disabled={!lastRunRef.current || isGenerating}
+                      className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md disabled:opacity-40"
+                    >
+                      重试
+                    </button>
+                    <button
+                      onClick={() => setIsErrorModalOpen(true)}
                       className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md"
                     >
-                      {p}
+                      查看详情
                     </button>
-                  ))}
+                    <button
+                      onClick={() => {
+                        setErrorDetails(null);
+                        setIsErrorModalOpen(false);
+                      }}
+                      className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-300 border border-dark-600 rounded-md"
+                    >
+                      忽略
+                    </button>
+                  </div>
+                )}
+                <div className="rounded-lg border border-dark-600 bg-dark-800/60 px-3 py-2">
+                  <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => setIsAdvancedPanelOpen((v) => !v)}
+                        className="h-8 px-2.5 rounded-md border border-dark-600 bg-dark-800 hover:bg-dark-700 text-[11px] text-gray-200 transition-colors flex items-center gap-1.5"
+                      >
+                        <Icon name={isAdvancedPanelOpen ? "chevron-up" : "chevron-down"} />
+                        {isAdvancedPanelOpen ? "收起高级设置" : "展开高级设置"}
+                      </button>
+                      {currentSession.settings.productImage && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full border border-banana-500/30 bg-banana-500/10 text-banana-300">
+                          已设产品图
+                        </span>
+                      )}
+                      {currentSession.settings.selectedModelId && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full border border-banana-500/30 bg-banana-500/10 text-banana-300">
+                          已锁模特
+                        </span>
+                      )}
+                      {selectedImage && (
+                        <div className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+                          <span>已设参考图</span>
+                          <button
+                            onClick={() => setIsAdvancedPanelOpen(true)}
+                            className="underline underline-offset-2 hover:text-emerald-200"
+                          >
+                            查看
+                          </button>
+                          <button
+                            onClick={() => setSelectedImage(null)}
+                            className="text-emerald-200 hover:text-white"
+                            title="清除参考图"
+                          >
+                            <Icon name="times" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-300 font-medium">连续编辑</span>
+                      <label className="inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={currentSession.settings.autoUseLastImage}
+                          onChange={(e) => {
+                            const next = { ...currentSession.settings, autoUseLastImage: e.target.checked };
+                            if (e.target.checked && next.selectedModelId !== null) {
+                              next.selectedModelId = null;
+                            }
+                            handleUpdateSettings(next);
+                          }}
+                          className="h-4 w-4 accent-banana-500"
+                        />
+                      </label>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                        currentSession.settings.autoUseLastImage
+                          ? "text-emerald-300 border-emerald-500/40 bg-emerald-500/10"
+                          : "text-gray-400 border-dark-500 bg-dark-700"
+                      }`}>
+                        {currentSession.settings.autoUseLastImage ? "已开启" : "已关闭"}
+                      </span>
+                    </div>
+                  </div>
+                  {!isAdvancedPanelOpen && (
+                    <p className="mt-1 text-[10px] text-gray-500 leading-relaxed">
+                      输入指令即可生成。产品/模特、快捷词在「高级设置」中按需展开，减少占用空间。
+                    </p>
+                  )}
+                </div>
+
+                {isAdvancedPanelOpen && (
+                  <div className="space-y-2 rounded-lg border border-dark-700 bg-dark-900/30 p-2">
+                    <PromptModelPanel
+                      settings={currentSession.settings}
+                      onUpdateSettings={handleUpdateSettings}
+                      models={models}
+                      onAddModel={handleAddModel}
+                      onOpenBatchSet={openBatchSetModal}
+                    />
+                    {selectedImage && (
+                      <div className="relative inline-block self-start">
+                        <img src={selectedImage} alt="预览" className="h-20 rounded-lg border border-dark-600 object-cover shadow-lg" loading="lazy" decoding="async" />
+                        <button onClick={() => setSelectedImage(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-md"><Icon name="times" /></button>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {QUICK_PROMPT_PRESETS.map((p) => (
+                        <button
+                          key={p}
+                          onClick={() => setInputText((prev) => (prev ? `${prev}\n${p}` : p))}
+                          className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md"
+                        >
+                          {p}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-end gap-3 bg-dark-900 border border-dark-600 rounded-xl p-2 focus-within:border-dark-500 transition-colors">
+                  <button onClick={() => fileInputRef.current?.click()} className="p-3 text-gray-400 hover:text-banana-400 transition-colors rounded-lg hover:bg-dark-800"><Icon name="image" className="text-lg" /></button>
+                  <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" className="hidden" />
+                  <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste} placeholder="例如：给人物加一顶红色帽子..." className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-gray-200 placeholder-gray-600 max-h-32 py-3 resize-none custom-scrollbar" rows={1} style={{ minHeight: '44px' }} />
+                  <button onClick={handleEnhancePrompt} disabled={!inputText.trim() || isEnhancing || isGenerating} className={`p-3 text-banana-500 hover:text-banana-400 rounded-lg hover:bg-dark-800 ${isEnhancing ? 'animate-pulse' : ''}`}><Icon name="magic" /></button>
+                  <button onClick={handleSendMessage} disabled={(!inputText.trim() && !selectedImage) || isGenerating} className={`p-3 rounded-lg font-semibold transition-all ${(!inputText.trim() && !selectedImage) || isGenerating ? 'bg-dark-700 text-gray-500' : 'bg-banana-500 hover:bg-banana-400 text-dark-900 shadow-lg'}`}><Icon name="paper-plane" /></button>
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  回车发送，Shift+回车换行。支持粘贴图片，或在素材库中一键设为参考图。
                 </div>
               </div>
-            )}
-            <div className="flex items-end gap-3 bg-dark-900 border border-dark-600 rounded-xl p-2 focus-within:border-dark-500 transition-colors">
-              <button onClick={() => fileInputRef.current?.click()} className="p-3 text-gray-400 hover:text-banana-400 transition-colors rounded-lg hover:bg-dark-800"><Icon name="image" className="text-lg" /></button>
-              <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" className="hidden" />
-              <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste} placeholder="例如：给人物加一顶红色帽子..." className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-gray-200 placeholder-gray-600 max-h-32 py-3 resize-none custom-scrollbar" rows={1} style={{ minHeight: '44px' }} />
-              <button onClick={handleEnhancePrompt} disabled={!inputText.trim() || isEnhancing || isGenerating} className={`p-3 text-banana-500 hover:text-banana-400 rounded-lg hover:bg-dark-800 ${isEnhancing ? 'animate-pulse' : ''}`}><Icon name="magic" /></button>
-              <button onClick={handleSendMessage} disabled={(!inputText.trim() && !selectedImage) || isGenerating} className={`p-3 rounded-lg font-semibold transition-all ${(!inputText.trim() && !selectedImage) || isGenerating ? 'bg-dark-700 text-gray-500' : 'bg-banana-500 hover:bg-banana-400 text-dark-900 shadow-lg'}`}><Icon name="paper-plane" /></button>
             </div>
-            <div className="text-[11px] text-gray-500">
-              回车发送，Shift+回车换行。支持粘贴图片，或在素材库中一键设为参考图。
-            </div>
+          </>
+        ) : (
+          <div className="flex-1 min-h-0">
+            <BatchJobsPanel
+              jobs={batchJobs}
+              selectedJobId={selectedBatchJobId}
+              isBusy={isGenerating}
+              onSelectJob={(jobId) => setSelectedBatchJobId(jobId)}
+              onRunSlot={(jobId, slotId) => {
+                void handleRunSingleBatchSlot(jobId, slotId);
+              }}
+              onSetPrimaryVersion={handleSetPrimaryBatchVersion}
+              onOpenMaskEdit={openMaskEditFromBatch}
+              onArchiveJob={handleArchiveBatchJob}
+              onRestoreJob={handleRestoreBatchJob}
+              onSoftDeleteJob={handleSoftDeleteBatchJob}
+              onRecoverDeletedJob={handleRecoverDeletedBatchJob}
+              onDuplicateJob={handleDuplicateBatchJob}
+              onDownloadVersion={(v) => {
+                void handleDownloadBatchVersion(v);
+              }}
+            />
           </div>
-        </div>
+        )}
         {previewImageUrl && <ImagePreviewModal imageUrl={previewImageUrl} onClose={() => setPreviewImageUrl(null)} />}
         <AssetsModal
           isOpen={isAssetsOpen}
           assets={allAssets}
           onClose={() => setIsAssetsOpen(false)}
-          onOpenMaskEdit={openMaskEdit}
+          onOpenMaskEdit={openMaskEditFromChat}
           onUseAsReference={(imageUrl) => {
             setSelectedImage(imageUrl);
             setIsAssetsOpen(false);
@@ -1397,7 +2130,10 @@ const App: React.FC = () => {
             baseImageUrl={maskEditBaseUrl}
             historyItems={maskHistoryItems}
             onSelectBaseImage={setMaskEditBaseUrl}
-            onClose={() => setMaskEditBaseUrl(null)}
+            onClose={() => {
+              setMaskEditBaseUrl(null);
+              setMaskEditContext(null);
+            }}
             onSubmit={handleMaskSubmit}
           />
         )}
