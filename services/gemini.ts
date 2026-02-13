@@ -74,49 +74,6 @@ const detectImageInputMode = (value: string): ImageInputMode => {
   return "b64";
 };
 
-const productFaceDetectionCache = new Map<string, boolean>();
-
-const buildImageCacheKey = (src: string): string => {
-  const s = String(src || "");
-  return `${s.length}:${s.slice(0, 128)}:${s.slice(-128)}`;
-};
-
-const loadImageElement = (src: string): Promise<HTMLImageElement> =>
-  new Promise((resolve, reject) => {
-    const img = new Image();
-    if (/^https?:\/\//i.test(src)) {
-      img.crossOrigin = "anonymous";
-    }
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("load image failed"));
-    img.src = src;
-  });
-
-const detectHumanFaceInImage = async (src: string): Promise<boolean> => {
-  if (!src || typeof window === "undefined") return false;
-  const FaceDetectorCtor = (window as any)?.FaceDetector;
-  if (typeof FaceDetectorCtor !== "function") return false;
-
-  try {
-    const img = await loadImageElement(src);
-    const detector = new FaceDetectorCtor({ fastMode: true, maxDetectedFaces: 1 });
-    const faces = await detector.detect(img);
-    return Array.isArray(faces) && faces.length > 0;
-  } catch {
-    return false;
-  }
-};
-
-const detectProductImageHasFace = async (productImage: string | null): Promise<boolean> => {
-  if (!productImage) return false;
-  const key = buildImageCacheKey(productImage);
-  const cached = productFaceDetectionCache.get(key);
-  if (typeof cached === "boolean") return cached;
-
-  const hasFace = await detectHumanFaceInImage(productImage);
-  productFaceDetectionCache.set(key, hasFace);
-  return hasFace;
-};
 
 export const generateResponse = async (
   currentMessageText: string,
@@ -127,7 +84,6 @@ export const generateResponse = async (
   settings: SessionSettings,
   options: GenerateResponseOptions = {}
 ): Promise<GenerateResponseResult> => {
-  const productImageHasFace = await detectProductImageHasFace(productImage);
 
   // If user didn't provide a new image this turn, fall back to the most recent
   // image in the history for iterative edits.
@@ -148,10 +104,9 @@ export const generateResponse = async (
     ? options.extraImages.map((img) => String(img || "").trim()).filter(Boolean)
     : [];
 
-  // 当存在“当前参考图/连续编辑图”时，产品图只做兜底，不再并行注入，
+  // 当存在"当前参考图/连续编辑图"时，产品图只做兜底，不再并行注入，
   // 避免产品图（尤其带人物的产品图）覆盖当前编辑语义。
   const includeProductImage = Boolean(productImage) && !referenceImage && !lastHistoryImage;
-  const isProductAuxiliary = Boolean(productImage) && productImageHasFace;
 
   const imageInputsRaw: string[] = [];
   if (referenceImage) imageInputsRaw.push(referenceImage);
@@ -218,12 +173,8 @@ export const generateResponse = async (
       ? `系统指令：\n${settings.systemPrompt.trim()}\n\n`
       : "";
     let imageContext = "";
-    if (includeProductImage && !isProductAuxiliary) {
-      imageContext += "\n图片说明：第一张是主要产品，请保持产品外观特征和细节。";
-    }
-    if (includeProductImage && isProductAuxiliary) {
-      imageContext +=
-        "\n产品图检测到明显人脸：该图仅作辅助参考。请只参考产品本身的颜色、材质与结构，不要复刻其中人物主体、脸部与原构图。";
+    if (includeProductImage) {
+      imageContext += "\n图片说明：第一张是主要产品图，请重点参考产品本身的外观、颜色、材质与细节，无视图中的模特或人物。";
     }
     if (modelImage) imageContext += "\n有模特图作为人物一致性参考，请保持人物特征稳定。";
     const n = Math.min(Math.max(options.n ?? 1, 1), 10);

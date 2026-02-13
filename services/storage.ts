@@ -221,8 +221,13 @@ export const saveBatchJobs = async (jobs: BatchJob[]): Promise<void> => {
 
 export const loadBatchJobs = async (): Promise<BatchJob[]> => {
   const idbData = await idbGet<BatchJob[]>("batch_jobs");
-  if (Array.isArray(idbData)) return idbData;
-  return safeLocalGet<BatchJob[]>(BATCH_JOBS_KEY, []);
+  const rawJobs = Array.isArray(idbData) ? idbData : safeLocalGet<BatchJob[]>(BATCH_JOBS_KEY, []);
+  // 数据兼容：确保新字段存在（productImageUrl, modelImageUrl）
+  return rawJobs.map((job) => ({
+    ...job,
+    productImageUrl: job.productImageUrl ?? undefined,
+    modelImageUrl: job.modelImageUrl ?? undefined,
+  }));
 };
 
 /** 清除所有应用数据（IndexedDB + localStorage），供登出时调用 */

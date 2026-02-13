@@ -144,6 +144,8 @@ export interface BatchJob {
   status: BatchJobStatus;
   basePrompt: string;
   referenceImageUrl?: string;
+  productImageUrl?: string;  // 套图专用产品图
+  modelImageUrl?: string;     // 套图专用固定模特图
   createdAt: number;
   updatedAt: number;
   archivedAt?: number;

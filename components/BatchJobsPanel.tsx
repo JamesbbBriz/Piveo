@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { BatchJob, BatchJobStatus, BatchSlot, BatchVersion } from "../types";
 import { Icon } from "./Icon";
+import { ImagePreviewModal } from "./ImagePreviewModal";
+import { fileToDataUrl } from "../services/imageData";
 
 interface BatchJobsPanelProps {
   jobs: BatchJob[];
@@ -23,6 +25,10 @@ interface BatchJobsPanelProps {
   onDuplicateJob: (jobId: string) => void;
   onDownloadVersion: (v: BatchVersion) => void;
   onCancelGeneration?: () => void;
+  onUpdateJobImages: (jobId: string, updates: {
+    productImageUrl?: string | null;
+    modelImageUrl?: string | null;
+  }) => void;
 }
 
 const STATUS_OPTIONS: Array<{ value: "all" | BatchJobStatus; label: string }> = [
@@ -91,9 +97,11 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   onDuplicateJob,
   onDownloadVersion,
   onCancelGeneration,
+  onUpdateJobImages,
 }) => {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | BatchJobStatus>("all");
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   const filteredJobs = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -117,7 +125,34 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
     onSelectJob(jobId);
   };
 
+  const handleProductImageUpload = async (jobId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      onUpdateJobImages(jobId, { productImageUrl: dataUrl });
+    } catch (err) {
+      console.error("产品图上传失败：", err);
+      window.alert(`上传失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+    e.target.value = "";
+  };
+
+  const handleModelImageUpload = async (jobId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      onUpdateJobImages(jobId, { modelImageUrl: dataUrl });
+    } catch (err) {
+      console.error("模特图上传失败：", err);
+      window.alert(`上传失败：${err instanceof Error ? err.message : String(err)}`);
+    }
+    e.target.value = "";
+  };
+
   return (
+    <>
     <div className="flex-1 min-h-0 h-full flex overflow-hidden">
       <aside className="w-[320px] border-r border-dark-700 bg-dark-800/70 flex flex-col min-h-0">
         <div className="p-3 border-b border-dark-700 space-y-2">
@@ -248,6 +283,80 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
               </div>
             </div>
 
+            {/* 套图专用图片上传区 */}
+            <div className="border-b border-dark-700 p-3 bg-dark-900/20">
+              <div className="text-xs text-gray-400 mb-2">套图专用图片（可选）</div>
+              <div className="grid grid-cols-2 gap-3">
+                {/* 产品图上传区 */}
+                <div className="rounded-lg border border-dark-700 bg-dark-800/40 p-2 flex flex-col">
+                  {selectedJob.productImageUrl ? (
+                    <>
+                      <img
+                        src={selectedJob.productImageUrl}
+                        alt="产品图"
+                        className="w-full h-32 object-cover rounded-md border border-dark-600 bg-black/20 cursor-pointer hover:opacity-90 transition-opacity"
+                        onClick={() => setPreviewImageUrl(selectedJob.productImageUrl!)}
+                      />
+                      <button
+                        onClick={() => onUpdateJobImages(selectedJob.id, { productImageUrl: null })}
+                        disabled={selectedJob.status === "deleted"}
+                        className="mt-2 px-2 py-1 text-[10px] rounded border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        删除产品图
+                      </button>
+                    </>
+                  ) : (
+                    <label className="w-full h-32 rounded-md border-2 border-dashed border-dark-600 bg-dark-900/40 text-xs text-gray-500 flex flex-col items-center justify-center cursor-pointer hover:border-gray-500 hover:text-gray-400 transition-colors">
+                      <Icon name="image" className="text-2xl mb-1" />
+                      <span>点击上传产品图</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => handleProductImageUpload(selectedJob.id, e)}
+                        disabled={selectedJob.status === "deleted"}
+                      />
+                    </label>
+                  )}
+                  <div className="mt-1 text-[10px] text-gray-500 text-center">产品图</div>
+                </div>
+
+                {/* 模特图上传区 */}
+                <div className="rounded-lg border border-dark-700 bg-dark-800/40 p-2 flex flex-col">
+                  {selectedJob.modelImageUrl ? (
+                    <>
+                      <img
+                        src={selectedJob.modelImageUrl}
+                        alt="固定模特"
+                        className="w-full h-32 object-cover rounded-md border border-dark-600 bg-black/20 cursor-pointer hover:opacity-90 transition-opacity"
+                        onClick={() => setPreviewImageUrl(selectedJob.modelImageUrl!)}
+                      />
+                      <button
+                        onClick={() => onUpdateJobImages(selectedJob.id, { modelImageUrl: null })}
+                        disabled={selectedJob.status === "deleted"}
+                        className="mt-2 px-2 py-1 text-[10px] rounded border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        删除模特图
+                      </button>
+                    </>
+                  ) : (
+                    <label className="w-full h-32 rounded-md border-2 border-dashed border-dark-600 bg-dark-900/40 text-xs text-gray-500 flex flex-col items-center justify-center cursor-pointer hover:border-gray-500 hover:text-gray-400 transition-colors">
+                      <Icon name="user" className="text-2xl mb-1" />
+                      <span>点击上传固定模特</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => handleModelImageUpload(selectedJob.id, e)}
+                        disabled={selectedJob.status === "deleted"}
+                      />
+                    </label>
+                  )}
+                  <div className="mt-1 text-[10px] text-gray-500 text-center">固定模特</div>
+                </div>
+              </div>
+            </div>
+
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain custom-scrollbar p-4 space-y-3">
               {selectedJob.slots.map((slot, idx) => {
                 const current = getActiveVersion(slot);
@@ -287,7 +396,8 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                           <img
                             src={current.imageUrl}
                             alt={slot.title}
-                            className="w-full h-56 object-cover rounded-md border border-dark-600 bg-black/20"
+                            onClick={() => setPreviewImageUrl(current.imageUrl!)}
+                            className="w-full h-56 object-cover rounded-md border border-dark-600 bg-black/20 cursor-pointer hover:opacity-90 transition-opacity"
                             loading="lazy"
                             decoding="async"
                           />
@@ -361,7 +471,11 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                                       <img
                                         src={v.imageUrl}
                                         alt={`v${v.index}`}
-                                        className="w-full h-full object-cover"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setPreviewImageUrl(v.imageUrl!);
+                                        }}
+                                        className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
                                         loading="lazy"
                                         decoding="async"
                                       />
@@ -392,5 +506,12 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
         )}
       </main>
     </div>
+    {previewImageUrl && (
+      <ImagePreviewModal
+        imageUrl={previewImageUrl}
+        onClose={() => setPreviewImageUrl(null)}
+      />
+    )}
+  </>
   );
 };

@@ -747,6 +747,8 @@ const App: React.FC = () => {
     slotLabel: string;
     slotPrompt: string;
     referenceImage: string | null;
+    productImage: string | null;
+    modelImage: string | null;
   }): Promise<BatchVersion[]> => {
     if (!currentSession) return [];
     const size = aspectRatioToSize(currentSession.settings.aspectRatio);
@@ -754,8 +756,8 @@ const App: React.FC = () => {
     const result = await generateResponse(
       params.slotPrompt,
       params.referenceImage,
-      selectedModelImage,
-      selectedProductImage,
+      params.modelImage,
+      params.productImage,
       [],
       currentSession.settings,
       {
@@ -781,7 +783,7 @@ const App: React.FC = () => {
     }));
 
     return generated;
-  }, [apiConfig.defaultImageModel, currentSession, selectedModelImage, selectedProductImage]);
+  }, [apiConfig.defaultImageModel, currentSession]);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1328,6 +1330,8 @@ const App: React.FC = () => {
           slotLabel: slot.title,
           slotPrompt,
           referenceImage: fixedReferenceImage,
+          productImage: job.productImageUrl || null,
+          modelImage: job.modelImageUrl || null,
         });
 
         if (!generated.length) {
@@ -1395,6 +1399,17 @@ const App: React.FC = () => {
       batchAbortRef.current = null;
     }
   }, [appendBatchActionLog, authUser, buildBatchSlotPrompt, currentSession, inputText, isGenerating, runBatchSlotGeneration, selectedImage, updateBatchJobById]);
+
+  const handleUpdateBatchJobImages = useCallback((
+    jobId: string,
+    updates: { productImageUrl?: string | null; modelImageUrl?: string | null }
+  ) => {
+    updateBatchJobById(jobId, (job) => ({
+      ...job,
+      ...updates,
+      updatedAt: nowTs(),
+    }));
+  }, [updateBatchJobById]);
 
   const handleArchiveBatchJob = useCallback((jobId: string) => {
     updateBatchJobById(jobId, (job) => {
@@ -1560,6 +1575,8 @@ const App: React.FC = () => {
         slotLabel: slot.title,
         slotPrompt,
         referenceImage: job.referenceImageUrl || null,
+        productImage: job.productImageUrl || null,
+        modelImage: job.modelImageUrl || null,
       });
 
       if (!generated.length) throw new Error("未返回图片");
@@ -2235,6 +2252,7 @@ const App: React.FC = () => {
                 void handleDownloadBatchVersion(v);
               }}
               onCancelGeneration={cancelBatchGeneration}
+              onUpdateJobImages={handleUpdateBatchJobImages}
             />
           </div>
         )}
