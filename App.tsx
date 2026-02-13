@@ -233,6 +233,12 @@ const App: React.FC = () => {
   const [generationStage, setGenerationStage] = useState<string | null>(null);
   const [generationProgress, setGenerationProgress] = useState<{ current: number; total: number } | null>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
+  const [isBatchGenerating, setIsBatchGenerating] = useState(false);
+  const [batchGenerationProgress, setBatchGenerationProgress] = useState<{
+    currentSlot: number;
+    totalSlots: number;
+    currentSlotLabel: string;
+  } | null>(null);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<ErrorDetails | null>(null);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
@@ -266,6 +272,7 @@ const App: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const batchAbortRef = useRef<AbortController | null>(null);
   const saveSessionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSessionsRef = useRef<Session[] | null>(null);
   const latestSessionsRef = useRef<Session[]>([]);
@@ -709,7 +716,7 @@ const App: React.FC = () => {
         size,
         responseFormat,
         disableAutoUseLastImage: true,
-        signal: abortRef.current?.signal,
+        signal: batchAbortRef.current?.signal,
       }
     );
 
@@ -816,6 +823,10 @@ const App: React.FC = () => {
 
   const cancelGeneration = () => {
     abortRef.current?.abort();
+  };
+
+  const cancelBatchGeneration = () => {
+    batchAbortRef.current?.abort();
   };
 
   const executeGeneration = useCallback(async (
@@ -1098,7 +1109,7 @@ const App: React.FC = () => {
   }, [isGenerating]);
 
   const handleBatchSetSubmit = useCallback(async (items: BatchSetItem[]) => {
-    if (!currentSession || isGenerating || items.length === 0) return;
+    if (!currentSession || isBatchGenerating || items.length === 0) return;
     setIsBatchSetOpen(false);
     setCurrentView("batch");
 
@@ -1143,14 +1154,12 @@ const App: React.FC = () => {
     setBatchJobs((prev) => [initialJob, ...prev]);
     setSelectedBatchJobId(jobId);
 
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
-    const controller = abortRef.current;
+    batchAbortRef.current?.abort();
+    batchAbortRef.current = new AbortController();
+    const controller = batchAbortRef.current;
 
-    setIsGenerating(true);
-    setErrorDetails(null);
-    setGenerationProgress(null);
-    setGenerationStage("正在执行套图任务...");
+    setIsBatchGenerating(true);
+    setBatchGenerationProgress(null);
 
     for (let i = 0; i < slots.length; i++) {
       if (controller.signal.aborted) break;
@@ -1165,8 +1174,11 @@ const App: React.FC = () => {
         note: item.note,
       });
 
-      setGenerationProgress({ current: i + 1, total: slots.length });
-      setGenerationStage(`套图生成中（${i + 1}/${slots.length}）· ${item.sceneLabel}`);
+      setBatchGenerationProgress({
+        currentSlot: i + 1,
+        totalSlots: slots.length,
+        currentSlotLabel: item.sceneLabel
+      });
 
       updateBatchJobById(jobId, (job) => {
         const nextSlots = job.slots.map((s) => (s.id === slot.id ? { ...s, status: "running", error: undefined } : s));
@@ -1242,11 +1254,10 @@ const App: React.FC = () => {
       return appendBatchActionLog(next, "job_finished", { status: finalStatus });
     });
 
-    setIsGenerating(false);
-    setGenerationStage(null);
-    setGenerationProgress(null);
-    if (abortRef.current === controller) {
-      abortRef.current = null;
+    setIsBatchGenerating(false);
+    setBatchGenerationProgress(null);
+    if (batchAbortRef.current === controller) {
+      batchAbortRef.current = null;
     }
   }, [appendBatchActionLog, authUser, buildBatchSlotPrompt, currentSession, inputText, isGenerating, runBatchSlotGeneration, selectedImage, updateBatchJobById]);
 
@@ -1376,16 +1387,19 @@ const App: React.FC = () => {
   const handleRunSingleBatchSlot = useCallback(async (jobId: string, slotId: string) => {
     const job = batchJobs.find((j) => j.id === jobId);
     const slot = job?.slots.find((s) => s.id === slotId);
-    if (!job || !slot || !currentSession || isGenerating) return;
+    if (!job || !slot || !currentSession || isBatchGenerating) return;
     if (job.status === "deleted") return;
 
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
-    const controller = abortRef.current;
+    batchAbortRef.current?.abort();
+    batchAbortRef.current = new AbortController();
+    const controller = batchAbortRef.current;
 
-    setIsGenerating(true);
-    setGenerationProgress(null);
-    setGenerationStage(`正在重跑：${slot.title}`);
+    setIsBatchGenerating(true);
+    setBatchGenerationProgress({
+      currentSlot: 1,
+      totalSlots: 1,
+      currentSlotLabel: slot.title
+    });
     setCurrentView("batch");
     setSelectedBatchJobId(jobId);
 
@@ -1456,14 +1470,13 @@ const App: React.FC = () => {
         return appendBatchActionLog(next, "slot_rerun_failed", { slotId, error: msg });
       });
     } finally {
-      setIsGenerating(false);
-      setGenerationStage(null);
-      setGenerationProgress(null);
-      if (abortRef.current === controller) {
-        abortRef.current = null;
+      setIsBatchGenerating(false);
+      setBatchGenerationProgress(null);
+      if (batchAbortRef.current === controller) {
+        batchAbortRef.current = null;
       }
     }
-  }, [appendBatchActionLog, batchJobs, buildBatchSlotPrompt, currentSession, inputText, isGenerating, runBatchSlotGeneration, updateBatchJobById]);
+  }, [appendBatchActionLog, batchJobs, buildBatchSlotPrompt, currentSession, inputText, isBatchGenerating, runBatchSlotGeneration, updateBatchJobById]);
 
   const handleMaskSubmit = async (params: {
     baseImageUrl: string;
@@ -1484,14 +1497,16 @@ const App: React.FC = () => {
         throw new Error("套图槽位不存在或已被删除。");
       }
 
-      abortRef.current?.abort();
-      abortRef.current = new AbortController();
-      const controller = abortRef.current;
+      batchAbortRef.current?.abort();
+      batchAbortRef.current = new AbortController();
+      const controller = batchAbortRef.current;
 
-      setIsGenerating(true);
-      setErrorDetails(null);
-      setGenerationProgress(null);
-      setGenerationStage("正在执行套图局部编辑...");
+      setIsBatchGenerating(true);
+      setBatchGenerationProgress({
+        currentSlot: 1,
+        totalSlots: 1,
+        currentSlotLabel: `${slot.title} 局部编辑`
+      });
 
       const size = aspectRatioToSize(currentSession.settings.aspectRatio);
       const model = apiConfig.defaultImageModel || "";
@@ -1613,11 +1628,10 @@ const App: React.FC = () => {
         });
         throw e;
       } finally {
-        setIsGenerating(false);
-        setGenerationStage(null);
-        setGenerationProgress(null);
-        if (abortRef.current === controller) {
-          abortRef.current = null;
+        setIsBatchGenerating(false);
+        setBatchGenerationProgress(null);
+        if (batchAbortRef.current === controller) {
+          batchAbortRef.current = null;
         }
       }
     }
@@ -1848,6 +1862,8 @@ const App: React.FC = () => {
         currentSettings={currentSession.settings}
         onUpdateCurrentSettings={handleUpdateSettings}
         balanceRefreshTick={balanceRefreshTick}
+        currentView={currentView}
+        onViewChange={setCurrentView}
       />
       <div className="flex-1 flex flex-col h-full relative">
         <div className="absolute top-3 right-4 z-20 hidden lg:flex items-center gap-2">
@@ -2079,7 +2095,7 @@ const App: React.FC = () => {
             <BatchJobsPanel
               jobs={batchJobs}
               selectedJobId={selectedBatchJobId}
-              isBusy={isGenerating}
+              isBusy={isBatchGenerating}
               onSelectJob={(jobId) => setSelectedBatchJobId(jobId)}
               onRunSlot={(jobId, slotId) => {
                 void handleRunSingleBatchSlot(jobId, slotId);
@@ -2094,6 +2110,7 @@ const App: React.FC = () => {
               onDownloadVersion={(v) => {
                 void handleDownloadBatchVersion(v);
               }}
+              onCancelGeneration={cancelBatchGeneration}
             />
           </div>
         )}

@@ -23,6 +23,8 @@ interface SidebarProps {
   currentSettings: SessionSettings;
   onUpdateCurrentSettings: (next: SessionSettings) => void;
   balanceRefreshTick: number;
+  currentView: "chat" | "batch";
+  onViewChange: (view: "chat" | "batch") => void;
 }
 
 const SidebarInner: React.FC<SidebarProps> = ({
@@ -42,6 +44,8 @@ const SidebarInner: React.FC<SidebarProps> = ({
   currentSettings,
   onUpdateCurrentSettings,
   balanceRefreshTick,
+  currentView,
+  onViewChange,
 }) => {
   return (
     <>
@@ -66,6 +70,32 @@ const SidebarInner: React.FC<SidebarProps> = ({
           </div>
 
           <div className="flex-1 min-h-0 flex flex-col">
+            {/* View Switcher */}
+            <div className="px-3 py-2.5 border-b border-dark-700/60 flex gap-2">
+              <button
+                onClick={() => onViewChange("chat")}
+                className={`flex-1 px-2 py-1.5 text-xs rounded flex items-center justify-center gap-1 ${
+                  currentView === "chat"
+                    ? "bg-banana-500/20 text-banana-400 border border-banana-500/40"
+                    : "bg-dark-700 text-gray-400 hover:bg-dark-600"
+                }`}
+              >
+                <Icon name="comments" />
+                聊天创作
+              </button>
+              <button
+                onClick={() => onViewChange("batch")}
+                className={`flex-1 px-2 py-1.5 text-xs rounded flex items-center justify-center gap-1 ${
+                  currentView === "batch"
+                    ? "bg-banana-500/20 text-banana-400 border border-banana-500/40"
+                    : "bg-dark-700 text-gray-400 hover:bg-dark-600"
+                }`}
+              >
+                <Icon name="layer-group" />
+                套图工作台
+              </button>
+            </div>
+
             {/* Fixed Top Controls */}
             <div className="px-3 py-2.5 border-b border-dark-700/60">
               <button

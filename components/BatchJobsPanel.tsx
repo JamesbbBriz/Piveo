@@ -22,6 +22,7 @@ interface BatchJobsPanelProps {
   onRecoverDeletedJob: (jobId: string) => void;
   onDuplicateJob: (jobId: string) => void;
   onDownloadVersion: (v: BatchVersion) => void;
+  onCancelGeneration?: () => void;
 }
 
 const STATUS_OPTIONS: Array<{ value: "all" | BatchJobStatus; label: string }> = [
@@ -89,6 +90,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   onRecoverDeletedJob,
   onDuplicateJob,
   onDownloadVersion,
+  onCancelGeneration,
 }) => {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | BatchJobStatus>("all");
@@ -172,6 +174,27 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
       </aside>
 
       <main className="flex-1 min-w-0 flex flex-col min-h-0">
+        {isBusy && onCancelGeneration && (
+          <div className="px-4 py-3 bg-banana-500/10 border-b border-banana-500/30 flex items-center gap-3">
+            <div className="animate-spin text-banana-400">
+              <Icon name="spinner" />
+            </div>
+            <div className="flex-1">
+              <div className="text-xs text-banana-300 font-medium">
+                正在生成套图，请稍候...
+              </div>
+              <div className="text-[11px] text-banana-400/70 mt-0.5">
+                生成完成后可在工作台查看结果
+              </div>
+            </div>
+            <button
+              onClick={onCancelGeneration}
+              className="px-2.5 py-1.5 text-xs rounded-md border border-dark-600 bg-dark-900 text-gray-300 hover:bg-dark-700"
+            >
+              取消生成
+            </button>
+          </div>
+        )}
         {!selectedJob ? (
           <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">暂无套图任务</div>
         ) : (
