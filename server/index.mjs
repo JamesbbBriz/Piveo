@@ -1,5 +1,7 @@
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import cookieParser from "cookie-parser";
@@ -20,13 +22,8 @@ const SESSION_COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "topseller_session";
 const SESSION_TTL_SECONDS = Number(process.env.AUTH_SESSION_TTL_SECONDS || 60 * 60 * 24 * 7);
 const JWT_SECRET = process.env.AUTH_JWT_SECRET || "dev-only-change-me";
 
-const DEFAULT_USERNAME = "guoboss";
-const DEFAULT_PASSWORD = "qazwsxedc1229";
-const AUTH_USERNAME = (process.env.AUTH_USER || DEFAULT_USERNAME).trim();
-const AUTH_PASSWORD = process.env.AUTH_PASSWORD || DEFAULT_PASSWORD;
-const PASSWORD_HASH = await bcrypt.hash(AUTH_PASSWORD, 10);
-
-const users = new Map([[AUTH_USERNAME, { username: AUTH_USERNAME, passwordHash: PASSWORD_HASH }]]);
+const AUTH_USERNAME = String(process.env.AUTH_USER || "").trim();
+const AUTH_PASSWORD = String(process.env.AUTH_PASSWORD || "");
 
 const targetProxy = (process.env.UPSTREAM_API_BASE_URL || process.env.VITE_API_PROXY_TARGET || "https://n.lconai.com").trim();
 const normalizeAuthorization = (raw) => {
@@ -58,6 +55,12 @@ if (IS_PROD && !process.env.AUTH_PASSWORD) {
 if (IS_PROD && !upstreamAuthorization) {
   throw new Error("生产环境必须配置 UPSTREAM_AUTHORIZATION。");
 }
+if (!AUTH_USERNAME || !AUTH_PASSWORD) {
+  throw new Error("必须配置 AUTH_USER 与 AUTH_PASSWORD，禁止使用硬编码默认凭据。");
+}
+
+const PASSWORD_HASH = await bcrypt.hash(AUTH_PASSWORD, 10);
+const users = new Map([[AUTH_USERNAME, { username: AUTH_USERNAME, passwordHash: PASSWORD_HASH }]]);
 
 const signToken = (username) =>
   jwt.sign({ sub: username }, JWT_SECRET, {
@@ -158,6 +161,27 @@ const getSessionUsername = (req) => {
   return verifyToken(token);
 };
 
+const isDisallowedProxyHost = (hostname) => {
+  const raw = String(hostname || "").trim().toLowerCase();
+  if (!raw) return true;
+  if (raw === "localhost" || raw.endsWith(".localhost") || raw.endsWith(".local")) return true;
+  const h = raw.startsWith("::ffff:") ? raw.slice(7) : raw;
+  const ipVer = net.isIP(h);
+  if (!ipVer) return false;
+  if (ipVer === 4) {
+    if (h.startsWith("10.")) return true;
+    if (h.startsWith("127.")) return true;
+    if (h.startsWith("192.168.")) return true;
+    const parts = h.split(".").map((x) => Number(x));
+    if (parts.length === 4 && parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    return false;
+  }
+  const v6 = h.toLowerCase();
+  if (v6 === "::1") return true;
+  if (v6.startsWith("fc") || v6.startsWith("fd") || v6.startsWith("fe80")) return true;
+  return false;
+};
+
 const requireAuth = (req, res, next) => {
   const username = getSessionUsername(req);
   if (!username) {
@@ -221,6 +245,97 @@ app.post("/auth/logout", (_req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/auth/image-proxy", requireAuth, async (req, res) => {
+  const raw = String(req.query?.url || "").trim();
+  if (!raw) {
+    res.status(400).json({ ok: false, message: "缺少 url 参数。" });
+    return;
+  }
+
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    res.status(400).json({ ok: false, message: "图片地址格式无效。" });
+    return;
+  }
+  if (!/^https?:$/i.test(u.protocol)) {
+    res.status(400).json({ ok: false, message: "仅支持 http/https 图片地址。" });
+    return;
+  }
+  if (isDisallowedProxyHost(u.hostname)) {
+    res.status(403).json({ ok: false, message: "不允许代理该主机地址。" });
+    return;
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = Number(process.env.IMAGE_PROXY_TIMEOUT_MS || 15000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const upstreamResp = await fetch(u.toString(), {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+      headers: {
+        Accept: "image/*,*/*;q=0.8",
+      },
+    });
+
+    if (!upstreamResp.ok) {
+      const text = await upstreamResp.text().catch(() => "");
+      res.status(upstreamResp.status).json({
+        ok: false,
+        message: `图片拉取失败：HTTP ${upstreamResp.status} ${text.slice(0, 160)}`.trim(),
+      });
+      return;
+    }
+
+    const ct = upstreamResp.headers.get("content-type") || "application/octet-stream";
+    const cc = upstreamResp.headers.get("cache-control");
+    const etag = upstreamResp.headers.get("etag");
+    const lm = upstreamResp.headers.get("last-modified");
+    if (!/^image\//i.test(ct)) {
+      res.status(415).json({
+        ok: false,
+        message: `代理地址返回的不是图片内容（${ct || "unknown"}）。`,
+      });
+      return;
+    }
+
+    res.setHeader("Content-Type", ct);
+    if (cc) res.setHeader("Cache-Control", cc);
+    else res.setHeader("Cache-Control", "private, max-age=3600");
+    if (etag) res.setHeader("ETag", etag);
+    if (lm) res.setHeader("Last-Modified", lm);
+    const cl = upstreamResp.headers.get("content-length");
+    if (cl) res.setHeader("Content-Length", cl);
+    res.setHeader("X-Proxy-Image", "1");
+    res.status(200);
+    if (!upstreamResp.body) {
+      res.status(502).json({ ok: false, message: "上游未返回有效图片流。" });
+      return;
+    }
+    const stream = Readable.fromWeb(upstreamResp.body);
+    stream.on("error", () => {
+      if (!res.headersSent) {
+        res.status(502).json({ ok: false, message: "图片流转发失败。" });
+      } else {
+        res.destroy();
+      }
+    });
+    stream.pipe(res);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const isAbort = e instanceof DOMException && e.name === "AbortError";
+    res.status(isAbort ? 504 : 502).json({
+      ok: false,
+      message: isAbort ? "图片拉取超时。" : `图片拉取失败：${msg}`,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
 app.use(
   "/api",
   requireAuth,
@@ -269,16 +384,45 @@ if (process.env.NODE_ENV === "production") {
   const distDir = path.resolve(__dirname, "../dist");
   if (fs.existsSync(distDir)) {
     app.use(express.static(distDir));
-    app.get(/.*/, (_req, res) => {
+    app.get("*", (req, res, next) => {
+      if (req.path.startsWith("/api/") || req.path === "/api" || req.path.startsWith("/auth/") || req.path === "/auth") {
+        next();
+        return;
+      }
       res.sendFile(path.join(distDir, "index.html"));
     });
   }
 }
 
 const port = Number(process.env.AUTH_PORT || process.env.PORT || 3101);
-app.listen(port, () => {
-  console.log(`Auth server running on http://localhost:${port}`);
+const host = String(process.env.AUTH_HOST || "127.0.0.1").trim() || "127.0.0.1";
+let shuttingDown = false;
+
+const server = app.listen(port, host, () => {
+  console.log(`Auth server running on http://${host}:${port}`);
   console.log(`Seed user: ${AUTH_USERNAME}`);
   console.log(`[UPSTREAM] target: ${targetProxy}`);
   console.log(`[UPSTREAM] auth configured: ${upstreamAuthorization ? "yes" : "no"}`);
 });
+
+server.on("error", (err) => {
+  console.error(`[AUTH] server error: ${err?.code || "unknown"} ${err?.message || "unknown error"}`);
+  process.exitCode = 1;
+});
+
+server.on("close", () => {
+  if (!shuttingDown) {
+    console.error("[AUTH] server closed unexpectedly.");
+  }
+});
+
+const shutdown = (signal) => {
+  shuttingDown = true;
+  console.log(`[AUTH] received ${signal}, shutting down...`);
+  server.close(() => {
+    process.exit(0);
+  });
+};
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

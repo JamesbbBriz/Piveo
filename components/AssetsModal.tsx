@@ -1,6 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import { Icon } from "./Icon";
+import { DownloadOptionsModal } from "./DownloadOptionsModal";
+import { downloadImageWithFormat, loadDownloadOptions, saveDownloadOptions } from "../services/imageDownload";
+import { dataUrlToBlob } from "../services/imageData";
+import { useModalA11y } from "./useModalA11y";
 
 export interface AssetItem {
   id: string;
@@ -19,7 +23,6 @@ interface AssetsModalProps {
   isOpen: boolean;
   assets: AssetItem[];
   onClose: () => void;
-  onOpenCompare: (beforeUrl: string, afterUrl: string) => void;
   onOpenMaskEdit: (baseImageUrl: string) => void;
   onUseAsReference: (imageUrl: string) => void;
   onUsePrompt: (prompt: string) => void;
@@ -42,16 +45,6 @@ const loadTags = (): Record<string, string[]> => {
 
 const saveTags = (tags: Record<string, string[]>) => {
   localStorage.setItem(TAGS_KEY, JSON.stringify(tags));
-};
-
-const dataUrlToBlob = (dataUrl: string): Blob => {
-  const m = /^data:([^;]+);base64,(.*)$/i.exec(dataUrl);
-  const mime = m?.[1] || "application/octet-stream";
-  const b64 = m?.[2] || "";
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
 };
 
 const downloadBlob = (blob: Blob, filename: string) => {
@@ -79,7 +72,6 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
   isOpen,
   assets,
   onClose,
-  onOpenCompare,
   onOpenMaskEdit,
   onUseAsReference,
   onUsePrompt,
@@ -90,20 +82,17 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
   const [tagMap, setTagMap] = useState<Record<string, string[]>>({});
   const [isExporting, setIsExporting] = useState(false);
   const [exportHint, setExportHint] = useState<string | null>(null);
+  const [downloadOptions, setDownloadOptions] = useState(loadDownloadOptions);
+  const [pendingDownload, setPendingDownload] = useState<AssetItem | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isOpen) return;
     setTagMap(loadTags());
+    setSessionFilter("__all__");
   }, [isOpen]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isOpen, onClose]);
+  useModalA11y(isOpen && pendingDownload === null, modalRef, onClose);
 
   const sessions = useMemo(() => {
     const m = new Map<string, string>();
@@ -159,17 +148,20 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
     downloadBlob(blob, `topseller-assets-${Date.now()}.json`);
   };
 
-  const downloadOne = async (a: AssetItem) => {
-    const ext = guessExt(a.url);
-    const filename = `topseller-${a.id}.${ext}`;
+  const downloadOne = (a: AssetItem) => {
+    setPendingDownload(a);
+  };
+
+  const confirmDownload = async () => {
+    if (!pendingDownload) return;
+    saveDownloadOptions(downloadOptions);
     try {
-      if (a.url.startsWith("data:")) {
-        downloadBlob(dataUrlToBlob(a.url), filename);
-        return;
-      }
-      const resp = await fetch(a.url);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      downloadBlob(await resp.blob(), filename);
+      await downloadImageWithFormat(pendingDownload.url, {
+        basename: `topseller-${pendingDownload.id}`,
+        format: downloadOptions.format,
+        quality: downloadOptions.quality,
+      });
+      setPendingDownload(null);
     } catch (e) {
       setExportHint("下载失败（可能是跨域或链接已失效）");
       setTimeout(() => setExportHint(null), 1600);
@@ -179,6 +171,7 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
 
   const exportZip = async () => {
     setIsExporting(true);
+    setExportHint(null);
     try {
       const zip = new JSZip();
       const manifest = filtered.map((a) => ({
@@ -191,21 +184,44 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
       const folder = zip.folder("images");
       if (!folder) throw new Error("创建 zip 目录失败");
 
-      for (let i = 0; i < filtered.length; i++) {
-        const a = filtered[i];
-        const ext = guessExt(a.url);
-        const filename = `${String(i + 1).padStart(3, "0")}_${a.id}.${ext}`;
-        if (a.url.startsWith("data:")) {
-          folder.file(filename, dataUrlToBlob(a.url));
-        } else {
-          const resp = await fetch(a.url);
-          if (!resp.ok) continue;
-          folder.file(filename, await resp.blob());
+      const concurrency = 5;
+      let cursor = 0;
+      let skipped = 0;
+      const workers = Array.from({ length: Math.min(concurrency, filtered.length || 1) }, async () => {
+        while (cursor < filtered.length) {
+          const index = cursor++;
+          const a = filtered[index];
+          const ext = guessExt(a.url);
+          const filename = `${String(index + 1).padStart(3, "0")}_${a.id}.${ext}`;
+          try {
+            if (a.url.startsWith("data:")) {
+              const blob = await dataUrlToBlob(a.url);
+              folder.file(filename, blob);
+            } else {
+              const resp = await fetch(a.url);
+              if (!resp.ok) {
+                skipped += 1;
+                continue;
+              }
+              folder.file(filename, await resp.blob());
+            }
+          } catch {
+            skipped += 1;
+          }
         }
-      }
+      });
+      await Promise.all(workers);
 
       const blob = await zip.generateAsync({ type: "blob" });
       downloadBlob(blob, `topseller-assets-${Date.now()}.zip`);
+      if (skipped > 0) {
+        setExportHint(`导出完成，跳过 ${skipped} 张失效图片。`);
+        setTimeout(() => setExportHint(null), 2400);
+      }
+    } catch (e) {
+      console.warn("exportZip failed:", e);
+      setExportHint("导出失败，请重试。");
+      setTimeout(() => setExportHint(null), 1800);
     } finally {
       setIsExporting(false);
     }
@@ -215,7 +231,7 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="relative w-full max-w-6xl h-[85vh] bg-dark-800 border border-dark-700 rounded-2xl shadow-2xl flex overflow-hidden">
+      <div ref={modalRef} tabIndex={-1} className="relative w-full max-w-6xl h-[85vh] bg-dark-800 border border-dark-700 rounded-2xl shadow-2xl flex overflow-hidden">
         {/* Left: list */}
         <div className="w-full lg:w-[55%] border-r border-dark-700 flex flex-col">
           <div className="p-4 border-b border-dark-700 flex items-center justify-between gap-3">
@@ -316,15 +332,6 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {selected.parentImageUrl && (
-                    <button
-                      onClick={() => onOpenCompare(selected.parentImageUrl!, selected.url)}
-                      className="px-3 py-2 text-xs bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-lg"
-                      title="对比上一版"
-                    >
-                      <Icon name="columns" /> 对比
-                    </button>
-                  )}
                   <button
                     onClick={() => onOpenMaskEdit(selected.url)}
                     className="px-3 py-2 text-xs bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-lg"
@@ -333,7 +340,7 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
                     <Icon name="paint-brush" /> 局部编辑
                   </button>
                   <button
-                    onClick={() => void downloadOne(selected)}
+                    onClick={() => downloadOne(selected)}
                     className="px-3 py-2 text-xs bg-banana-500 hover:bg-banana-400 text-dark-900 font-semibold rounded-lg"
                     title="下载"
                   >
@@ -465,14 +472,6 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
                     <Icon name="pen" /> 回填提示词
                   </button>
                 )}
-                {selected.parentImageUrl && (
-                  <button
-                    onClick={() => onOpenCompare(selected.parentImageUrl!, selected.url)}
-                    className="px-3 py-2 text-xs bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-lg"
-                  >
-                    <Icon name="columns" /> 对比上一版
-                  </button>
-                )}
                 <button
                   onClick={() => onOpenMaskEdit(selected.url)}
                   className="px-3 py-2 text-xs bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-lg"
@@ -480,7 +479,7 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
                   <Icon name="paint-brush" /> 局部编辑
                 </button>
                 <button
-                  onClick={() => void downloadOne(selected)}
+                  onClick={() => downloadOne(selected)}
                   className="px-3 py-2 text-xs bg-banana-500 hover:bg-banana-400 text-dark-900 font-semibold rounded-lg"
                 >
                   <Icon name="download" /> 下载
@@ -526,6 +525,15 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
             </div>
           </div>
         )}
+        <DownloadOptionsModal
+          isOpen={pendingDownload !== null}
+          options={downloadOptions}
+          onChange={setDownloadOptions}
+          onCancel={() => setPendingDownload(null)}
+          onConfirm={() => void confirmDownload()}
+          title="下载设置"
+          confirmLabel="开始下载"
+        />
       </div>
     </div>
   );

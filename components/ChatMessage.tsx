@@ -1,13 +1,14 @@
 
 import React from 'react';
-import { Message, MessagePart } from '../types';
+import { Message } from '../types';
 import { Icon } from './Icon';
+import { DownloadOptionsModal } from './DownloadOptionsModal';
+import { downloadImageWithFormat, loadDownloadOptions, saveDownloadOptions } from '../services/imageDownload';
 
 interface ChatMessageProps {
   message: Message;
   onPreviewImage: (url: string) => void;
   onVariation: (type: string, imageUrl: string) => void;
-  onCompare?: (beforeUrl: string, afterUrl: string) => void;
   onMaskEdit?: (baseImageUrl: string) => void;
   onUseAsReference?: (imageUrl: string) => void;
 }
@@ -16,21 +17,36 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
   message,
   onPreviewImage,
   onVariation,
-  onCompare,
   onMaskEdit,
   onUseAsReference,
 }) => {
   const isUser = message.role === 'user';
   // 触控可达：点击图片时 toggle 操作按钮，同时保留桌面端 hover 效果
   const [showActionsIdx, setShowActionsIdx] = React.useState<number | null>(null);
+  const [downloadOptions, setDownloadOptions] = React.useState(loadDownloadOptions);
+  const [pendingDownload, setPendingDownload] = React.useState<{ url: string; basename: string } | null>(null);
 
-  const downloadImage = (dataUrl: string) => {
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = `topseller-gen-${Date.now()}.png`; 
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const downloadImage = (imageUrl: string, imageId?: string) => {
+    setPendingDownload({
+      url: imageUrl,
+      basename: imageId ? `topseller-gen-${imageId}` : `topseller-gen-${Date.now()}`,
+    });
+  };
+
+  const confirmDownload = async () => {
+    if (!pendingDownload) return;
+    saveDownloadOptions(downloadOptions);
+    try {
+      await downloadImageWithFormat(pendingDownload.url, {
+        basename: pendingDownload.basename,
+        format: downloadOptions.format,
+        quality: downloadOptions.quality,
+      });
+      setPendingDownload(null);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      window.alert(`下载失败：${msg}`);
+    }
   };
 
   return (
@@ -75,7 +91,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                       {/* Standard Actions */}
                       <div className="pointer-events-auto flex gap-3">
                         <button 
-                          onClick={() => downloadImage(part.imageUrl!)}
+                          onClick={() => downloadImage(part.imageUrl!, part.meta?.id)}
                           className="bg-white text-dark-900 p-2 rounded-full hover:bg-banana-400 transition-colors shadow-lg"
                           title="下载"
                         >
@@ -104,15 +120,6 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                             title="设为参考图"
                           >
                             <Icon name="image" />
-                          </button>
-                        )}
-                        {!isUser && onCompare && part.meta?.parentImageUrl && (
-                          <button
-                            onClick={() => onCompare(part.meta!.parentImageUrl!, part.imageUrl!)}
-                            className="bg-dark-800 text-white p-2 rounded-full hover:bg-dark-600 transition-colors shadow-lg"
-                            title="对比上一版"
-                          >
-                            <Icon name="columns" />
                           </button>
                         )}
                       </div>
@@ -157,11 +164,6 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                             {part.meta.size}
                           </span>
                         )}
-                        {part.meta.parentImageUrl && (
-                          <span className="px-2 py-0.5 rounded bg-dark-800 border border-dark-600">
-                            可对比上一版
-                          </span>
-                        )}
                       </div>
                     )}
                   </div>
@@ -175,6 +177,15 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
         </div>
 
       </div>
+      <DownloadOptionsModal
+        isOpen={pendingDownload !== null}
+        options={downloadOptions}
+        onChange={setDownloadOptions}
+        onCancel={() => setPendingDownload(null)}
+        onConfirm={() => void confirmDownload()}
+        title="下载设置"
+        confirmLabel="开始下载"
+      />
     </div>
   );
 };

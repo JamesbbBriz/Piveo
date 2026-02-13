@@ -39,12 +39,29 @@ export const isSupportedAspectRatio = (aspect: unknown): aspect is AspectRatio =
 };
 
 export const isSizeCompatibleWithAspect = (size: string, aspect: AspectRatio | string): boolean => {
-  return String(size || "").trim().toLowerCase() === getSupportedSizeForAspect(aspect).toLowerCase();
+  const s = String(size || "").trim().toLowerCase();
+  const m = /^(\d+)\s*x\s*(\d+)$/i.exec(s);
+  if (!m) return false;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return false;
+
+  const a = String(aspect || "").trim();
+  const am = /^(\d+)\s*:\s*(\d+)$/i.exec(a);
+  if (!am) return false;
+  const aw = Number(am[1]);
+  const ah = Number(am[2]);
+  if (!Number.isFinite(aw) || !Number.isFinite(ah) || aw <= 0 || ah <= 0) return false;
+
+  const target = aw / ah;
+  const actual = w / h;
+  return Math.abs(actual - target) <= 0.02;
 };
 
 export const filterSizesByAspect = (sizes: string[], aspect: AspectRatio | string): string[] => {
-  const allowed = getSupportedSizeForAspect(aspect).toLowerCase();
-  const normalized = (sizes || []).map((s) => String(s || "").trim().toLowerCase()).filter(Boolean);
-  return normalized.includes(allowed) ? [allowed] : [];
+  const normalized = (sizes || [])
+    .map((s) => String(s || "").trim().toLowerCase())
+    .filter(Boolean);
+  const unique = Array.from(new Set(normalized));
+  return unique.filter((s) => isSizeCompatibleWithAspect(s, aspect));
 };
-

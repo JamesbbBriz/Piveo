@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
+import { useModalA11y } from "./useModalA11y";
 
 interface MaskEditorModalProps {
   baseImageUrl: string;
@@ -8,11 +9,40 @@ interface MaskEditorModalProps {
 }
 
 const clamp = (n: number, min: number, max: number) => Math.min(Math.max(n, min), max);
+const IMAGE_LOAD_TIMEOUT_MS = 5000;
+const IMAGE_TOTAL_TIMEOUT_MS = 12000;
+
+const isDataOrBlobUrl = (url: string): boolean => /^data:|^blob:/i.test(String(url || ""));
+const isHttpUrl = (url: string): boolean => /^https?:\/\//i.test(String(url || ""));
+const canvasToBlob = (canvas: HTMLCanvasElement, type = "image/png", quality?: number): Promise<Blob> =>
+  new Promise((resolve, reject) => {
+    try {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error("画布导出失败"));
+          return;
+        }
+        resolve(blob);
+      }, type, quality);
+    } catch (e) {
+      reject(e);
+    }
+  });
+
+const blobToDataUrl = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("文件读取失败"));
+    reader.readAsDataURL(blob);
+  });
 
 export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, onClose, onSubmit }) => {
   const imgCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
 
   const [isReady, setIsReady] = useState(false);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
@@ -27,21 +57,28 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
     return "涂抹红色区域表示“需要修改”的地方。提交后会生成遮罩（透明=可编辑区域）。";
   }, []);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useModalA11y(true, modalRef, onClose);
 
   useEffect(() => {
     let cancelled = false;
     let objectUrl: string | null = null;
+    let totalTimer: number | null = null;
 
     setIsReady(false);
     setLoadState("loading");
     setLoadError(null);
+    totalTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      setLoadState("error");
+      setLoadError("图片加载总超时。请重试，或先下载后重新上传再做局部编辑。");
+    }, IMAGE_TOTAL_TIMEOUT_MS);
+
+    const finish = () => {
+      if (totalTimer !== null) {
+        window.clearTimeout(totalTimer);
+        totalTimer = null;
+      }
+    };
 
     const drawToCanvas = (img: HTMLImageElement) => {
       const w = img.naturalWidth || 1024;
@@ -66,56 +103,86 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
       octx.clearRect(0, 0, w, h);
       setIsReady(true);
       setLoadState("ready");
+      finish();
     };
 
-    const loadImage = (src: string, withAnonymous: boolean): Promise<HTMLImageElement> =>
+    const loadImage = (src: string, withAnonymous: boolean, timeoutMs = IMAGE_LOAD_TIMEOUT_MS): Promise<HTMLImageElement> =>
       new Promise((resolve, reject) => {
         const img = new Image();
+        let done = false;
+        const cleanup = () => {
+          done = true;
+          window.clearTimeout(timer);
+          img.onload = null;
+          img.onerror = null;
+        };
+        const timer = window.setTimeout(() => {
+          if (done) return;
+          cleanup();
+          reject(new Error(`图片加载超时（${timeoutMs}ms）`));
+        }, timeoutMs);
         if (withAnonymous) img.crossOrigin = "anonymous";
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error("图片加载失败"));
+        img.onload = () => {
+          if (done) return;
+          cleanup();
+          resolve(img);
+        };
+        img.onerror = () => {
+          if (done) return;
+          cleanup();
+          reject(new Error("图片加载失败"));
+        };
         img.src = src;
       });
 
     const load = async () => {
-      try {
-        const img = await loadImage(baseImageUrl, true);
-        if (cancelled) return;
-        drawToCanvas(img);
-        return;
-      } catch {
-        // ignore and fallback
+      let lastError: unknown = null;
+
+      // data/blob 直接加载，避免无意义的跨域尝试
+      if (isDataOrBlobUrl(baseImageUrl)) {
+        try {
+          const img = await loadImage(baseImageUrl, false);
+          if (cancelled) return;
+          drawToCanvas(img);
+          return;
+        } catch (e) {
+          lastError = e;
+        }
       }
 
       try {
+        // 根本优化：优先直接加载原图 URL，命中浏览器缓存时几乎秒开（与预览一致）。
         const img = await loadImage(baseImageUrl, false);
         if (cancelled) return;
         drawToCanvas(img);
         return;
-      } catch {
-        // ignore and fallback
+      } catch (e) {
+        lastError = e;
       }
 
       try {
-        const resp = await fetch(baseImageUrl);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const blob = await resp.blob();
-        objectUrl = URL.createObjectURL(blob);
-        const img = await loadImage(objectUrl, false);
+        if (!isHttpUrl(baseImageUrl)) throw new Error("不支持的图片地址");
+        const proxied = `/auth/image-proxy?url=${encodeURIComponent(baseImageUrl)}`;
+        const img = await loadImage(proxied, false);
         if (cancelled) return;
         drawToCanvas(img);
         return;
       } catch (e) {
-        if (cancelled) return;
-        setIsReady(false);
-        setLoadState("error");
-        setLoadError(e instanceof Error ? e.message : "未知错误");
+        lastError = e;
       }
+
+      if (cancelled) return;
+      finish();
+      setIsReady(false);
+      setLoadState("error");
+      const msg = lastError instanceof Error ? lastError.message : "未知错误";
+      setLoadError(`${msg}。可尝试“重试加载”，或先在聊天区点下载后再上传进行局部编辑。`);
     };
 
     void load();
     return () => {
       cancelled = true;
+      finish();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [baseImageUrl, reloadSeed]);
@@ -169,6 +236,24 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
     ctx.restore();
   };
 
+  const drawStroke = (from: { x: number; y: number }, to: { x: number; y: number }) => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = brush;
+    ctx.globalCompositeOperation = mode === "erase" ? "destination-out" : "source-over";
+    ctx.strokeStyle = "rgba(239,68,68,0.55)";
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+    ctx.restore();
+  };
+
   const clearOverlay = () => {
     const canvas = overlayCanvasRef.current;
     if (!canvas) return;
@@ -177,7 +262,7 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   };
 
-  const buildMaskDataUrl = (): { maskDataUrl: string; maskOverlayDataUrl: string } => {
+  const buildMaskDataUrl = async (): Promise<{ maskDataUrl: string; maskOverlayDataUrl: string }> => {
     const overlay = overlayCanvasRef.current;
     if (!overlay) throw new Error("遮罩画布未就绪");
     const w = overlay.width;
@@ -196,23 +281,26 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
 
     // Start with opaque black (keep). Transparent area means editable.
     const mask = mctx.createImageData(w, h);
-    const dst = mask.data;
-    for (let i = 0; i < dst.length; i += 4) {
-      // Keep pixels black; alpha set later.
-      dst[i] = 0;
-      dst[i + 1] = 0;
-      dst[i + 2] = 0;
-
-      const alpha = src[i + 3];
-      // If overlay has paint => editable => transparent alpha.
-      dst[i + 3] = alpha > 8 ? 0 : 255;
+    const dst32 = new Uint32Array(mask.data.buffer);
+    for (let i = 0; i < dst32.length; i++) {
+      const alpha = src[i * 4 + 3];
+      // 黑色 + alpha=255 表示保留；alpha=0 表示可编辑区域。
+      dst32[i] = alpha > 8 ? 0x00000000 : 0xff000000;
     }
     mctx.putImageData(mask, 0, 0);
 
     try {
+      const [maskBlob, overlayBlob] = await Promise.all([
+        canvasToBlob(maskCanvas, "image/png"),
+        canvasToBlob(overlay, "image/png"),
+      ]);
+      const [maskDataUrl, maskOverlayDataUrl] = await Promise.all([
+        blobToDataUrl(maskBlob),
+        blobToDataUrl(overlayBlob),
+      ]);
       return {
-        maskDataUrl: maskCanvas.toDataURL("image/png"),
-        maskOverlayDataUrl: overlay.toDataURL("image/png"),
+        maskDataUrl,
+        maskOverlayDataUrl,
       };
     } catch (e) {
       // CORS 导致 canvas 被污染时 toDataURL 会抛出 SecurityError
@@ -223,14 +311,14 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
     }
   };
 
-  const submit = () => {
+  const submit = async () => {
     const p = prompt.trim();
     if (!p) {
       alert("请输入编辑提示词。");
       return;
     }
     try {
-      const { maskDataUrl, maskOverlayDataUrl } = buildMaskDataUrl();
+      const { maskDataUrl, maskOverlayDataUrl } = await buildMaskDataUrl();
       onSubmit({ prompt: p, maskDataUrl, maskOverlayDataUrl });
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
@@ -240,6 +328,8 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="w-full max-w-6xl h-[88vh] bg-dark-800 border border-dark-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
@@ -296,15 +386,31 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
                     (e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
                     setIsDrawing(true);
                     const pt = getPoint(e);
-                    if (pt) drawDot(pt.x, pt.y);
+                    if (pt) {
+                      drawDot(pt.x, pt.y);
+                      lastPointRef.current = pt;
+                    }
                   }}
                   onPointerMove={(e) => {
                     if (!isDrawing) return;
                     const pt = getPoint(e);
-                    if (pt) drawDot(pt.x, pt.y);
+                    if (pt) {
+                      if (lastPointRef.current) {
+                        drawStroke(lastPointRef.current, pt);
+                      } else {
+                        drawDot(pt.x, pt.y);
+                      }
+                      lastPointRef.current = pt;
+                    }
                   }}
-                  onPointerUp={() => setIsDrawing(false)}
-                  onPointerCancel={() => setIsDrawing(false)}
+                  onPointerUp={() => {
+                    setIsDrawing(false);
+                    lastPointRef.current = null;
+                  }}
+                  onPointerCancel={() => {
+                    setIsDrawing(false);
+                    lastPointRef.current = null;
+                  }}
                 />
               </div>
             )}
@@ -376,7 +482,7 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({ baseImageUrl, 
               />
               <div className="mt-3 flex gap-2">
                 <button
-                  onClick={submit}
+                  onClick={() => void submit()}
                   className="flex-1 px-4 py-2 bg-banana-500 hover:bg-banana-400 text-dark-900 font-semibold rounded-lg"
                 >
                   开始生成

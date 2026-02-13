@@ -8,6 +8,7 @@ const MODELS_KEY = "nanobanana_models_v1";
 const DB_NAME = "nanobanana_persistence_v2";
 const DB_VERSION = 1;
 const STORE_NAME = "kv";
+const LOCAL_BACKUP_MAX_BYTES = 2 * 1024 * 1024;
 
 type StoreKey = "sessions" | "templates" | "models";
 
@@ -135,12 +136,42 @@ export const initPersistentStorage = async (): Promise<void> => {
 
 /** 延迟写入 localStorage 作为备份（不阻塞主流程） */
 const deferLocalSet = (key: string, value: unknown) => {
-  const cb = () => safeLocalSet(key, value);
+  const cb = () => {
+    if (!hasWindow()) return;
+    try {
+      const serialized = JSON.stringify(value);
+      // sessions 可能包含大量 base64 图片，超大备份直接跳过，避免主线程卡顿。
+      if (key === SESSIONS_KEY && serialized.length > LOCAL_BACKUP_MAX_BYTES) {
+        console.warn(`跳过 localStorage 备份：${key} 体积过大 (${serialized.length} bytes)`);
+        return;
+      }
+      window.localStorage.setItem(key, serialized);
+    } catch (e) {
+      console.error(`写入 localStorage 失败: ${key}`, e);
+    }
+  };
   if (typeof requestIdleCallback === "function") {
     requestIdleCallback(cb);
   } else {
     setTimeout(cb, 0);
   }
+};
+
+const writeSessionsBackupSync = (sessions: Session[]) => {
+  if (!hasWindow()) return;
+  try {
+    const serialized = JSON.stringify(sessions);
+    if (serialized.length > LOCAL_BACKUP_MAX_BYTES) {
+      return;
+    }
+    window.localStorage.setItem(SESSIONS_KEY, serialized);
+  } catch (e) {
+    console.error("同步写入 sessions 备份失败：", e);
+  }
+};
+
+export const backupSessionsSync = (sessions: Session[]) => {
+  writeSessionsBackupSync(sessions);
 };
 
 export const saveSessions = async (sessions: Session[]): Promise<void> => {
@@ -213,4 +244,3 @@ export const clearAll = async (): Promise<void> => {
     }
   }
 };
-

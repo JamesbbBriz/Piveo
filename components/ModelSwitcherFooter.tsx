@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiConfig } from "../services/apiConfig";
 import { fetchBalance, listModels } from "../services/openaiImages";
 import { Icon } from "./Icon";
@@ -28,31 +28,51 @@ export const ModelSwitcherFooter: React.FC<ModelSwitcherFooterProps> = ({ apiCon
   const [balanceCurrency, setBalanceCurrency] = useState("USD");
   const [balanceHint, setBalanceHint] = useState("加载中...");
   const [balanceUpdatedAt, setBalanceUpdatedAt] = useState<number | null>(null);
+  const mountedRef = useRef(true);
+  const modelsReqIdRef = useRef(0);
+  const balanceReqIdRef = useRef(0);
+  const balanceLockRef = useRef(false);
 
-  const loadModels = async () => {
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const loadModels = useCallback(async () => {
+    const reqId = ++modelsReqIdRef.current;
     setLoadingModels(true);
     try {
       const ids = await listModels({ api: apiConfig });
+      if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
       const imageModels = ids.filter((m) => /image/i.test(m) && !/^sora-/i.test(m));
       const next = Array.from(new Set([apiConfig.defaultImageModel, ...(imageModels.length ? imageModels : ids)])).filter(Boolean);
       setModels(next);
     } catch {
+      if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
       setModels((prev) => (prev.length ? prev : [apiConfig.defaultImageModel]));
     } finally {
-      setLoadingModels(false);
+      if (mountedRef.current && reqId === modelsReqIdRef.current) {
+        setLoadingModels(false);
+      }
     }
-  };
+  }, [apiConfig]);
 
-  const loadBalance = async () => {
+  const loadBalance = useCallback(async () => {
+    if (balanceLockRef.current) return;
+    balanceLockRef.current = true;
+    const reqId = ++balanceReqIdRef.current;
     setLoadingBalance(true);
     try {
       const r = await fetchBalance({ api: apiConfig });
+      if (!mountedRef.current || reqId !== balanceReqIdRef.current) return;
       setBalanceAmount(r.amount);
       setBalanceCurrency(r.currency || "USD");
       const now = Date.now();
       setBalanceUpdatedAt(now);
       setBalanceHint(r.amount === null ? "暂不可用" : `已更新 ${new Date(now).toLocaleTimeString("zh-CN", { hour12: false })}`);
     } catch (e) {
+      if (!mountedRef.current || reqId !== balanceReqIdRef.current) return;
       const msg = e instanceof Error ? e.message : String(e);
       const hint = /鉴权失败|401|403/i.test(msg)
         ? "余额接口鉴权失败"
@@ -65,21 +85,28 @@ export const ModelSwitcherFooter: React.FC<ModelSwitcherFooterProps> = ({ apiCon
       setBalanceUpdatedAt(null);
       setBalanceHint(hint);
     } finally {
-      setLoadingBalance(false);
+      balanceLockRef.current = false;
+      if (mountedRef.current && reqId === balanceReqIdRef.current) {
+        setLoadingBalance(false);
+      }
     }
-  };
+  }, [apiConfig]);
 
   useEffect(() => {
     void loadModels();
     void loadBalance();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiConfig.authorization, apiConfig.baseUrl]);
+  }, [apiConfig.authorization, apiConfig.baseUrl, loadBalance, loadModels]);
 
   useEffect(() => {
     if (refreshTick <= 0) return;
     void loadBalance();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshTick]);
+  }, [refreshTick, loadBalance]);
+
+  useEffect(() => {
+    if (pendingModel && pendingModel === apiConfig.defaultImageModel) {
+      setPendingModel(null);
+    }
+  }, [apiConfig.defaultImageModel, pendingModel]);
 
   const options = useMemo(() => {
     if (!models.length) return [apiConfig.defaultImageModel];

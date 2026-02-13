@@ -3,6 +3,7 @@
 // Default base URL is `/api` so the Vite dev server can proxy to bypass CORS.
 
 import { ApiConfig, getEffectiveApiConfig } from "./apiConfig";
+import { dataUrlToBlob } from "./imageData";
 
 export interface ClientRequestOptions {
   api?: Partial<ApiConfig>;
@@ -711,11 +712,9 @@ export interface 图片编辑请求 {
   [property: string]: any;
 }
 
-const base64ToBlob = (b64: string, mimeType: string): Blob => {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Blob([bytes], { type: mimeType });
+const base64ToBlob = async (b64: string, mimeType: string): Promise<Blob> => {
+  const dataUrl = `data:${mimeType};base64,${b64}`;
+  return await dataUrlToBlob(dataUrl);
 };
 
 const inputToBlob = async (
@@ -726,7 +725,7 @@ const inputToBlob = async (
     const m = /^data:([^;]+);base64,(.*)$/i.exec(input);
     const mimeType = m?.[1] || "image/png";
     const b64 = m?.[2] || "";
-    const blob = base64ToBlob(b64, mimeType);
+    const blob = await base64ToBlob(b64, mimeType);
     const ext = mimeType.includes("png") ? "png" : mimeType.includes("jpeg") ? "jpg" : "bin";
     return { blob, mimeType, filename: `upload.${ext}` };
   }
@@ -742,7 +741,7 @@ const inputToBlob = async (
 
   // raw base64
   const mimeType = guessMimeTypeFromB64(input);
-  const blob = base64ToBlob(input, mimeType);
+  const blob = await base64ToBlob(input, mimeType);
   const ext = mimeType.includes("png") ? "png" : mimeType.includes("jpeg") ? "jpg" : "bin";
   return { blob, mimeType, filename: `b64.${ext}` };
 };
@@ -757,36 +756,44 @@ export const imagesEdits = async (
   const cfg = getClientConfig(opts?.api);
   const signal = opts?.signal;
 
-  const fd = new FormData();
-
   if (!Array.isArray(req.image) || req.image.length === 0) {
     throw new Error("images/edits 需要至少 1 张 image。");
   }
 
+  const preparedImages: Array<{ blob: Blob; filename: string }> = [];
   for (let i = 0; i < req.image.length; i++) {
     const { blob, filename } = await inputToBlob(req.image[i], signal);
-    fd.append("image", blob, filename.replace("upload", `image_${i}`));
+    preparedImages.push({ blob, filename: filename.replace("upload", `image_${i}`) });
   }
 
+  let preparedMask: { blob: Blob; filename: string } | null = null;
   if (req.mask) {
     const { blob, filename } = await inputToBlob(req.mask, signal);
-    fd.append("mask", blob, filename.replace("upload", "mask"));
+    preparedMask = { blob, filename: filename.replace("upload", "mask") };
   }
-
-  fd.append("prompt", req.prompt);
-  fd.append("n", String(req.n ?? 1));
-  if (req.size) fd.append("size", String(req.size));
-  if (req.response_format) fd.append("response_format", String(req.response_format));
-  if (req.model) fd.append("model", String(req.model));
-  if (req.quality) fd.append("quality", String(req.quality));
-
-  // Pass-through for extra fields
-  for (const [k, v] of Object.entries(req)) {
-    if (k === "image" || k === "mask" || k === "prompt" || k === "n" || k === "size" || k === "response_format" || k === "model" || k === "quality")
-      continue;
-    if (v === undefined || v === null) continue;
-    fd.append(k, String(v));
-  }
+  const buildFormData = (): FormData => {
+    const fd = new FormData();
+    for (const img of preparedImages) {
+      fd.append("image", img.blob, img.filename);
+    }
+    if (preparedMask) {
+      fd.append("mask", preparedMask.blob, preparedMask.filename);
+    }
+    fd.append("prompt", req.prompt);
+    fd.append("n", String(req.n ?? 1));
+    if (req.size) fd.append("size", String(req.size));
+    if (req.response_format) fd.append("response_format", String(req.response_format));
+    if (req.model) fd.append("model", String(req.model));
+    if (req.quality) fd.append("quality", String(req.quality));
+    // Pass-through for extra fields
+    for (const [k, v] of Object.entries(req)) {
+      if (k === "image" || k === "mask" || k === "prompt" || k === "n" || k === "size" || k === "response_format" || k === "model" || k === "quality")
+        continue;
+      if (v === undefined || v === null) continue;
+      fd.append(k, String(v));
+    }
+    return fd;
+  };
 
   let lastStatus = 0;
   let lastText = "";
@@ -801,7 +808,7 @@ export const imagesEdits = async (
           ...buildAuthHeaders(cfg),
         },
         credentials: "include",
-        body: fd,
+        body: buildFormData(),
         signal: withTimeout(signal),
       });
     } catch (e: any) {

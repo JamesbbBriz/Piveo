@@ -7,8 +7,22 @@ const aspectRatioToSize = (aspectRatio: string): string => {
 };
 
 export const enhancePrompt = async (originalPrompt: string): Promise<string> => {
-  // Keep "enhance" as a safe local no-op so the app doesn't require a separate text model.
-  return originalPrompt.trim();
+  const base = originalPrompt.trim();
+  if (!base) return "";
+
+  const additions: string[] = [];
+  if (!/(高清|高分辨率|细节|清晰|8k|4k|high[-\s]?detail|sharp)/i.test(base)) {
+    additions.push("画面清晰、细节锐利、边缘干净无噪点。");
+  }
+  if (!/(棚拍|光线|光效|打光|studio|lighting)/i.test(base)) {
+    additions.push("使用柔和但有层次的棚拍光线，主体曝光准确。");
+  }
+  if (!/(构图|景深|背景|composition|depth of field)/i.test(base)) {
+    additions.push("构图简洁，主体突出，背景不过度抢视觉。");
+  }
+
+  if (!additions.length) return base;
+  return `${base}\n\n补充要求：${additions.join(" ")}`;
 };
 
 export const generateModelCharacter = async (opts?: { signal?: AbortSignal }): Promise<string> => {

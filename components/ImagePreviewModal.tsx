@@ -1,5 +1,8 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Icon } from './Icon';
+import { DownloadOptionsModal } from './DownloadOptionsModal';
+import { downloadImageWithFormat, loadDownloadOptions, saveDownloadOptions } from '../services/imageDownload';
+import { useModalA11y } from './useModalA11y';
 
 interface ImagePreviewModalProps {
   imageUrl: string;
@@ -7,23 +10,29 @@ interface ImagePreviewModalProps {
 }
 
 export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ imageUrl, onClose }) => {
-  // Close on Escape key
-  useEffect(() => {
-    const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleEsc);
-    return () => window.removeEventListener('keydown', handleEsc);
-  }, [onClose]);
+  const [downloadOptions, setDownloadOptions] = React.useState(loadDownloadOptions);
+  const [downloadOpen, setDownloadOpen] = React.useState(false);
+  const modalRef = React.useRef<HTMLDivElement>(null);
+  useModalA11y(!downloadOpen, modalRef, onClose);
 
   const handleDownload = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const link = document.createElement('a');
-    link.href = imageUrl;
-    link.download = `topseller-preview-${Date.now()}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    setDownloadOpen(true);
+  };
+
+  const confirmDownload = async () => {
+    saveDownloadOptions(downloadOptions);
+    try {
+      await downloadImageWithFormat(imageUrl, {
+        basename: `topseller-preview-${Date.now()}`,
+        format: downloadOptions.format,
+        quality: downloadOptions.quality,
+      });
+      setDownloadOpen(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      window.alert(`下载失败：${msg}`);
+    }
   };
 
   return (
@@ -38,7 +47,7 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ imageUrl, 
         <Icon name="times" className="text-xl" />
       </button>
       
-      <div className="relative max-w-full max-h-full flex flex-col items-center" onClick={e => e.stopPropagation()}>
+      <div ref={modalRef} tabIndex={-1} className="relative max-w-full max-h-full flex flex-col items-center" onClick={e => e.stopPropagation()}>
          <img 
            src={imageUrl} 
            alt="预览" 
@@ -54,6 +63,15 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ imageUrl, 
            </button>
          </div>
       </div>
+      <DownloadOptionsModal
+        isOpen={downloadOpen}
+        options={downloadOptions}
+        onChange={setDownloadOptions}
+        onCancel={() => setDownloadOpen(false)}
+        onConfirm={() => void confirmDownload()}
+        title="下载设置"
+        confirmLabel="开始下载"
+      />
     </div>
   );
 };

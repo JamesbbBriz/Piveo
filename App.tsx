@@ -1,17 +1,16 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Sidebar } from './components/Sidebar';
 import { ChatMessage } from './components/ChatMessage';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import { Icon } from './components/Icon';
 import { AspectRatio, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter } from './types';
-import { initPersistentStorage, loadSessions, loadTemplates, loadModels, saveSessions, saveTemplates, saveModels, clearAll } from './services/storage';
+import { initPersistentStorage, loadSessions, loadTemplates, loadModels, saveSessions, saveTemplates, saveModels, clearAll, backupSessionsSync } from './services/storage';
 import { generateResponse, enhancePrompt } from './services/gemini';
 import { DEFAULT_ASPECT_RATIO } from './constants';
 import { ApiConfig, getEffectiveApiConfig, saveStoredApiConfig } from './services/apiConfig';
 import { AssetsModal, type AssetItem } from './components/AssetsModal';
-import { ImageCompareModal } from './components/ImageCompareModal';
 import { ErrorDetailsModal, type ErrorDetails } from './components/ErrorDetailsModal';
 import { MaskEditorModal } from './components/MaskEditorModal';
 import { imagesEdits, imageObjToDataUrl, ResponseFormat } from './services/openaiImages';
@@ -78,6 +77,8 @@ const isLikelyGatewayTimeout = (message: string): boolean =>
 const isLikelyMixedImageInput = (message: string): boolean =>
   /请只使用一种图片输入方式|one image input|url or base64|文件上传、URL 或 base64/i.test(message);
 
+const ADVANCED_PANEL_STORAGE_KEY = "topseller.ui.advanced_panel_open";
+
 const getFriendlyErrorMessage = (message: string): string => {
   if (isLikelyModelUnsupported(message)) return "当前模型不支持生图，请切换到可用图片模型后重试。";
   if (isLikelyMixedImageInput(message)) return "本次请求混用了 URL 和 base64 图片，已触发网关限制。请重试（系统将自动按单一格式发送）。";
@@ -131,9 +132,10 @@ const getErrorAdvice = (message: string): string[] => {
 };
 
 const hashString = (input: string): string => {
+  const sample = input.slice(0, 1000);
   let h = 2166136261;
-  for (let i = 0; i < input.length; i++) {
-    h ^= input.charCodeAt(i);
+  for (let i = 0; i < sample.length; i++) {
+    h ^= sample.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
   return (h >>> 0).toString(16);
@@ -149,6 +151,14 @@ const findLastImageUrl = (messages: Message[]): string | null => {
   }
   return null;
 };
+
+const QUICK_PROMPT_PRESETS = [
+  "电商白底，产品边缘清晰、无噪点。",
+  "高级棚拍光效，肤色自然，细节锐利。",
+  "保持人物一致，仅优化配件细节。",
+  "把产品再缩小 20%，更纤细。",
+  "把产品放大 20%，更突出主体。",
+];
 
 const createNewSession = (templates: SystemTemplate[]): Session => {
   const defaultTemplate = templates.length > 0 ? templates[0].content : '';
@@ -186,7 +196,6 @@ const App: React.FC = () => {
   const [generationProgress, setGenerationProgress] = useState<{ current: number; total: number } | null>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
-  const [comparePair, setComparePair] = useState<{ beforeUrl: string; afterUrl: string } | null>(null);
   const [errorDetails, setErrorDetails] = useState<ErrorDetails | null>(null);
   const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
   const [isAssetsOpen, setIsAssetsOpen] = useState(false);
@@ -198,12 +207,20 @@ const App: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
+  const [isAdvancedPanelOpen, setIsAdvancedPanelOpen] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(ADVANCED_PANEL_STORAGE_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const saveSessionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSessionsRef = useRef<Session[] | null>(null);
+  const latestSessionsRef = useRef<Session[]>([]);
   const lastRunRef = useRef<{
     prompt: string;
     image: string | null;
@@ -280,6 +297,10 @@ const App: React.FC = () => {
 
   // P1-7: sessions 保存添加防抖，避免频繁写入
   useEffect(() => {
+    latestSessionsRef.current = sessions;
+  }, [sessions]);
+
+  useEffect(() => {
     if (!hasHydratedStorage) return;
     pendingSessionsRef.current = sessions;
     if (saveSessionsTimerRef.current) clearTimeout(saveSessionsTimerRef.current);
@@ -295,17 +316,20 @@ const App: React.FC = () => {
     };
   }, [sessions, hasHydratedStorage]);
 
-  // P1-7: beforeunload 时强制 flush 未保存的 sessions
+  // beforeunload 时强制 flush，并同步写一份 localStorage 紧急备份
   useEffect(() => {
     const flushSessions = () => {
+      let toFlush: Session[] | null = null;
       if (saveSessionsTimerRef.current) {
         clearTimeout(saveSessionsTimerRef.current);
         saveSessionsTimerRef.current = null;
       }
       if (pendingSessionsRef.current) {
+        toFlush = pendingSessionsRef.current;
         void saveSessions(pendingSessionsRef.current);
         pendingSessionsRef.current = null;
       }
+      backupSessionsSync(toFlush || latestSessionsRef.current);
     };
     window.addEventListener("beforeunload", flushSessions);
     return () => window.removeEventListener("beforeunload", flushSessions);
@@ -320,12 +344,22 @@ const App: React.FC = () => {
   }, [models, hasHydratedStorage]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [sessions, currentSessionId, isGenerating]);
+    try {
+      window.localStorage.setItem(ADVANCED_PANEL_STORAGE_KEY, isAdvancedPanelOpen ? "1" : "0");
+    } catch {
+      // Ignore localStorage write failures.
+    }
+  }, [isAdvancedPanelOpen]);
 
   const currentSession = sessions.find(s => s.id === currentSessionId) || sessions[0];
+  const currentMessageCount = currentSession?.messages.length || 0;
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [currentSessionId, currentMessageCount, isGenerating]);
 
   const allAssets: AssetItem[] = useMemo(() => {
+    if (!isAssetsOpen) return [];
     const out: AssetItem[] = [];
     for (const s of sessions) {
       let lastUserText: string | null = null;
@@ -358,12 +392,27 @@ const App: React.FC = () => {
       }
     }
     return out;
+  }, [sessions, isAssetsOpen]);
+
+  const totalAssetCount = useMemo(() => {
+    let count = 0;
+    for (const s of sessions) {
+      for (const m of s.messages) {
+        for (const p of m.parts) {
+          if (p.type === "image" && p.imageUrl) count += 1;
+        }
+      }
+    }
+    return count;
   }, [sessions]);
 
-  const currentAssetCount = useMemo(() => {
-    if (!currentSession) return 0;
-    return allAssets.filter((a) => a.sessionId === currentSession.id).length;
-  }, [allAssets, currentSession]);
+  const toggleSidebar = useCallback(() => {
+    setIsSidebarOpen((v) => !v);
+  }, []);
+
+  const openAssets = useCallback(() => {
+    setIsAssetsOpen(true);
+  }, []);
 
   const handleNewSession = () => {
     const newSession = createNewSession(templates);
@@ -483,7 +532,7 @@ const App: React.FC = () => {
     abortRef.current?.abort();
   };
 
-  const executeGeneration = async (
+  const executeGeneration = useCallback(async (
     prompt: string,
     image: string | null,
     customMessages?: Message[],
@@ -656,7 +705,7 @@ const App: React.FC = () => {
         abortRef.current = null;
       }
     }
-  };
+  }, [apiConfig, currentSession, models]);
 
   const handleSendMessage = async () => {
     if ((!inputText.trim() && !selectedImage) || isGenerating || !currentSession) return;
@@ -686,29 +735,28 @@ const App: React.FC = () => {
     await executeGeneration(promptToPass, imageToPass, updatedMessages);
   };
 
-  const handleVariation = async (type: string, imageUrl: string) => {
+  const handleVariation = useCallback(async (type: string, imageUrl: string) => {
     if (isGenerating || !currentSession) return;
     const variationPrompt = `基于之前的上下文，生成一个「${type}」变体，并严格保持一致性。`;
     
     const newUserMessage: Message = {
       id: uuidv4(),
       role: 'user',
-      parts: [{ type: 'text', text: `(变体操作：${type})` }],
+      parts: [
+        { type: 'text', text: `(变体操作：${type})` },
+        { type: 'image', imageUrl },
+      ],
       timestamp: Date.now()
     };
 
     const updatedMessages = [...currentSession.messages, newUserMessage];
     setSessions(prev => prev.map(s => s.id === currentSession.id ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s));
     await executeGeneration(variationPrompt, imageUrl, updatedMessages, { action: `变体：${type}` });
-  };
+  }, [currentSession, executeGeneration, isGenerating]);
 
-  const openCompare = (beforeUrl: string, afterUrl: string) => {
-    setComparePair({ beforeUrl, afterUrl });
-  };
-
-  const openMaskEdit = (baseImageUrl: string) => {
+  const openMaskEdit = useCallback((baseImageUrl: string) => {
     setMaskEditBaseUrl(baseImageUrl);
-  };
+  }, []);
 
   const handleMaskSubmit = async (params: { prompt: string; maskDataUrl: string; maskOverlayDataUrl: string }) => {
     if (!currentSession) return;
@@ -739,6 +787,7 @@ const App: React.FC = () => {
       abortRef.current?.abort();
       abortRef.current = new AbortController();
       const controller = abortRef.current;
+      let handoffToFallback = false;
       try {
         setIsGenerating(true);
         setErrorDetails(null);
@@ -797,9 +846,14 @@ const App: React.FC = () => {
       } catch (e) {
         // Fall back to the non-native approach below.
         console.warn("images/edits 失败，自动退化为参考图编辑：", e);
+        handoffToFallback = true;
       } finally {
-        setIsGenerating(false);
-        setGenerationStage(null);
+        if (!handoffToFallback) {
+          setIsGenerating(false);
+          setGenerationStage(null);
+        } else {
+          setGenerationStage("原生编辑失败，已切换为参考图模式");
+        }
         setGenerationProgress(null);
         // 只清理当前请求对应的 controller，避免竞态覆盖新请求
         if (abortRef.current === controller) {
@@ -807,9 +861,6 @@ const App: React.FC = () => {
         }
       }
     }
-
-    // P1-9: imagesEdits 退化时通知用户
-    setGenerationStage("原生编辑失败，已切换为参考图模式");
 
     const augmentedPrompt =
       `${params.prompt}\n\n` +
@@ -829,25 +880,10 @@ const App: React.FC = () => {
   };
 
   const retryLastGeneration = async () => {
-    if (isGenerating || !lastRunRef.current) return;
+    if (isGenerating || !lastRunRef.current || !currentSession) return;
     const last = lastRunRef.current;
-    await executeGeneration(last.prompt, last.image, last.customMessages, last.opts);
+    await executeGeneration(last.prompt, last.image, currentSession.messages, last.opts);
   };
-
-  const quickPromptPresets = [
-    "电商白底，产品边缘清晰、无噪点。",
-    "高级棚拍光效，肤色自然，细节锐利。",
-    "保持人物一致，仅优化配件细节。",
-    "把产品再缩小 20%，更纤细。",
-    "把产品放大 20%，更突出主体。",
-  ];
-
-  const continuityStories = [
-    "1. 连着微调同一张图：先生成 A，下一句只写“帽子改蓝色”，系统会自动用 A 继续改。",
-    "2. 做全新图：关闭后输入新提示词，不会偷偷带上上一张图。",
-    "3. 手动指定参考图：在素材库点“设为参考图”，本次优先按这张图改。",
-    "4. 开着连续编辑但临时换图：你上传新图时，本次会用新图；下次不上传才回到自动沿用。",
-  ];
 
   if (!authReady) {
     return (
@@ -909,11 +945,11 @@ const App: React.FC = () => {
         onNewSession={handleNewSession}
         onDeleteSession={handleDeleteSession}
         isOpen={isSidebarOpen}
-        toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+        toggleSidebar={toggleSidebar}
         apiConfig={apiConfig}
         onUpdateApiConfig={handleUpdateApiConfig}
-        onOpenAssets={() => setIsAssetsOpen(true)}
-        assetCount={currentAssetCount}
+        onOpenAssets={openAssets}
+        assetCount={totalAssetCount}
         currentSettings={currentSession.settings}
         onUpdateCurrentSettings={handleUpdateSettings}
         balanceRefreshTick={balanceRefreshTick}
@@ -943,10 +979,12 @@ const App: React.FC = () => {
           </button>
         </div>
         <SystemPromptBar
+          key={currentSession.id}
           settings={currentSession.settings}
           onUpdateSettings={handleUpdateSettings}
           templates={templates}
           onSaveTemplate={handleSaveTemplate}
+          hasDesktopTopRightOverlay
         />
         <div className="flex-1 overflow-y-auto p-4 lg:p-8 scroll-smooth">
           <div className="w-full max-w-none min-h-full flex flex-col pr-1 lg:pr-4">
@@ -962,9 +1000,8 @@ const App: React.FC = () => {
                   message={msg}
                   onPreviewImage={setPreviewImageUrl}
                   onVariation={handleVariation}
-                  onCompare={openCompare}
                   onMaskEdit={openMaskEdit}
-                  onUseAsReference={(url) => setSelectedImage(url)}
+                  onUseAsReference={setSelectedImage}
                 />
               ))
             )}
@@ -1026,30 +1063,46 @@ const App: React.FC = () => {
                 </button>
               </div>
             )}
-            <PromptModelPanel
-              settings={currentSession.settings}
-              onUpdateSettings={handleUpdateSettings}
-              models={models}
-              onAddModel={handleAddModel}
-            />
-            {selectedImage && (
-              <div className="relative inline-block self-start">
-                <img src={selectedImage} alt="预览" className="h-24 rounded-lg border border-dark-600 object-cover shadow-lg" loading="lazy" decoding="async" />
-                <button onClick={() => setSelectedImage(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-md"><Icon name="times" /></button>
-              </div>
-            )}
-            <div className="flex flex-wrap items-center gap-2">
-              {quickPromptPresets.map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setInputText((prev) => (prev ? `${prev}\n${p}` : p))}
-                  className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md"
-                >
-                  {p}
-                </button>
-              ))}
-              <div className="md:ml-auto">
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-dark-600 bg-dark-800/60">
+            <div className="rounded-lg border border-dark-600 bg-dark-800/60 px-3 py-2">
+              <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => setIsAdvancedPanelOpen((v) => !v)}
+                    className="h-8 px-2.5 rounded-md border border-dark-600 bg-dark-800 hover:bg-dark-700 text-[11px] text-gray-200 transition-colors flex items-center gap-1.5"
+                  >
+                    <Icon name={isAdvancedPanelOpen ? "chevron-up" : "chevron-down"} />
+                    {isAdvancedPanelOpen ? "收起高级设置" : "展开高级设置"}
+                  </button>
+                  {currentSession.settings.productImage && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full border border-banana-500/30 bg-banana-500/10 text-banana-300">
+                      已设产品图
+                    </span>
+                  )}
+                  {currentSession.settings.selectedModelId && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full border border-banana-500/30 bg-banana-500/10 text-banana-300">
+                      已锁模特
+                    </span>
+                  )}
+                  {selectedImage && (
+                    <div className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+                      <span>已设参考图</span>
+                      <button
+                        onClick={() => setIsAdvancedPanelOpen(true)}
+                        className="underline underline-offset-2 hover:text-emerald-200"
+                      >
+                        查看
+                      </button>
+                      <button
+                        onClick={() => setSelectedImage(null)}
+                        className="text-emerald-200 hover:text-white"
+                        title="清除参考图"
+                      >
+                        <Icon name="times" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
                   <span className="text-[11px] text-gray-300 font-medium">连续编辑</span>
                   <label className="inline-flex items-center cursor-pointer">
                     <input
@@ -1065,15 +1118,49 @@ const App: React.FC = () => {
                       className="h-4 w-4 accent-banana-500"
                     />
                   </label>
-                  <span className="text-[11px] text-gray-500">
-                    {currentSession.settings.autoUseLastImage ? "开" : "关"}
-                  </span>
-                  <span className="text-[10px] text-gray-500 max-w-[220px] leading-tight">
-                    开启后，每次生成会自动使用上一张结果图作为参考
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                    currentSession.settings.autoUseLastImage
+                      ? "text-emerald-300 border-emerald-500/40 bg-emerald-500/10"
+                      : "text-gray-400 border-dark-500 bg-dark-700"
+                  }`}>
+                    {currentSession.settings.autoUseLastImage ? "已开启" : "已关闭"}
                   </span>
                 </div>
               </div>
+              {!isAdvancedPanelOpen && (
+                <p className="mt-1 text-[10px] text-gray-500 leading-relaxed">
+                  输入指令即可生成。产品/模特、快捷词在「高级设置」中按需展开，减少占用空间。
+                </p>
+              )}
             </div>
+
+            {isAdvancedPanelOpen && (
+              <div className="space-y-2 rounded-lg border border-dark-700 bg-dark-900/30 p-2">
+                <PromptModelPanel
+                  settings={currentSession.settings}
+                  onUpdateSettings={handleUpdateSettings}
+                  models={models}
+                  onAddModel={handleAddModel}
+                />
+                {selectedImage && (
+                  <div className="relative inline-block self-start">
+                    <img src={selectedImage} alt="预览" className="h-20 rounded-lg border border-dark-600 object-cover shadow-lg" loading="lazy" decoding="async" />
+                    <button onClick={() => setSelectedImage(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-md"><Icon name="times" /></button>
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {QUICK_PROMPT_PRESETS.map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => setInputText((prev) => (prev ? `${prev}\n${p}` : p))}
+                      className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md"
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex items-end gap-3 bg-dark-900 border border-dark-600 rounded-xl p-2 focus-within:border-dark-500 transition-colors">
               <button onClick={() => fileInputRef.current?.click()} className="p-3 text-gray-400 hover:text-banana-400 transition-colors rounded-lg hover:bg-dark-800"><Icon name="image" className="text-lg" /></button>
               <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" className="hidden" />
@@ -1091,7 +1178,6 @@ const App: React.FC = () => {
           isOpen={isAssetsOpen}
           assets={allAssets}
           onClose={() => setIsAssetsOpen(false)}
-          onOpenCompare={openCompare}
           onOpenMaskEdit={openMaskEdit}
           onUseAsReference={(imageUrl) => {
             setSelectedImage(imageUrl);
@@ -1102,13 +1188,6 @@ const App: React.FC = () => {
             setIsAssetsOpen(false);
           }}
         />
-        {comparePair && (
-          <ImageCompareModal
-            beforeUrl={comparePair.beforeUrl}
-            afterUrl={comparePair.afterUrl}
-            onClose={() => setComparePair(null)}
-          />
-        )}
         {errorDetails && isErrorModalOpen && (
           <ErrorDetailsModal
             error={errorDetails}
