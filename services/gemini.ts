@@ -57,6 +57,7 @@ export interface GenerateResponseOptions {
     size?: string;
     description?: string;
   };
+  forceIncludeProductImage?: boolean;
 }
 
 export interface GenerateResponseResult {
@@ -112,13 +113,16 @@ export const generateResponse = async (
 
   // 当存在"当前参考图/连续编辑图"时，产品图只做兜底，不再并行注入，
   // 避免产品图（尤其带人物的产品图）覆盖当前编辑语义。
-  const includeProductImage = Boolean(productImage) && !referenceImage && !lastHistoryImage;
+  // 套图模式通过 forceIncludeProductImage 绕过聊天模式的排除逻辑。
+  const includeProductImage = Boolean(productImage) && (
+    options.forceIncludeProductImage || (!referenceImage && !lastHistoryImage)
+  );
 
   const imageInputsRaw: string[] = [];
   if (referenceImage) imageInputsRaw.push(referenceImage);
   if (lastHistoryImage) imageInputsRaw.push(lastHistoryImage);
-  if (modelImage) imageInputsRaw.push(modelImage);
   if (includeProductImage && productImage) imageInputsRaw.push(productImage);
+  if (modelImage) imageInputsRaw.push(modelImage);
   for (const img of extraImages) imageInputsRaw.push(img);
 
   // 网关要求同一次请求只用一种图片输入方式（URL 或 base64）。
@@ -200,10 +204,14 @@ export const generateResponse = async (
       ? `系统指令：\n${settings.systemPrompt.trim()}\n\n`
       : "";
     let imageContext = "";
-    if (includeProductImage) {
+    if (includeProductImage && modelImage) {
+      imageContext += "\n图片说明：提供了产品图和模特参考图。产品图是核心参考——请严格还原产品的外观、颜色、材质与细节。模特图仅用于人物外貌一致性参考。";
+    } else if (includeProductImage) {
       imageContext += "\n图片说明：第一张是主要产品图，请重点参考产品本身的外观、颜色、材质与细节，无视图中的模特或人物。";
     }
-    if (modelImage) imageContext += "\n有模特图作为人物一致性参考，请保持人物特征稳定。";
+    if (modelImage && !includeProductImage) {
+      imageContext += "\n有模特图作为人物一致性参考，请保持人物特征稳定。";
+    }
     const n = Math.min(Math.max(options.n ?? 1, 1), 10);
     const responseFormat = options.responseFormat ?? settings.responseFormat ?? "url";
     const currentModel = getEffectiveApiConfig().defaultImageModel;

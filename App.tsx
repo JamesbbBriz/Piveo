@@ -816,6 +816,7 @@ const App: React.FC = () => {
         size,
         responseFormat,
         disableAutoUseLastImage: true,
+        forceIncludeProductImage: true,
         signal: batchAbortRef.current?.signal,
       }
     );
