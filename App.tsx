@@ -10,6 +10,7 @@ import { initPersistentStorage, loadBatchJobs, loadSessions, loadTemplates, load
 import { generateResponse, enhancePrompt, type GenerateResponseResult } from './services/gemini';
 import { DEFAULT_ASPECT_RATIO } from './constants';
 import { ApiConfig, getEffectiveApiConfig, saveStoredApiConfig } from './services/apiConfig';
+import { DefaultPreferences, loadDefaultPreferences, saveDefaultPreferences } from './components/SettingsPanel';
 import { AssetsModal, type AssetItem } from './components/AssetsModal';
 import { ErrorDetailsModal, type ErrorDetails } from './components/ErrorDetailsModal';
 import { MaskEditorModal, type MaskEditorHistoryItem } from './components/MaskEditorModal';
@@ -198,21 +199,24 @@ const mapSlotStatusToJobStatus = (slots: BatchSlot[]): BatchJobStatus => {
 
 const nowTs = () => Date.now();
 
-const createNewSession = (templates: SystemTemplate[]): Session => {
+const createNewSession = (templates: SystemTemplate[], prefs?: DefaultPreferences): Session => {
   const defaultTemplate = templates.length > 0 ? templates[0].content : '';
+  const ar = prefs?.aspectRatio ?? DEFAULT_ASPECT_RATIO;
+  const ps = prefs?.productScale ?? ProductScale.Standard;
+  const bc = prefs?.batchCount ?? 1;
   return {
     id: uuidv4(),
     title: '新项目',
     messages: [],
     updatedAt: Date.now(),
     settings: {
-      aspectRatio: DEFAULT_ASPECT_RATIO,
+      aspectRatio: ar,
       systemPrompt: defaultTemplate,
       selectedModelId: null,
-      productScale: ProductScale.Standard,
+      productScale: ps,
       responseFormat: "url",
-      batchCount: 1,
-      batchSizes: [getSupportedSizeForAspect(DEFAULT_ASPECT_RATIO)],
+      batchCount: bc,
+      batchSizes: [getSupportedSizeForAspect(ar)],
       autoUseLastImage: true,
       productImage: null,
     }
@@ -229,7 +233,8 @@ const App: React.FC = () => {
   const [models, setModels] = useState<ModelCharacter[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [apiConfig, setApiConfig] = useState<ApiConfig>(() => getEffectiveApiConfig());
-  
+  const [defaultPreferences, setDefaultPreferences] = useState<DefaultPreferences>(() => loadDefaultPreferences());
+
   const [inputText, setInputText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -663,21 +668,26 @@ const App: React.FC = () => {
     setIsAssetsOpen(true);
   }, []);
 
+  const handleUpdateDefaultPreferences = useCallback((prefs: DefaultPreferences) => {
+    setDefaultPreferences(prefs);
+    saveDefaultPreferences(prefs);
+  }, []);
+
   const handleNewSession = useCallback(() => {
-    const newSession = createNewSession(templates);
+    const newSession = createNewSession(templates, defaultPreferences);
     setSessions((prev) => [newSession, ...prev]);
     setCurrentSessionId(newSession.id);
     setCurrentView("chat");
     setInputText('');
     setSelectedImage(null);
-  }, [templates]);
+  }, [templates, defaultPreferences]);
 
   const handleDeleteSession = useCallback((id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setSessions((prev) => {
       const next = prev.filter((s) => s.id !== id);
       if (next.length === 0) {
-        const fresh = createNewSession(templates);
+        const fresh = createNewSession(templates, defaultPreferences);
         setCurrentSessionId(fresh.id);
         return [fresh];
       }
@@ -686,7 +696,7 @@ const App: React.FC = () => {
       }
       return next;
     });
-  }, [currentSessionId, templates]);
+  }, [currentSessionId, templates, defaultPreferences]);
 
   const handleUpdateSettings = useCallback((newSettings: SessionSettings) => {
     if (!currentSessionId) return;
@@ -2161,6 +2171,8 @@ const App: React.FC = () => {
         balanceRefreshTick={balanceRefreshTick}
         currentView={currentView}
         onViewChange={setCurrentView}
+        defaultPreferences={defaultPreferences}
+        onUpdateDefaultPreferences={handleUpdateDefaultPreferences}
       />
       <div className="flex-1 flex flex-col h-full min-h-0 relative">
         <div className="lg:hidden h-14 border-b border-dark-700 flex items-center px-4 justify-between bg-dark-800">

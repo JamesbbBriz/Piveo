@@ -11,7 +11,18 @@ interface ModelSwitcherFooterProps {
   authUser?: string | null;
   authLoading?: boolean;
   onLogout?: () => void;
+  compact?: boolean;
 }
+
+/** Frontend-only display name: 2.5-series → nano🍌, 3-pro → nano🍌 PRO */
+export const getModelDisplayName = (modelId: string): string => {
+  if (/gemini-3.*pro.*image/i.test(modelId)) return "nano🍌 PRO";
+  if (/2\.5.*image/i.test(modelId)) return "nano🍌";
+  // fallback: strip common prefixes
+  return modelId
+    .replace(/^(gemini-|gpt-image-)/i, "")
+    .replace(/-preview.*$/, "");
+};
 
 const formatMoney = (amount: number | null, currency = "USD"): string => {
   if (amount === null || !Number.isFinite(amount)) return "暂不可用";
@@ -30,6 +41,7 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
   authUser = null,
   authLoading = false,
   onLogout,
+  compact = false,
 }) => {
   const [models, setModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -126,6 +138,36 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
     return models;
   }, [models, apiConfig.defaultImageModel]);
 
+  /* ── Compact mode: model selector + balance, vertical ── */
+  if (compact) {
+    const shortBalance =
+      balanceAmount !== null && Number.isFinite(balanceAmount)
+        ? `$${balanceAmount.toFixed(2)}`
+        : "—";
+    return (
+      <div className="w-full flex flex-col items-center gap-1 px-1 py-1.5">
+        <select
+          value={apiConfig.defaultImageModel}
+          onChange={(e) => onUpdateApiConfig({ ...apiConfig, defaultImageModel: e.target.value })}
+          className="w-full bg-dark-900/60 border border-dark-600 rounded px-1 py-1 text-[10px] text-gray-200 text-center focus:outline-none focus:border-banana-500/50 cursor-pointer appearance-none"
+          title={apiConfig.defaultImageModel}
+        >
+          {options.map((m) => (
+            <option key={m} value={m}>{getModelDisplayName(m)}</option>
+          ))}
+        </select>
+        <span
+          className={`text-[10px] leading-tight ${
+            balanceAmount !== null ? "text-banana-400" : "text-gray-500"
+          }`}
+          title={balanceHint}
+        >
+          {shortBalance}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="px-3 py-3 border-t border-dark-700">
       <div className="rounded-lg border border-dark-700 bg-dark-900/40 p-3">
@@ -143,7 +185,7 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
         >
           {options.map((m) => (
             <option key={m} value={m}>
-              {m}
+              {getModelDisplayName(m)}
             </option>
           ))}
         </select>
@@ -215,5 +257,6 @@ export const ModelSwitcherFooter = React.memo(ModelSwitcherFooterInner, (prev, n
   prev.refreshTick === next.refreshTick &&
   prev.hasActiveFeature === next.hasActiveFeature &&
   prev.authUser === next.authUser &&
-  prev.authLoading === next.authLoading
+  prev.authLoading === next.authLoading &&
+  prev.compact === next.compact
 );
