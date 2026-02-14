@@ -244,16 +244,6 @@ const SidebarInner: React.FC<SidebarProps> = ({
         )}
       </div>
 
-      {/* Model switcher footer in panel */}
-      <ModelSwitcherFooter
-        apiConfig={apiConfig}
-        onUpdateApiConfig={onUpdateApiConfig}
-        refreshTick={balanceRefreshTick}
-        hasActiveFeature={currentSettings.selectedModelId !== null || currentSettings.autoUseLastImage}
-        authUser={authUser}
-        authLoading={authLoading}
-        onLogout={onLogout}
-      />
     </div>
   );
 
