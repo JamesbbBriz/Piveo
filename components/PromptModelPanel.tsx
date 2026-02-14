@@ -1,7 +1,8 @@
 import React, { useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { ModelCharacter, ProductImage, SessionSettings } from "../types";
+import { AspectRatio, ModelCharacter, ProductImage, ProductScale, SessionSettings } from "../types";
 import { generateModelCharacter } from "../services/gemini";
+import { getSupportedAspectRatios, getSupportedSizeForAspect } from "../services/sizeUtils";
 import { Icon } from "./Icon";
 
 interface PromptModelPanelProps {
@@ -297,6 +298,49 @@ const PromptModelPanelInner: React.FC<PromptModelPanelProps> = ({
               <Icon name="check-circle" /> 切换连续编辑
             </button>
           )}
+
+          <div className="hidden sm:block w-px h-7 bg-dark-600" />
+
+          {/* Aspect Ratio */}
+          <div className="flex items-center gap-1.5 rounded-lg border border-dark-700 bg-dark-800/50 px-2.5 py-1.5">
+            <span className="text-[11px] text-gray-400 shrink-0">画幅</span>
+            <select
+              value={settings.aspectRatio}
+              onChange={(e) => {
+                const ratio = e.target.value as AspectRatio;
+                onUpdateSettings({ ...settings, aspectRatio: ratio, batchSizes: [getSupportedSizeForAspect(ratio)] });
+              }}
+              className="h-7 bg-dark-800 border border-dark-600 rounded-md px-1.5 text-[11px] text-gray-200 focus:outline-none focus:border-banana-500/50 cursor-pointer"
+            >
+              {getSupportedAspectRatios().map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Product Scale */}
+          <div className="flex items-center gap-1.5 rounded-lg border border-dark-700 bg-dark-800/50 px-2.5 py-1.5">
+            <span className="text-[11px] text-gray-400 shrink-0">显眼度</span>
+            <div className="flex gap-1">
+              {([
+                [ProductScale.Small, "低调"],
+                [ProductScale.Standard, "平衡"],
+                [ProductScale.Large, "突出"],
+              ] as const).map(([scale, label]) => (
+                <button
+                  key={scale}
+                  onClick={() => onUpdateSettings({ ...settings, productScale: scale })}
+                  className={`h-7 px-2 rounded-md text-[10px] font-medium transition-colors ${
+                    settings.productScale === scale
+                      ? "bg-banana-500 text-dark-900 border border-banana-500"
+                      : "bg-dark-700 text-gray-300 border border-dark-600 hover:border-gray-500"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="w-full xl:w-auto xl:min-w-[320px] rounded-lg border border-dark-600 bg-dark-800/60 px-3 py-2">
