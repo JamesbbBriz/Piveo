@@ -5,7 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { ChatMessage } from './components/ChatMessage';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import { Icon } from './components/Icon';
-import { AspectRatio, BatchJob, BatchJobStatus, BatchSlot, BatchVersion, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter, ProductCatalogItem } from './types';
+import { AspectRatio, BatchJob, BatchJobStatus, BatchSceneType, BatchSlot, BatchVersion, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter, ProductCatalogItem } from './types';
 import { initPersistentStorage, loadBatchJobs, loadSessions, loadTemplates, loadModels, loadProducts, saveBatchJobs, saveSessions, saveTemplates, saveModels, saveProducts, clearAll, backupSessionsSync } from './services/storage';
 import { generateResponse, enhancePrompt, type GenerateResponseResult } from './services/gemini';
 import { DEFAULT_ASPECT_RATIO } from './constants';
@@ -14,7 +14,7 @@ import { DefaultPreferences, loadDefaultPreferences, saveDefaultPreferences } fr
 import { AssetsModal, type AssetItem } from './components/AssetsModal';
 import { ErrorDetailsModal, type ErrorDetails } from './components/ErrorDetailsModal';
 import { MaskEditorModal, type MaskEditorHistoryItem } from './components/MaskEditorModal';
-import { imagesEdits, imageObjToDataUrl, ResponseFormat } from './services/openaiImages';
+import { imagesEdits, imagesGenerations, imageObjToDataUrl, ResponseFormat } from './services/openaiImages';
 import { filterSizesByAspect, getSupportedAspectRatios, getSupportedSizeForAspect } from './services/sizeUtils';
 import { PromptModelPanel } from './components/PromptModelPanel';
 import { SystemPromptBar } from './components/SystemPromptBar';
@@ -797,57 +797,73 @@ const App: React.FC = () => {
     slotId: string;
     slotLabel: string;
     slotPrompt: string;
-    referenceImage: string | null;
+    slotType: BatchSceneType;
     productImage: string | null;
     modelImage: string | null;
   }): Promise<BatchVersion[]> => {
     if (!currentSession) return [];
-    const size = aspectRatioToSize(currentSession.settings.aspectRatio);
-    const responseFormat: ImageResponseFormat = "url";
-    const result = await generateResponse(
-      params.slotPrompt,
-      params.referenceImage,
-      params.modelImage,
-      params.productImage,
-      [],
-      currentSession.settings,
+
+    const settings = currentSession.settings;
+    const currentModel = getEffectiveApiConfig().defaultImageModel;
+    const size = aspectRatioToSize(settings.aspectRatio);
+
+    // —— 1. 构建图片列表：产品图 + 模特图（仅 model/custom 槽位） ——
+    const images: string[] = [];
+    if (params.productImage) images.push(params.productImage);
+    const needsModel = params.slotType === "model" || params.slotType === "custom";
+    if (needsModel && params.modelImage) images.push(params.modelImage);
+
+    // —— 2. 构建 prompt：系统提示词 + 图片说明 + 用户指令 ——
+    const systemText = settings.systemPrompt?.trim()
+      ? `系统指令：\n${settings.systemPrompt.trim()}\n\n`
+      : "";
+
+    let imageContext = "";
+    if (params.productImage && needsModel && params.modelImage) {
+      imageContext = "\n图片说明：提供了产品图和模特参考图。产品图是核心参考——请严格还原产品的外观、颜色、材质与细节。模特图仅用于人物外貌一致性参考。";
+    } else if (params.productImage) {
+      imageContext = "\n图片说明：提供了产品实物图，请严格还原产品的外观、颜色、材质与细节。";
+    }
+
+    const promptUsed = `${systemText}${imageContext}\n${params.slotPrompt}`.trim();
+
+    // —— 3. 直接调 imagesGenerations，不走聊天的 generateResponse ——
+    const resp = await imagesGenerations(
       {
+        prompt: promptUsed,
         n: 1,
+        response_format: ResponseFormat.Url,
         size,
-        responseFormat,
-        disableAutoUseLastImage: true,
-        forceIncludeProductImage: true,
-        signal: batchAbortRef.current?.signal,
-      }
+        image: images.length ? images : undefined,
+      },
+      { signal: batchAbortRef.current?.signal }
     );
 
-    // 转换临时 URL 为持久化 data URL
+    // —— 4. 转换结果 ——
     const generated: BatchVersion[] = await Promise.all(
-      result.images.map(async (url, idx) => {
-        let persistentUrl = url;
-        try {
-          persistentUrl = await urlToDataUrl(url);
-        } catch (e) {
-          console.warn('批量任务图片转换失败，使用原 URL:', e);
-        }
-
-        return {
-          id: uuidv4(),
-          slotId: params.slotId,
-          index: idx + 1,
-          imageUrl: persistentUrl,
-          model: result.modelUsed || apiConfig.defaultImageModel,
-          promptUsed: result.promptUsed,
-          size: result.sizeUsed,
-          createdAt: nowTs(),
-          source: "generate",
-          isPrimary: idx === 0,
-        };
-      })
+      (resp.data || [])
+        .map((o) => (o ? imageObjToDataUrl(o) : null))
+        .filter((u): u is string => Boolean(u))
+        .map(async (url, idx) => {
+          let persistentUrl = url;
+          try { persistentUrl = await urlToDataUrl(url); }
+          catch (e) { console.warn('批量任务图片转换失败:', e); }
+          return {
+            id: uuidv4(),
+            slotId: params.slotId,
+            index: idx + 1,
+            imageUrl: persistentUrl,
+            model: resp.model_used || currentModel,
+            promptUsed,
+            size,
+            createdAt: nowTs(),
+            source: "generate" as const,
+            isPrimary: idx === 0,
+          };
+        })
     );
-
     return generated;
-  }, [apiConfig.defaultImageModel, currentSession]);
+  }, [currentSession]);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1605,7 +1621,7 @@ const App: React.FC = () => {
         slotId,
         slotLabel: slot.title,
         slotPrompt,
-        referenceImage: job.referenceImageUrl || null,
+        slotType: slot.type,
         productImage: job.productImageUrl || null,
         modelImage: job.modelImageUrl || null,
       });
@@ -1713,7 +1729,7 @@ const App: React.FC = () => {
           slotId: slot.id,
           slotLabel: slot.title,
           slotPrompt,
-          referenceImage: job.referenceImageUrl || null,
+          slotType: slot.type,
           productImage: job.productImageUrl || null,
           modelImage: job.modelImageUrl || null,
         });
