@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BatchJob, BatchJobStatus, BatchSlot, BatchVersion, ModelCharacter, ProductCatalogItem } from "../types";
 import { Icon } from "./Icon";
 import { ImagePreviewModal } from "./ImagePreviewModal";
@@ -35,6 +35,7 @@ interface BatchJobsPanelProps {
   onRunAllSlots?: (jobId: string, mode: "pending_only" | "all") => void;
   onCreateJob?: () => void;
   onUpdateJobBasePrompt?: (jobId: string, basePrompt: string) => void;
+  onRenameJob: (jobId: string, newTitle: string) => void;
   onAddSlots?: (jobId: string) => void;
   products?: ProductCatalogItem[];
 }
@@ -79,6 +80,16 @@ const fmtTime = (ts?: number): string => {
   });
 };
 
+const fmtShort = (ts?: number): string => {
+  if (!ts) return "-";
+  return new Date(ts).toLocaleString([], {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+};
+
 const getActiveVersion = (slot: BatchSlot): BatchVersion | null => {
   if (!slot.versions.length) return null;
   const primary = slot.versions.find((v) => v.isPrimary);
@@ -110,6 +121,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   onRunAllSlots,
   onCreateJob,
   onUpdateJobBasePrompt,
+  onRenameJob,
   onAddSlots,
   products,
 }) => {
@@ -120,6 +132,19 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   const [awaitingModelPaste, setAwaitingModelPaste] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
   const [isProductPickerOpen, setIsProductPickerOpen] = useState(false);
+  const [menuOpenJobId, setMenuOpenJobId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpenJobId) return;
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpenJobId(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [menuOpenJobId]);
 
   const filteredJobs = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -214,33 +239,35 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   return (
     <>
     <div className="flex-1 min-h-0 h-full flex overflow-hidden">
-      <aside className="w-[320px] border-r border-dark-700 bg-dark-800/70 flex flex-col min-h-0">
-        <div className="p-3 border-b border-dark-700 space-y-2">
+      <aside className="w-[260px] border-r border-dark-700 bg-dark-800/70 flex flex-col min-h-0">
+        <div className="px-2 py-2 border-b border-dark-700 space-y-1.5">
           <div className="text-sm font-semibold text-gray-100 flex items-center gap-2">
             <Icon name="layer-group" />
             套图工作台
           </div>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-full h-8 rounded-md border border-dark-600 bg-dark-900 px-2 text-xs text-gray-200 placeholder-gray-500"
-            placeholder="搜索任务/商品/关键词"
-          />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as "all" | BatchJobStatus)}
-            className="w-full h-8 rounded-md border border-dark-600 bg-dark-900 px-2 text-xs text-gray-200"
-          >
-            {STATUS_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-1.5">
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="flex-1 min-w-0 h-7 rounded-md border border-dark-600 bg-dark-900 px-2 text-xs text-gray-200 placeholder-gray-500"
+              placeholder="搜索任务"
+            />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as "all" | BatchJobStatus)}
+              className="h-7 rounded-md border border-dark-600 bg-dark-900 px-1.5 text-xs text-gray-200 shrink-0"
+            >
+              {STATUS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
           {onCreateJob && (
             <button
               onClick={onCreateJob}
-              className="w-full h-8 rounded-md border border-banana-500/40 bg-banana-500/10 text-banana-400 text-xs font-medium hover:bg-banana-500/20 transition-colors flex items-center justify-center gap-1.5"
+              className="w-full h-7 rounded-md border border-banana-500/40 bg-banana-500/10 text-banana-400 text-xs font-medium hover:bg-banana-500/20 transition-colors flex items-center justify-center gap-1.5"
             >
               <Icon name="plus" />
               新建套图任务
@@ -248,29 +275,117 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
           )}
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain custom-scrollbar p-2 space-y-2">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain custom-scrollbar py-1 space-y-0.5">
           {filteredJobs.map((job) => {
             const active = selectedJob?.id === job.id;
+            const isMenuOpen = menuOpenJobId === job.id;
             return (
-              <button
+              <div
                 key={job.id}
-                onClick={() => selectJobAndFocus(job.id)}
-                className={`w-full text-left rounded-lg border p-2 transition-colors ${
+                className={`group relative px-2 py-1.5 rounded-md transition-colors cursor-pointer ${
                   active
-                    ? "border-banana-500 bg-banana-500/10"
-                    : "border-dark-700 bg-dark-900/40 hover:border-dark-500"
+                    ? "bg-dark-700"
+                    : "hover:bg-dark-800"
                 }`}
+                onClick={() => selectJobAndFocus(job.id)}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-xs text-gray-100 truncate">{job.title}</div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full border ${statusClass(job.status)}`}>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <div className="text-xs text-gray-100 truncate flex-1 min-w-0">{job.title}</div>
+                  <span className={`text-[10px] px-1.5 py-px rounded-full border shrink-0 ${statusClass(job.status)}`}>
                     {statusLabel(job.status)}
                   </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpenJobId(isMenuOpen ? null : job.id);
+                    }}
+                    className={`shrink-0 w-5 h-5 flex items-center justify-center rounded text-gray-400 hover:text-gray-200 hover:bg-dark-600 transition-colors ${
+                      isMenuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    }`}
+                  >
+                    <Icon name="ellipsis-vertical" />
+                  </button>
                 </div>
-                <div className="mt-1 text-[10px] text-gray-500 truncate">
-                  {job.slots.length} 个槽位 · 更新 {fmtTime(job.updatedAt)}
+                <div className="text-[10px] text-gray-500 truncate mt-0.5">
+                  {job.slots.length}槽 · {fmtShort(job.updatedAt)}
                 </div>
-              </button>
+
+                {isMenuOpen && (
+                  <div
+                    ref={menuRef}
+                    className="absolute right-1 top-full mt-0.5 z-50 w-32 rounded-md border border-dark-600 bg-dark-800 shadow-xl py-1"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-dark-700 transition-colors"
+                      onClick={() => {
+                        setMenuOpenJobId(null);
+                        const newTitle = window.prompt("重命名任务", job.title);
+                        if (newTitle && newTitle.trim()) {
+                          onRenameJob(job.id, newTitle.trim());
+                        }
+                      }}
+                    >
+                      重命名
+                    </button>
+                    <button
+                      className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-dark-700 transition-colors"
+                      onClick={() => {
+                        setMenuOpenJobId(null);
+                        onDuplicateJob(job.id);
+                      }}
+                    >
+                      复制任务
+                    </button>
+                    {job.status !== "archived" && job.status !== "deleted" && (
+                      <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-dark-700 transition-colors"
+                        onClick={() => {
+                          setMenuOpenJobId(null);
+                          onArchiveJob(job.id);
+                        }}
+                      >
+                        归档
+                      </button>
+                    )}
+                    {job.status === "archived" && (
+                      <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-dark-700 transition-colors"
+                        onClick={() => {
+                          setMenuOpenJobId(null);
+                          onRestoreJob(job.id);
+                        }}
+                      >
+                        恢复
+                      </button>
+                    )}
+                    {job.status !== "deleted" && (
+                      <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-red-300 hover:bg-dark-700 transition-colors"
+                        onClick={() => {
+                          setMenuOpenJobId(null);
+                          if (window.confirm(`确定要删除任务"${job.title}"吗？`)) {
+                            onSoftDeleteJob(job.id);
+                          }
+                        }}
+                      >
+                        删除
+                      </button>
+                    )}
+                    {job.status === "deleted" && (
+                      <button
+                        className="w-full text-left px-3 py-1.5 text-xs text-gray-200 hover:bg-dark-700 transition-colors"
+                        onClick={() => {
+                          setMenuOpenJobId(null);
+                          onRecoverDeletedJob(job.id);
+                        }}
+                      >
+                        从回收站恢复
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             );
           })}
           {filteredJobs.length === 0 && <div className="text-xs text-gray-500 py-10 text-center">没有匹配的套图任务</div>}
@@ -303,17 +418,13 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
           <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">暂无套图任务</div>
         ) : (
           <>
-            <div className="border-b border-dark-700 p-4 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-base text-gray-100 font-semibold truncate">{selectedJob.title}</div>
-                <div className="mt-1 text-[11px] text-gray-500">
-                  创建 {fmtTime(selectedJob.createdAt)} · 更新 {fmtTime(selectedJob.updatedAt)} · {selectedJob.slots.length} 槽位
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
+            {/* 整体要求 */}
+            <div className="border-b border-dark-700 px-4 py-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[11px] text-gray-400">补充说明 <span className="text-red-400">*</span></div>
                 {onRunAllSlots && selectedJob.status !== "deleted" && selectedJob.status !== "archived" && selectedJob.status !== "running" && (
                   <button
-                    disabled={Boolean(isBusy)}
+                    disabled={Boolean(isBusy) || !selectedJob.basePrompt?.trim()}
                     onClick={() => {
                       const hasCompleted = selectedJob.slots.some((s) => s.status === "completed");
                       if (hasCompleted) {
@@ -323,64 +434,18 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                         onRunAllSlots(selectedJob.id, "all");
                       }
                     }}
-                    className="px-3 py-1.5 text-xs rounded-md border border-banana-500 bg-banana-500/20 text-banana-300 font-medium hover:bg-banana-500/30 disabled:opacity-50 transition-colors"
+                    title={!selectedJob.basePrompt?.trim() ? "请先填写补充说明" : undefined}
+                    className="px-3 py-1 text-xs rounded-md border border-banana-500 bg-banana-500/20 text-banana-300 font-medium hover:bg-banana-500/30 disabled:opacity-50 transition-colors"
                   >
                     <Icon name="play" className="mr-1" />
                     开始工作
                   </button>
                 )}
-                <button
-                  onClick={() => onDuplicateJob(selectedJob.id)}
-                  className="px-2.5 py-1.5 text-xs rounded-md border border-dark-600 bg-dark-900 text-gray-200 hover:bg-dark-700"
-                >
-                  复制任务
-                </button>
-                {selectedJob.status !== "archived" && selectedJob.status !== "deleted" && (
-                  <button
-                    onClick={() => onArchiveJob(selectedJob.id)}
-                    className="px-2.5 py-1.5 text-xs rounded-md border border-dark-600 bg-dark-900 text-gray-200 hover:bg-dark-700"
-                  >
-                    归档
-                  </button>
-                )}
-                {selectedJob.status === "archived" && (
-                  <button
-                    onClick={() => onRestoreJob(selectedJob.id)}
-                    className="px-2.5 py-1.5 text-xs rounded-md border border-dark-600 bg-dark-900 text-gray-200 hover:bg-dark-700"
-                  >
-                    恢复
-                  </button>
-                )}
-                {selectedJob.status !== "deleted" && (
-                  <button
-                    onClick={() => {
-                      if (window.confirm(`确定要删除任务"${selectedJob.title}"吗？`)) {
-                        onSoftDeleteJob(selectedJob.id);
-                      }
-                    }}
-                    className="px-2.5 py-1.5 text-xs rounded-md border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20"
-                  >
-                    删除
-                  </button>
-                )}
-                {selectedJob.status === "deleted" && (
-                  <button
-                    onClick={() => onRecoverDeletedJob(selectedJob.id)}
-                    className="px-2.5 py-1.5 text-xs rounded-md border border-dark-600 bg-dark-900 text-gray-200 hover:bg-dark-700"
-                  >
-                    从回收站恢复
-                  </button>
-                )}
               </div>
-            </div>
-
-            {/* 基础提示词 */}
-            <div className="border-b border-dark-700 px-4 py-3">
-              <div className="text-[11px] text-gray-400 mb-1.5">基础提示词</div>
               <textarea
                 value={selectedJob.basePrompt || ""}
                 onChange={(e) => onUpdateJobBasePrompt?.(selectedJob.id, e.target.value)}
-                placeholder="输入整体要求，例如：高端电商风格，突出产品质感..."
+                placeholder="对这组套图的额外说明，例如：丝巾搭配职业装、都市通勤场景..."
                 rows={2}
                 className="w-full rounded-md border border-dark-600 bg-dark-900 px-3 py-2 text-xs text-gray-200 placeholder-gray-500 resize-none focus:border-banana-500/50 focus:outline-none"
                 disabled={selectedJob.status === "deleted"}

@@ -1428,6 +1428,14 @@ const App: React.FC = () => {
     }));
   }, [updateBatchJobById]);
 
+  const handleRenameBatchJob = useCallback((jobId: string, newTitle: string) => {
+    updateBatchJobById(jobId, (job) => ({
+      ...job,
+      title: newTitle,
+      updatedAt: nowTs(),
+    }));
+  }, [updateBatchJobById]);
+
   const handleOpenAddSlots = useCallback((jobId: string) => {
     setAddSlotsTargetJobId(jobId);
     setIsBatchSetOpen(true);
@@ -2424,6 +2432,7 @@ const App: React.FC = () => {
               }}
               onCreateJob={openBatchSetModal}
               onUpdateJobBasePrompt={handleUpdateBatchJobBasePrompt}
+              onRenameJob={handleRenameBatchJob}
               onAddSlots={handleOpenAddSlots}
               products={products}
             />
