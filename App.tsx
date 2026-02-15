@@ -808,10 +808,11 @@ const App: React.FC = () => {
     const size = aspectRatioToSize(settings.aspectRatio);
 
     // —— 1. 构建图片列表：产品图 + 模特图（仅 model/custom 槽位） ——
+    // 全部转为 data URL，避免 URL 与 base64 混合导致 API 400
     const images: string[] = [];
-    if (params.productImage) images.push(params.productImage);
+    if (params.productImage) images.push(await urlToDataUrl(params.productImage));
     const needsModel = params.slotType === "model" || params.slotType === "custom";
-    if (needsModel && params.modelImage) images.push(params.modelImage);
+    if (needsModel && params.modelImage) images.push(await urlToDataUrl(params.modelImage));
 
     // —— 2. 构建 prompt：系统提示词 + 图片说明 + 用户指令 ——
     const systemText = settings.systemPrompt?.trim()
