@@ -5,6 +5,8 @@ import { ImagePreviewModal } from "./ImagePreviewModal";
 import { ModelPickerModal } from "./ModelPickerModal";
 import { ProductPickerModal } from "./ProductPickerModal";
 import { fileToDataUrl } from "../services/imageData";
+import { DownloadOptionsModal } from "./DownloadOptionsModal";
+import { downloadImageWithFormat, loadDownloadOptions, saveDownloadOptions, DownloadOptions } from "../services/imageDownload";
 
 interface BatchJobsPanelProps {
   jobs: BatchJob[];
@@ -137,6 +139,19 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   const [awaitingModelPaste, setAwaitingModelPaste] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
   const [isProductPickerOpen, setIsProductPickerOpen] = useState(false);
+  const [downloadOptions, setDownloadOptions] = useState<DownloadOptions>(loadDownloadOptions);
+  const [pendingDownload, setPendingDownload] = useState<{ version: BatchVersion } | null>(null);
+
+  const confirmDownload = async () => {
+    if (!pendingDownload?.version.imageUrl) return;
+    saveDownloadOptions(downloadOptions);
+    await downloadImageWithFormat(pendingDownload.version.imageUrl, {
+      basename: `topseller-batch-${pendingDownload.version.id}`,
+      format: downloadOptions.format,
+      quality: downloadOptions.quality,
+    });
+    setPendingDownload(null);
+  };
   const [menuOpenJobId, setMenuOpenJobId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -682,7 +697,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                               设为主图
                             </button>
                             <button
-                              onClick={() => onDownloadVersion(current)}
+                              onClick={() => setPendingDownload({ version: current })}
                               className="px-2 py-1 text-[10px] rounded border border-dark-600 bg-dark-900 text-gray-200 hover:bg-dark-700"
                             >
                               下载
@@ -841,6 +856,13 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
         onClose={() => setIsProductPickerOpen(false)}
       />
     )}
+    <DownloadOptionsModal
+      isOpen={pendingDownload !== null}
+      options={downloadOptions}
+      onChange={setDownloadOptions}
+      onCancel={() => setPendingDownload(null)}
+      onConfirm={() => void confirmDownload()}
+    />
   </>
   );
 };
