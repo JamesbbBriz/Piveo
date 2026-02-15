@@ -11,6 +11,7 @@ interface ChatMessageProps {
   onVariation: (type: string, imageUrl: string) => void;
   onMaskEdit?: (baseImageUrl: string) => void;
   onUseAsReference?: (imageUrl: string) => void;
+  onBatchFromImage?: (imageUrl: string) => void;
 }
 
 const ChatMessageInner: React.FC<ChatMessageProps> = ({
@@ -19,6 +20,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
   onVariation,
   onMaskEdit,
   onUseAsReference,
+  onBatchFromImage,
 }) => {
   const isUser = message.role === 'user';
   // 触控可达：点击图片时 toggle 操作按钮，同时保留桌面端 hover 效果
@@ -123,6 +125,15 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                             title="设为参考图"
                           >
                             <Icon name="image" />
+                          </button>
+                        )}
+                        {!isUser && onBatchFromImage && (
+                          <button
+                            onClick={() => onBatchFromImage(part.imageUrl!)}
+                            className="bg-dark-800 text-white p-2 rounded-full hover:bg-dark-600 transition-colors shadow-lg"
+                            title="生成套图"
+                          >
+                            <Icon name="layer-group" />
                           </button>
                         )}
                       </div>

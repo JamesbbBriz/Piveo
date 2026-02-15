@@ -801,6 +801,7 @@ const App: React.FC = () => {
     slotType: BatchSceneType;
     productImage: string | null;
     modelImage: string | null;
+    referenceImage: string | null;
   }): Promise<BatchVersion[]> => {
     if (!currentSession) return [];
 
@@ -808,12 +809,17 @@ const App: React.FC = () => {
     const currentModel = getEffectiveApiConfig().defaultImageModel;
     const size = aspectRatioToSize(settings.aspectRatio);
 
-    // —— 1. 构建图片列表：产品图 + 模特图（仅 model/custom 槽位） ——
+    // —— 1. 构建图片列表 ——
     // 全部转为 data URL，避免 URL 与 base64 混合导致 API 400
     const images: string[] = [];
-    if (params.productImage) images.push(await urlToDataUrl(params.productImage));
-    const needsModel = params.slotType === "model" || params.slotType === "custom";
-    if (needsModel && params.modelImage) images.push(await urlToDataUrl(params.modelImage));
+    if (params.referenceImage) {
+      // 参考图模式：只用参考图，不用产品图/模特图
+      images.push(await urlToDataUrl(params.referenceImage));
+    } else {
+      if (params.productImage) images.push(await urlToDataUrl(params.productImage));
+      const needsModel = params.slotType === "model" || params.slotType === "custom";
+      if (needsModel && params.modelImage) images.push(await urlToDataUrl(params.modelImage));
+    }
 
     // —— 2. 构建 prompt：系统提示词 + 图片说明 + 用户指令 ——
     const systemText = settings.systemPrompt?.trim()
@@ -821,10 +827,15 @@ const App: React.FC = () => {
       : "";
 
     let imageContext = "";
-    if (params.productImage && needsModel && params.modelImage) {
-      imageContext = "\n图片说明：提供了产品图和模特参考图。产品图是核心参考——请严格还原产品的外观、颜色、材质与细节。模特图仅用于人物外貌一致性参考。";
-    } else if (params.productImage) {
-      imageContext = "\n图片说明：提供了产品实物图，请严格还原产品的外观、颜色、材质与细节。";
+    if (params.referenceImage) {
+      imageContext = "\n图片说明：提供了参考图。请严格参照参考图的风格、构图、色调和整体氛围，生成同系列的套图变体。保持视觉一致性，仅按场景描述调整角度和环境。";
+    } else {
+      const needsModel = params.slotType === "model" || params.slotType === "custom";
+      if (params.productImage && needsModel && params.modelImage) {
+        imageContext = "\n图片说明：提供了产品图和模特参考图。产品图是核心参考——请严格还原产品的外观、颜色、材质与细节。模特图仅用于人物外貌一致性参考。";
+      } else if (params.productImage) {
+        imageContext = "\n图片说明：提供了产品实物图，请严格还原产品的外观、颜色、材质与细节。";
+      }
     }
 
     const promptUsed = `${systemText}${imageContext}\n${params.slotPrompt}`.trim();
@@ -1344,6 +1355,11 @@ const App: React.FC = () => {
     setIsBatchSetOpen(true);
   }, [isGenerating]);
 
+  const handleBatchFromImage = useCallback((imageUrl: string) => {
+    setSelectedImage(imageUrl);
+    openBatchSetModal();
+  }, [openBatchSetModal]);
+
   const handleBatchSetSubmit = useCallback(async (items: BatchSetItem[]) => {
     if (!currentSession || isBatchGenerating || items.length === 0) return;
 
@@ -1430,7 +1446,7 @@ const App: React.FC = () => {
 
   const handleUpdateBatchJobImages = useCallback((
     jobId: string,
-    updates: { productImageUrl?: string | null; modelImageUrl?: string | null }
+    updates: { productImageUrl?: string | null; modelImageUrl?: string | null; referenceImageUrl?: string | null }
   ) => {
     updateBatchJobById(jobId, (job) => ({
       ...job,
@@ -1626,6 +1642,7 @@ const App: React.FC = () => {
         slotType: slot.type,
         productImage: job.productImageUrl || null,
         modelImage: job.modelImageUrl || null,
+        referenceImage: job.referenceImageUrl || null,
       });
 
       if (!generated.length) throw new Error("未返回图片");
@@ -1734,6 +1751,7 @@ const App: React.FC = () => {
           slotType: slot.type,
           productImage: job.productImageUrl || null,
           modelImage: job.modelImageUrl || null,
+          referenceImage: job.referenceImageUrl || null,
         });
 
         if (!generated.length) throw new Error("未返回图片");
@@ -2357,6 +2375,7 @@ const App: React.FC = () => {
                       onVariation={handleVariation}
                       onMaskEdit={openMaskEditFromChat}
                       onUseAsReference={setSelectedImage}
+                      onBatchFromImage={handleBatchFromImage}
                     />
                   ))
                 )}
