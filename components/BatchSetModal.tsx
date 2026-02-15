@@ -9,6 +9,7 @@ export interface BatchSetRule {
   scene: BatchSceneType;
   count: number;
   note: string;
+  checkedPoses: string[];
 }
 
 export interface BatchSetItem {
@@ -31,14 +32,38 @@ const SCENE_OPTIONS: Array<{ value: BatchSceneType; label: string; hint: string 
   { value: "custom", label: "自定义", hint: "由你定义画面类型" },
 ];
 
+const MODEL_POSES = [
+  { id: "standing_front", label: "全身站姿", directive: "全身站姿正面，展示完整穿搭效果" },
+  { id: "side_glance", label: "侧身回眸", directive: "侧身回眸，展现服装侧面轮廓与动态美感" },
+  { id: "seated", label: "坐姿", directive: "坐姿休闲，展示服装在放松状态下的自然垂感" },
+  { id: "walking", label: "行走抓拍", directive: "行走中抓拍，展现服装的飘逸感和运动活力" },
+  { id: "upper_closeup", label: "半身特写", directive: "半身特写，聚焦上半身搭配细节和面部表情" },
+  { id: "leaning", label: "倚靠姿态", directive: "倚靠或斜靠姿态，营造时尚杂志感的氛围" },
+];
+
+const DETAIL_ANGLES = [
+  { id: "front_closeup", label: "正面特写", directive: "正面平视特写，展示产品整体外观和关键工艺" },
+  { id: "overhead_45", label: "45°俯拍", directive: "45度俯拍角度，展示产品立体轮廓和层次" },
+  { id: "macro", label: "微距纹理", directive: "微距特写，聚焦材质纹理、缝线和工艺细节" },
+  { id: "side_profile", label: "侧面轮廓", directive: "侧面角度，展示产品轮廓线条和厚度" },
+  { id: "in_use", label: "使用场景", directive: "手持或佩戴特写，展示产品在使用中的细节" },
+];
+
 const sceneLabelOf = (scene: BatchSceneType): string =>
   SCENE_OPTIONS.find((s) => s.value === scene)?.label || "自定义";
+
+const defaultCheckedPoses = (scene: BatchSceneType, count: number): string[] => {
+  const presets = scene === "model" ? MODEL_POSES : scene === "detail" ? DETAIL_ANGLES : null;
+  if (!presets) return [];
+  return presets.slice(0, count).map((p) => p.id);
+};
 
 const createRule = (scene: BatchSceneType = "model", count = 1): BatchSetRule => ({
   id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   scene,
   count,
   note: "",
+  checkedPoses: defaultCheckedPoses(scene, count),
 });
 
 const clampCount = (v: number) => {
@@ -56,12 +81,25 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
   useModalA11y(isOpen, modalRef, onClose);
 
   const totalCount = useMemo(
-    () => rules.reduce((sum, r) => sum + clampCount(r.count), 0),
+    () =>
+      rules.reduce((sum, r) => {
+        const presets = r.scene === "model" ? MODEL_POSES : r.scene === "detail" ? DETAIL_ANGLES : null;
+        return sum + (presets ? r.checkedPoses.length : clampCount(r.count));
+      }, 0),
     [rules]
   );
 
   const updateRule = (id: string, patch: Partial<BatchSetRule>) => {
-    setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    setRules((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const updated = { ...r, ...patch };
+        if (patch.scene && patch.scene !== r.scene) {
+          updated.checkedPoses = defaultCheckedPoses(patch.scene, updated.count);
+        }
+        return updated;
+      })
+    );
   };
 
   const removeRule = (id: string) => {
@@ -75,13 +113,28 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
   const handleSubmit = () => {
     const items: BatchSetItem[] = [];
     for (const rule of rules) {
-      const count = clampCount(rule.count);
-      for (let i = 0; i < count; i++) {
-        items.push({
-          scene: rule.scene,
-          sceneLabel: sceneLabelOf(rule.scene),
-          note: rule.note.trim(),
-        });
+      const presets =
+        rule.scene === "model" ? MODEL_POSES : rule.scene === "detail" ? DETAIL_ANGLES : null;
+
+      if (presets && rule.checkedPoses.length > 0) {
+        for (const poseId of rule.checkedPoses) {
+          const pose = presets.find((p) => p.id === poseId);
+          if (!pose) continue;
+          items.push({
+            scene: rule.scene,
+            sceneLabel: `${sceneLabelOf(rule.scene)} · ${pose.label}`,
+            note: [pose.directive, rule.note.trim()].filter(Boolean).join("；"),
+          });
+        }
+      } else {
+        const count = clampCount(rule.count);
+        for (let i = 0; i < count; i++) {
+          items.push({
+            scene: rule.scene,
+            sceneLabel: sceneLabelOf(rule.scene),
+            note: rule.note.trim(),
+          });
+        }
       }
     }
     if (items.length === 0) return;
@@ -124,6 +177,17 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
 
           {rules.map((rule, index) => {
             const sceneMeta = SCENE_OPTIONS.find((s) => s.value === rule.scene);
+            const presets =
+              rule.scene === "model" ? MODEL_POSES : rule.scene === "detail" ? DETAIL_ANGLES : null;
+            const hasPoseCheckboxes = !!presets;
+
+            const togglePose = (poseId: string) => {
+              const next = rule.checkedPoses.includes(poseId)
+                ? rule.checkedPoses.filter((id) => id !== poseId)
+                : [...rule.checkedPoses, poseId];
+              updateRule(rule.id, { checkedPoses: next });
+            };
+
             return (
               <div key={rule.id} className="rounded-xl border border-dark-700 bg-dark-900/40 p-3">
                 <div className="flex items-center justify-between mb-2">
@@ -136,7 +200,7 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
                     删除
                   </button>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-[140px_100px_1fr] gap-2">
+                <div className={`grid grid-cols-1 ${hasPoseCheckboxes ? "md:grid-cols-[140px_1fr]" : "md:grid-cols-[140px_100px_1fr]"} gap-2`}>
                   <label className="text-[11px] text-gray-400">
                     类型
                     <select
@@ -151,17 +215,19 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
                       ))}
                     </select>
                   </label>
-                  <label className="text-[11px] text-gray-400">
-                    数量
-                    <input
-                      type="number"
-                      min={1}
-                      max={10}
-                      value={rule.count}
-                      onChange={(e) => updateRule(rule.id, { count: clampCount(Number(e.target.value)) })}
-                      className="mt-1 w-full h-9 rounded-md border border-dark-600 bg-dark-800 px-2 text-xs text-gray-200"
-                    />
-                  </label>
+                  {!hasPoseCheckboxes && (
+                    <label className="text-[11px] text-gray-400">
+                      数量
+                      <input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={rule.count}
+                        onChange={(e) => updateRule(rule.id, { count: clampCount(Number(e.target.value)) })}
+                        className="mt-1 w-full h-9 rounded-md border border-dark-600 bg-dark-800 px-2 text-xs text-gray-200"
+                      />
+                    </label>
+                  )}
                   <label className="text-[11px] text-gray-400">
                     单独要求（可选）
                     <input
@@ -176,6 +242,32 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
                     />
                   </label>
                 </div>
+                {hasPoseCheckboxes && (
+                  <div className="mt-2">
+                    <div className="text-[11px] text-gray-400 mb-1.5">
+                      {rule.scene === "model" ? "姿态" : "角度"}（勾选即生成，每个勾选项 = 1 张图）
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {presets.map((p) => {
+                        const checked = rule.checkedPoses.includes(p.id);
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => togglePose(p.id)}
+                            className={`px-2.5 py-1.5 text-xs rounded-md border transition-colors ${
+                              checked
+                                ? "border-banana-500 bg-banana-500/20 text-banana-400"
+                                : "border-dark-600 bg-dark-800 text-gray-400 hover:text-gray-200 hover:border-dark-500"
+                            }`}
+                          >
+                            {checked ? "✓ " : ""}{p.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
