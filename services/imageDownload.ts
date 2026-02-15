@@ -83,7 +83,7 @@ const blobToFormat = async (blob: Blob, format: DownloadFormat, quality?: number
   const targetType =
     format === "jpg" ? "image/jpeg" : format === "webp" ? "image/webp" : "image/png";
   const sourceType = String(blob.type || "").split(";")[0].trim().toLowerCase();
-  if (sourceType === targetType) {
+  if (sourceType === targetType && format === "png") {
     return blob;
   }
 
