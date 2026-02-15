@@ -110,7 +110,7 @@ export type BatchSceneType = "model" | "flatlay" | "detail" | "white" | "custom"
 
 export type BatchJobStatus = "draft" | "running" | "completed" | "failed" | "archived" | "deleted";
 export type BatchSlotStatus = "pending" | "running" | "completed" | "failed";
-export type BatchVersionSource = "generate" | "rerun" | "mask-edit";
+export type BatchVersionSource = "generate" | "rerun" | "mask-edit" | "refine";
 
 export interface BatchVersion {
   id: string;

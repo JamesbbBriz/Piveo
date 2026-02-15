@@ -38,6 +38,8 @@ interface BatchJobsPanelProps {
   onRenameJob: (jobId: string, newTitle: string) => void;
   onAddSlots?: (jobId: string) => void;
   products?: ProductCatalogItem[];
+  onRefineSlot?: (jobId: string, slotId: string, instruction: string) => void;
+  refiningSlotIds?: Set<string>;
 }
 
 const STATUS_OPTIONS: Array<{ value: "all" | BatchJobStatus; label: string }> = [
@@ -124,10 +126,13 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   onRenameJob,
   onAddSlots,
   products,
+  onRefineSlot,
+  refiningSlotIds,
 }) => {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | BatchJobStatus>("all");
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [refineTexts, setRefineTexts] = useState<Record<string, string>>({});
   const [awaitingProductPaste, setAwaitingProductPaste] = useState(false);
   const [awaitingModelPaste, setAwaitingModelPaste] = useState(false);
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
@@ -759,6 +764,40 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                         </div>
                       </div>
                     </div>
+                    {/* 内联调整输入框 */}
+                    {onRefineSlot && current?.imageUrl && selectedJob.status !== "deleted" && selectedJob.status !== "archived" && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={refineTexts[slot.id] || ""}
+                          onChange={(e) => setRefineTexts((prev) => ({ ...prev, [slot.id]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              const text = (refineTexts[slot.id] || "").trim();
+                              if (!text) return;
+                              onRefineSlot(selectedJob.id, slot.id, text);
+                              setRefineTexts((prev) => ({ ...prev, [slot.id]: "" }));
+                            }
+                          }}
+                          placeholder="输入调整指令，如：背景换成户外、产品颜色更亮..."
+                          disabled={Boolean(isBusy) || Boolean(refiningSlotIds?.has(slot.id))}
+                          className="flex-1 h-8 rounded-md border border-dark-600 bg-dark-900 px-3 text-xs text-gray-200 placeholder-gray-500 focus:border-banana-500/50 focus:outline-none disabled:opacity-50"
+                        />
+                        <button
+                          onClick={() => {
+                            const text = (refineTexts[slot.id] || "").trim();
+                            if (!text) return;
+                            onRefineSlot(selectedJob.id, slot.id, text);
+                            setRefineTexts((prev) => ({ ...prev, [slot.id]: "" }));
+                          }}
+                          disabled={Boolean(isBusy) || Boolean(refiningSlotIds?.has(slot.id)) || !(refineTexts[slot.id] || "").trim()}
+                          className="h-8 px-3 rounded-md border border-banana-500/40 bg-banana-500/10 text-banana-400 text-xs font-medium hover:bg-banana-500/20 disabled:opacity-50 transition-colors shrink-0"
+                        >
+                          {refiningSlotIds?.has(slot.id) ? "优化中..." : "发送"}
+                        </button>
+                      </div>
+                    )}
                   </section>
                 );
               })}

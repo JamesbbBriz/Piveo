@@ -242,6 +242,7 @@ const App: React.FC = () => {
   const [generationProgress, setGenerationProgress] = useState<{ current: number; total: number } | null>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
+  const [refiningSlotIds, setRefiningSlotIds] = useState<Set<string>>(new Set());
   const [batchGenerationProgress, setBatchGenerationProgress] = useState<{
     currentSlot: number;
     totalSlots: number;
@@ -1793,6 +1794,123 @@ const App: React.FC = () => {
     }
   }, [appendBatchActionLog, batchJobs, buildBatchSlotPrompt, currentSession, inputText, isBatchGenerating, runBatchSlotGeneration, updateBatchJobById]);
 
+  // —— 套图槽位内联调整 ——
+  const handleRefineSlot = useCallback(async (jobId: string, slotId: string, instruction: string) => {
+    const job = batchJobs.find((j) => j.id === jobId);
+    const slot = job?.slots.find((s) => s.id === slotId);
+    if (!job || !slot || !currentSession || isBatchGenerating) return;
+    if (job.status === "deleted" || job.status === "archived") return;
+
+    // 找到当前选中版本
+    const activeVersion = slot.versions.find((v) => v.isPrimary)
+      || (slot.activeVersionId && slot.versions.find((v) => v.id === slot.activeVersionId))
+      || slot.versions[slot.versions.length - 1]
+      || null;
+    if (!activeVersion?.imageUrl) return;
+
+    batchAbortRef.current?.abort();
+    batchAbortRef.current = new AbortController();
+    const controller = batchAbortRef.current;
+
+    setIsBatchGenerating(true);
+    setRefiningSlotIds((prev) => new Set(prev).add(slotId));
+    setBatchGenerationProgress({ currentSlot: 1, totalSlots: 1, currentSlotLabel: `${slot.title} 优化调整` });
+
+    updateBatchJobById(jobId, (target) => {
+      const nextSlots = target.slots.map((s) => (s.id === slotId ? { ...s, status: "running" as const, error: undefined } : s));
+      const next = { ...target, slots: nextSlots, status: "running" as const, updatedAt: nowTs() };
+      return appendBatchActionLog(next, "slot_refine_start", { slotId, instruction });
+    });
+
+    try {
+      const currentModel = getEffectiveApiConfig().defaultImageModel;
+      const size = aspectRatioToSize(currentSession.settings.aspectRatio);
+
+      // 仅传选中版本的图片，不传产品图/模特图（已内含）
+      const images = [await urlToDataUrl(activeVersion.imageUrl)];
+
+      // 构建调整 prompt
+      const sceneDirective = getBatchSceneDirective(slot.type as BatchSetItem["scene"]);
+      const promptUsed = [
+        `当前图片类型为「${slot.title}」。${sceneDirective}`,
+        "基于提供的图片进行调整，严格保持产品外观、模特形象等核心元素不变。",
+        `调整要求：${instruction}`,
+        "仅修改调整要求中提到的内容，其余部分尽量保持不变。输出构图完整、主体清晰。",
+      ].join("\n");
+
+      const resp = await imagesGenerations(
+        {
+          prompt: promptUsed,
+          n: 1,
+          response_format: ResponseFormat.Url,
+          size,
+          image: images,
+        },
+        { signal: controller.signal }
+      );
+
+      const generated: BatchVersion[] = await Promise.all(
+        (resp.data || [])
+          .map((o) => (o ? imageObjToDataUrl(o) : null))
+          .filter((u): u is string => Boolean(u))
+          .map(async (url, idx) => {
+            let persistentUrl = url;
+            try { persistentUrl = await urlToDataUrl(url); }
+            catch (e) { console.warn("优化图片转换失败:", e); }
+            return {
+              id: uuidv4(),
+              slotId,
+              index: idx + 1,
+              imageUrl: persistentUrl,
+              model: resp.model_used || currentModel,
+              promptUsed,
+              size,
+              createdAt: nowTs(),
+              source: "refine" as const,
+              parentVersionId: activeVersion.id,
+              isPrimary: idx === 0,
+            };
+          })
+      );
+
+      if (!generated.length) throw new Error("未返回图片");
+      setBalanceRefreshTick((v) => v + 1);
+
+      updateBatchJobById(jobId, (target) => {
+        const nextSlots = target.slots.map((s) => {
+          if (s.id !== slotId) return s;
+          const appended = generated.map((v, idx) => ({ ...v, index: s.versions.length + idx + 1 }));
+          return {
+            ...s,
+            status: "completed" as const,
+            error: undefined,
+            versions: [
+              ...s.versions.map((v) => ({ ...v, isPrimary: false })),
+              ...appended.map((v, idx) => ({ ...v, isPrimary: idx === 0 })),
+            ],
+            activeVersionId: appended[0]?.id || s.activeVersionId,
+          };
+        });
+        const next = { ...target, slots: nextSlots, status: mapSlotStatusToJobStatus(nextSlots), updatedAt: nowTs() };
+        return appendBatchActionLog(next, "slot_refine_success", { slotId, instruction, generatedCount: generated.length });
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      updateBatchJobById(jobId, (target) => {
+        const nextSlots = target.slots.map((s) => (s.id === slotId ? { ...s, status: "failed" as const, error: msg } : s));
+        const next = { ...target, slots: nextSlots, status: mapSlotStatusToJobStatus(nextSlots), updatedAt: nowTs() };
+        return appendBatchActionLog(next, "slot_refine_failed", { slotId, instruction, error: msg });
+      });
+    } finally {
+      setIsBatchGenerating(false);
+      setRefiningSlotIds((prev) => { const next = new Set(prev); next.delete(slotId); return next; });
+      setBatchGenerationProgress(null);
+      if (batchAbortRef.current === controller) {
+        batchAbortRef.current = null;
+      }
+    }
+  }, [appendBatchActionLog, batchJobs, currentSession, isBatchGenerating, updateBatchJobById]);
+
   const handleMaskSubmit = async (params: {
     baseImageUrl: string;
     prompt: string;
@@ -2453,6 +2571,10 @@ const App: React.FC = () => {
               onRenameJob={handleRenameBatchJob}
               onAddSlots={handleOpenAddSlots}
               products={products}
+              onRefineSlot={(jobId, slotId, instruction) => {
+                void handleRefineSlot(jobId, slotId, instruction);
+              }}
+              refiningSlotIds={refiningSlotIds}
             />
           </div>
         )}
