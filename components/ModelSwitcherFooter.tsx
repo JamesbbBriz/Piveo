@@ -14,10 +14,11 @@ interface ModelSwitcherFooterProps {
   compact?: boolean;
 }
 
-/** Frontend-only display name: 2.5-series → nano🍌, 3-pro → nano🍌 PRO */
+/** Frontend-only display name: 2.5-series → Nano🍌, 3-pro → Nano🍌 PRO, 3-pro-2k → Nano🍌 PRO 2K */
 export const getModelDisplayName = (modelId: string): string => {
-  if (/gemini-3.*pro.*image/i.test(modelId)) return "nano🍌 PRO";
-  if (/2\.5.*image/i.test(modelId)) return "nano🍌";
+  if (/gemini-3.*pro.*image.*2k/i.test(modelId)) return "Nano🍌 PRO 2K";
+  if (/gemini-3.*pro.*image/i.test(modelId)) return "Nano🍌 PRO";
+  if (/2\.5.*image/i.test(modelId)) return "Nano🍌";
   // fallback: strip common prefixes
   return modelId
     .replace(/^(gemini-|gpt-image-)/i, "")
@@ -149,7 +150,7 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
         <select
           value={apiConfig.defaultImageModel}
           onChange={(e) => onUpdateApiConfig({ ...apiConfig, defaultImageModel: e.target.value })}
-          className="w-full bg-dark-900/60 border border-dark-600 rounded px-1 py-1 text-[10px] text-gray-200 text-center focus:outline-none focus:border-banana-500/50 cursor-pointer appearance-none"
+          className="w-full bg-dark-900/60 border border-dark-600 rounded px-2 py-1.5 text-xs text-gray-200 text-center focus:outline-none focus:border-banana-500/50 cursor-pointer appearance-none"
           title={apiConfig.defaultImageModel}
         >
           {options.map((m) => (
