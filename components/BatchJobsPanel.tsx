@@ -863,6 +863,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
       onCancel={() => setPendingDownload(null)}
       onConfirm={() => void confirmDownload()}
       confirmLabel="开始下载"
+      imageUrl={pendingDownload?.version.imageUrl}
     />
   </>
   );

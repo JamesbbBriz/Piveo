@@ -188,6 +188,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
         onConfirm={() => void confirmDownload()}
         title="下载设置"
         confirmLabel="开始下载"
+        imageUrl={pendingDownload?.url}
       />
     </div>
   );

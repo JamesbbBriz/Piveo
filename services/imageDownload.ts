@@ -79,7 +79,7 @@ const readImageDimensions = (blob: Blob): Promise<{ width: number; height: numbe
     img.src = url;
   });
 
-const blobToFormat = async (blob: Blob, format: DownloadFormat, quality?: number): Promise<Blob> => {
+export const blobToFormat = async (blob: Blob, format: DownloadFormat, quality?: number): Promise<Blob> => {
   const targetType =
     format === "jpg" ? "image/jpeg" : format === "webp" ? "image/webp" : "image/png";
   const sourceType = String(blob.type || "").split(";")[0].trim().toLowerCase();
@@ -114,7 +114,7 @@ const blobToFormat = async (blob: Blob, format: DownloadFormat, quality?: number
   }
 };
 
-const fetchImageBlob = async (imageUrl: string): Promise<Blob> => {
+export const fetchImageBlob = async (imageUrl: string): Promise<Blob> => {
   if (/^data:/i.test(imageUrl)) {
     return await dataUrlToBlob(imageUrl);
   }

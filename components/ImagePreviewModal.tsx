@@ -71,6 +71,7 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ imageUrl, 
         onConfirm={() => void confirmDownload()}
         title="下载设置"
         confirmLabel="开始下载"
+        imageUrl={imageUrl}
       />
     </div>
   );
