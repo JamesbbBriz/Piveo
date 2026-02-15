@@ -2,6 +2,7 @@ import React, { useRef, useState } from "react";
 import { ModelCharacter } from "../types";
 import { Icon } from "./Icon";
 import { ImagePreviewModal } from "./ImagePreviewModal";
+import { generateModelCharacter } from "../services/gemini";
 
 interface ModelsLibraryModalProps {
   models: ModelCharacter[];
@@ -22,8 +23,32 @@ export const ModelsLibraryModal: React.FC<ModelsLibraryModalProps> = ({
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [awaitingPaste, setAwaitingPaste] = useState(false);
+  const [genDescription, setGenDescription] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const pasteTargetRef = useRef<HTMLDivElement>(null);
+
+  const handleGenerate = async () => {
+    setIsGenerating(true);
+    try {
+      const imageUrl = await generateModelCharacter({
+        description: genDescription.trim() || undefined,
+      });
+      onAddModel({
+        id: crypto.randomUUID(),
+        name: genDescription.trim()
+          ? genDescription.trim().slice(0, 10)
+          : `AI 模特 ${models.length + 1}`,
+        imageUrl,
+      });
+      setGenDescription("");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert(`生成模特失败：${msg}`);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   const handlePaste = (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
@@ -104,6 +129,30 @@ export const ModelsLibraryModal: React.FC<ModelsLibraryModalProps> = ({
               </span>
             </div>
             <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={genDescription}
+                onChange={(e) => setGenDescription(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !isGenerating) handleGenerate();
+                }}
+                placeholder="描述模特风格（可选）"
+                disabled={isGenerating}
+                className="h-8 w-48 px-2.5 text-xs rounded-md border border-dark-600 bg-dark-800 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-banana-500 disabled:opacity-50"
+              />
+              <button
+                onClick={handleGenerate}
+                disabled={isGenerating}
+                className="h-8 px-2.5 rounded-md border border-banana-500/40 bg-banana-500/10 text-banana-400 hover:bg-banana-500/20 text-[11px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                title="AI 生成模特"
+              >
+                {isGenerating ? (
+                  <Icon name="spinner" className="animate-spin" />
+                ) : (
+                  <Icon name="magic" />
+                )}
+                AI 生成
+              </button>
               <div
                 ref={pasteTargetRef}
                 tabIndex={0}

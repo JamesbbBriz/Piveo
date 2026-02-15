@@ -26,14 +26,21 @@ export const enhancePrompt = async (originalPrompt: string): Promise<string> => 
   return `${base}\n\n补充要求：${additions.join(" ")}`;
 };
 
-export const generateModelCharacter = async (opts?: { signal?: AbortSignal }): Promise<string> => {
+export const generateModelCharacter = async (
+  opts?: { signal?: AbortSignal; description?: string }
+): Promise<string> => {
+  const desc = opts?.description?.trim();
+  const prompt = desc
+    ? `生成一张高端时尚人像写真：${desc}。中性背景、清晰对焦、8K 质感、面部特征稳定一致。`
+    : "生成一张高端时尚人像写真：中性背景、清晰对焦、8K 质感、面部特征稳定一致。";
+
   const resp = await imagesGenerations(
     {
-    prompt:
-      "生成一张高端时尚人像写真：中性背景、清晰对焦、8K 质感、面部特征稳定一致。",
-    n: 1,
-    size: "1024x1024",
-    response_format: ResponseFormat.Url,
+      prompt,
+      model: "gemini-2.5-flash-image" as any,
+      n: 1,
+      size: "1024x1024",
+      response_format: ResponseFormat.Url,
     },
     { signal: opts?.signal }
   );
