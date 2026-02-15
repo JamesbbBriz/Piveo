@@ -862,6 +862,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
       onChange={setDownloadOptions}
       onCancel={() => setPendingDownload(null)}
       onConfirm={() => void confirmDownload()}
+      confirmLabel="开始下载"
     />
   </>
   );

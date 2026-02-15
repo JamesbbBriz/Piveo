@@ -30,7 +30,7 @@ export const DownloadOptionsModal: React.FC<DownloadOptionsModalProps> = ({
   if (!isOpen) return null;
   const showQuality = options.format !== "png";
   return (
-    <div className="fixed inset-0 z-[70] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[70] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onMouseDown={(e) => e.stopPropagation()}>
       <div className="w-full max-w-sm rounded-xl border border-dark-600 bg-dark-800 shadow-2xl">
         <div className="px-4 py-3 border-b border-dark-700 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-200">{title}</h3>
