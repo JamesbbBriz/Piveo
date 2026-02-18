@@ -72,6 +72,23 @@ const formatMoney = (amount: number | null, currency = "USD"): string => {
   }
 };
 
+const toPositiveInt = (raw: unknown, fallback: number): number => {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  const v = Math.floor(n);
+  return v >= 0 ? v : fallback;
+};
+
+const MIN_BALANCE_REFRESH_MS = Math.max(
+  10_000,
+  toPositiveInt((import.meta as any)?.env?.VITE_BALANCE_REFRESH_MIN_INTERVAL_MS, 60_000)
+);
+const MIN_MODELS_REFRESH_MS = Math.max(
+  30_000,
+  toPositiveInt((import.meta as any)?.env?.VITE_MODELS_REFRESH_MIN_INTERVAL_MS, 300_000)
+);
+const FAILURE_BACKOFFS_MS = [30_000, 60_000, 120_000];
+
 /* ── Component ── */
 
 interface SettingsPanelProps {
@@ -113,6 +130,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const modelsReqIdRef = useRef(0);
   const balanceReqIdRef = useRef(0);
   const balanceLockRef = useRef(false);
+  const lastModelsRequestedAtRef = useRef(0);
+  const lastBalanceRequestedAtRef = useRef(0);
+  const modelsFailureCountRef = useRef(0);
+  const balanceFailureCountRef = useRef(0);
+  const modelsCooldownUntilRef = useRef(0);
+  const balanceCooldownUntilRef = useRef(0);
 
   const [clearConfirm, setClearConfirm] = useState(false);
 
@@ -122,7 +145,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   const QUICK_TIMEOUT_MS = 10_000;
 
-  const loadModelList = useCallback(async () => {
+  const loadModelList = useCallback(async (opts?: { force?: boolean }) => {
+    const now = Date.now();
+    const force = Boolean(opts?.force);
+    if (!force) {
+      if (now < modelsCooldownUntilRef.current) return;
+      if (now - lastModelsRequestedAtRef.current < MIN_MODELS_REFRESH_MS && models.length > 0) return;
+    }
+    lastModelsRequestedAtRef.current = now;
     const reqId = ++modelsReqIdRef.current;
     setLoadingModels(true);
     try {
@@ -131,17 +161,29 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       const imageModels = ids.filter((m) => /image/i.test(m) && !/^sora-/i.test(m));
       const next = Array.from(new Set([apiConfig.defaultImageModel, ...(imageModels.length ? imageModels : ids)])).filter(Boolean);
       setModels(next);
+      modelsFailureCountRef.current = 0;
+      modelsCooldownUntilRef.current = 0;
     } catch {
       if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
       setModels((prev) => (prev.length ? prev : [apiConfig.defaultImageModel]));
+      modelsFailureCountRef.current += 1;
+      const idx = Math.min(modelsFailureCountRef.current - 1, FAILURE_BACKOFFS_MS.length - 1);
+      modelsCooldownUntilRef.current = Date.now() + FAILURE_BACKOFFS_MS[idx];
     } finally {
       if (mountedRef.current && reqId === modelsReqIdRef.current) setLoadingModels(false);
     }
-  }, [apiConfig]);
+  }, [apiConfig, models.length]);
 
-  const loadBalance = useCallback(async () => {
+  const loadBalance = useCallback(async (opts?: { force?: boolean }) => {
+    const now = Date.now();
+    const force = Boolean(opts?.force);
+    if (!force) {
+      if (now < balanceCooldownUntilRef.current) return;
+      if (now - lastBalanceRequestedAtRef.current < MIN_BALANCE_REFRESH_MS) return;
+    }
     if (balanceLockRef.current) return;
     balanceLockRef.current = true;
+    lastBalanceRequestedAtRef.current = now;
     const reqId = ++balanceReqIdRef.current;
     setLoadingBalance(true);
     try {
@@ -151,6 +193,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setBalanceCurrency(r.currency || "USD");
       const now = Date.now();
       setBalanceHint(r.amount === null ? "暂不可用" : `已更新 ${new Date(now).toLocaleTimeString("zh-CN", { hour12: false })}`);
+      balanceFailureCountRef.current = 0;
+      balanceCooldownUntilRef.current = 0;
     } catch (e) {
       if (!mountedRef.current || reqId !== balanceReqIdRef.current) return;
       const msg = e instanceof Error ? e.message : String(e);
@@ -163,6 +207,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             : "余额暂不可用";
       setBalanceAmount(null);
       setBalanceHint(hint);
+      balanceFailureCountRef.current += 1;
+      const idx = Math.min(balanceFailureCountRef.current - 1, FAILURE_BACKOFFS_MS.length - 1);
+      balanceCooldownUntilRef.current = Date.now() + FAILURE_BACKOFFS_MS[idx];
     } finally {
       balanceLockRef.current = false;
       if (mountedRef.current && reqId === balanceReqIdRef.current) setLoadingBalance(false);
@@ -172,8 +219,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   // Fetch on open
   useEffect(() => {
     if (!open) return;
-    void loadModelList();
-    void loadBalance();
+    void loadModelList({ force: true });
+    void loadBalance({ force: true });
   }, [open, loadModelList, loadBalance]);
 
   // External refresh tick
@@ -305,7 +352,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 <div className="flex items-center justify-between bg-dark-900 border border-dark-600 rounded-md px-2.5 py-2">
                   <span className="text-sm text-gray-200">{formatMoney(balanceAmount, balanceCurrency)}</span>
                   <button
-                    onClick={() => { void loadModelList(); void loadBalance(); }}
+                    onClick={() => { void loadModelList({ force: true }); void loadBalance({ force: true }); }}
                     className="text-gray-500 hover:text-gray-300 p-0.5 transition-colors"
                     title="刷新模型与余额"
                   >

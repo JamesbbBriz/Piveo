@@ -25,6 +25,7 @@ import { downloadImageWithFormat, loadDownloadOptions } from './services/imageDo
 import { ModelsLibraryModal } from './components/ModelsLibraryModal';
 import { ProductsLibraryModal } from './components/ProductsLibraryModal';
 import { urlToDataUrl } from './services/imageData';
+import { QueueStats, onQueueStateChange } from './services/generationQueue';
 
 const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSettings => {
   const aspectRatioValues = getSupportedAspectRatios();
@@ -81,12 +82,16 @@ const isLikelyCorsOrNetwork = (message: string): boolean =>
 const isLikelyGatewayTimeout = (message: string): boolean =>
   /http\s*504|gateway time-?out|error code 504|上游网关超时/i.test(message);
 
+const isLikelyQueueBusy = (message: string): boolean =>
+  /队列繁忙|排队|queue.*busy|队列等待超时|429/i.test(message);
+
 const isLikelyMixedImageInput = (message: string): boolean =>
   /请只使用一种图片输入方式|one image input|url or base64|文件上传、URL 或 base64/i.test(message);
 
 const ADVANCED_PANEL_STORAGE_KEY = "topseller.ui.advanced_panel_open";
 
 const getFriendlyErrorMessage = (message: string): string => {
+  if (isLikelyQueueBusy(message)) return "当前生成请求较多，任务已被限流保护，请稍后重试。";
   if (isLikelyModelUnsupported(message)) return "当前模型不支持生图，请切换到可用图片模型后重试。";
   if (isLikelyMixedImageInput(message)) return "本次请求混用了 URL 和 base64 图片，已触发网关限制。请重试（系统将自动按单一格式发送）。";
   if (isLikelyGatewayTimeout(message)) return "上游网关超时（504），请重试或切换更快模型。";
@@ -96,6 +101,13 @@ const getFriendlyErrorMessage = (message: string): string => {
 };
 
 const getErrorAdvice = (message: string): string[] => {
+  if (isLikelyQueueBusy(message)) {
+    return [
+      "当前是保护性限流，不是模型故障。",
+      "请等待几秒后重试，系统会自动恢复队列处理。",
+      "如需更稳定，可先把默认生成数量调低后再逐步放大。",
+    ];
+  }
   if (isLikelyModelUnsupported(message)) {
     return [
       "在左下角模型选择器切换为可用图片模型。",
@@ -274,6 +286,7 @@ const App: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
+  const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
   const [isAdvancedPanelOpen, setIsAdvancedPanelOpen] = useState<boolean>(() => {
     try {
       return window.localStorage.getItem(ADVANCED_PANEL_STORAGE_KEY) === "1";
@@ -304,6 +317,7 @@ const App: React.FC = () => {
       sizes?: string[];
       batchCountOverride?: number;
       forceNoAutoReuse?: boolean;
+      queueSource?: "chat" | "batch" | "mask-edit" | "model-gen";
     };
   } | null>(null);
 
@@ -319,6 +333,13 @@ const App: React.FC = () => {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onQueueStateChange((stats) => {
+      setQueueStats(stats);
+    });
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -477,6 +498,23 @@ const App: React.FC = () => {
     () => batchJobs.find((j) => j.id === selectedBatchJobId) || batchJobs[0] || null,
     [batchJobs, selectedBatchJobId]
   );
+  const queueStatusText = useMemo(() => {
+    if (!queueStats) return null;
+    if (queueStats.state === "PAUSED_UNTIL" && queueStats.pausedUntil) {
+      const waitSec = Math.max(1, Math.ceil((queueStats.pausedUntil - Date.now()) / 1000));
+      return `上游限流，队列将在 ${waitSec} 秒后自动恢复`;
+    }
+    if (queueStats.state === "DEGRADED") {
+      return `保护模式：并发已降为 ${queueStats.maxInFlight}（错误率 ${(queueStats.metrics.errorRate * 100).toFixed(0)}%）`;
+    }
+    if (queueStats.pending > 0) {
+      return `排队中：${queueStats.pending} 个任务等待，当前并发 ${queueStats.maxInFlight}`;
+    }
+    if (queueStats.inFlight > 0) {
+      return `调度中：并发 ${queueStats.maxInFlight}，在途 ${queueStats.inFlight}`;
+    }
+    return `调度器就绪：并发 ${queueStats.maxInFlight}`;
+  }, [queueStats]);
 
   useEffect(() => {
     if (batchJobs.length === 0) {
@@ -849,7 +887,7 @@ const App: React.FC = () => {
         size,
         image: images.length ? images : undefined,
       },
-      { signal: batchAbortRef.current?.signal }
+      { signal: batchAbortRef.current?.signal, queueSource: "batch" }
     );
 
     // —— 4. 转换结果 ——
@@ -982,6 +1020,7 @@ const App: React.FC = () => {
       sizes?: string[];
       batchCountOverride?: number;
       forceNoAutoReuse?: boolean;
+      queueSource?: "chat" | "batch" | "mask-edit" | "model-gen";
     }
   ) => {
     if (!currentSession) return;
@@ -1054,6 +1093,7 @@ const App: React.FC = () => {
             extraImages: opts?.extraImages,
             disableAutoUseLastImage: Boolean(opts?.forceNoAutoReuse),
             signal: controller.signal,
+            queueSource: opts?.queueSource || "chat",
           }
         );
         setBalanceRefreshTick((v) => v + 1);
@@ -1127,72 +1167,63 @@ const App: React.FC = () => {
         if (remaining > 0 && firstUrl) {
           let done = 0;
           let failed = 0;
-          let cursor = 0;
-          const maxParallel = Math.min(3, remaining);
-
-          const worker = async () => {
-            while (cursor < remaining) {
-              const idx = cursor++;
-              if (idx >= remaining) return;
-              if (controller.signal.aborted) return;
-
-              try {
-                const extra = await generateResponse(
-                  prompt,
-                  image,
-                  modelImage,
-                  productImageUrl,
-                  generationBaseMessages,
-                  currentSession.settings,
-                  {
-                    n: 1,
-                    size,
-                    responseFormat,
-                    extraImages: opts?.extraImages,
-                    disableAutoUseLastImage: Boolean(opts?.forceNoAutoReuse),
-                    signal: controller.signal,
-                  }
-                );
-                const extraUrl = extra.images[0];
-                if (!extraUrl) {
-                  failed += 1;
-                } else {
-                  setBalanceRefreshTick((v) => v + 1);
-                  // 转换为持久化 URL
-                  let persistentUrl = extraUrl;
-                  try {
-                    persistentUrl = await urlToDataUrl(extraUrl);
-                  } catch (e) {
-                    console.warn('图片转换失败，使用原 URL:', e);
-                  }
-
-                  patchLatestAiMessage({
-                    type: "image",
-                    imageUrl: persistentUrl,
-                    meta: {
-                      id: uuidv4(),
-                      createdAt: Date.now(),
-                      prompt: extra.promptUsed,
-                      model: extra.modelUsed || apiConfig.defaultImageModel,
-                      size: extra.sizeUsed,
-                      responseFormat: extra.responseFormat,
-                      parentImageUrl: parentImageUrl || undefined,
-                      action: opts?.action,
-                    },
-                  });
+          for (let idx = 0; idx < remaining; idx++) {
+            if (controller.signal.aborted) break;
+            try {
+              const extra = await generateResponse(
+                prompt,
+                image,
+                modelImage,
+                productImageUrl,
+                generationBaseMessages,
+                currentSession.settings,
+                {
+                  n: 1,
+                  size,
+                  responseFormat,
+                  extraImages: opts?.extraImages,
+                  disableAutoUseLastImage: Boolean(opts?.forceNoAutoReuse),
+                  signal: controller.signal,
+                  queueSource: opts?.queueSource || "chat",
                 }
-              } catch (err) {
-                if (isAbortError(err)) throw err;
+              );
+              const extraUrl = extra.images[0];
+              if (!extraUrl) {
                 failed += 1;
-              } finally {
-                done += 1;
-                stage = `首图已出，正在补齐（${done}/${remaining}）· 尺寸 ${size}...`;
-                setGenerationStage(stage);
-              }
-            }
-          };
+              } else {
+                setBalanceRefreshTick((v) => v + 1);
+                // 转换为持久化 URL
+                let persistentUrl = extraUrl;
+                try {
+                  persistentUrl = await urlToDataUrl(extraUrl);
+                } catch (e) {
+                  console.warn('图片转换失败，使用原 URL:', e);
+                }
 
-          await Promise.all(Array.from({ length: maxParallel }, () => worker()));
+                patchLatestAiMessage({
+                  type: "image",
+                  imageUrl: persistentUrl,
+                  meta: {
+                    id: uuidv4(),
+                    createdAt: Date.now(),
+                    prompt: extra.promptUsed,
+                    model: extra.modelUsed || apiConfig.defaultImageModel,
+                    size: extra.sizeUsed,
+                    responseFormat: extra.responseFormat,
+                    parentImageUrl: parentImageUrl || undefined,
+                    action: opts?.action,
+                  },
+                });
+              }
+            } catch (err) {
+              if (isAbortError(err)) throw err;
+              failed += 1;
+            } finally {
+              done += 1;
+              stage = `首图已出，正在补齐（${done}/${remaining}）· 尺寸 ${size}...`;
+              setGenerationStage(stage);
+            }
+          }
 
           if (failed > 0) {
             patchLatestAiMessage({
@@ -1864,7 +1895,7 @@ const App: React.FC = () => {
           size,
           image: images,
         },
-        { signal: controller.signal }
+        { signal: controller.signal, queueSource: "batch" }
       );
 
       const generated: BatchVersion[] = await Promise.all(
@@ -2016,7 +2047,7 @@ const App: React.FC = () => {
               response_format: ResponseFormat.Url,
               model,
             },
-            { api: apiConfig, signal: controller.signal }
+            { api: apiConfig, signal: controller.signal, queueSource: "mask-edit" }
           );
           generatedImageUrls = (resp.data || [])
             .map((o) => (o ? imageObjToDataUrl(o) : null))
@@ -2052,6 +2083,7 @@ const App: React.FC = () => {
               extraImages: [params.maskOverlayDataUrl],
               disableAutoUseLastImage: true,
               signal: controller.signal,
+              queueSource: "mask-edit",
             }
           );
           generatedImageUrls = result.images;
@@ -2144,7 +2176,7 @@ const App: React.FC = () => {
             response_format: rf,
             model,
           },
-          { api: apiConfig, signal: controller.signal }
+          { api: apiConfig, signal: controller.signal, queueSource: "mask-edit" }
         );
 
         const aiMessage: Message = {
@@ -2221,6 +2253,7 @@ const App: React.FC = () => {
       action: "局部编辑",
       extraImages: [params.maskOverlayDataUrl],
       forceNoAutoReuse: true,
+      queueSource: "mask-edit",
     });
 
     const generatedImageUrls: string[] = [];
@@ -2400,6 +2433,11 @@ const App: React.FC = () => {
                            取消
                          </button>
                        </div>
+                       {queueStatusText && (
+                         <div className="mt-2 text-[11px] text-gray-500">
+                           {queueStatusText}
+                         </div>
+                       )}
                      </div>
                   </div>
                 )}

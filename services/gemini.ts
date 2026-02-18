@@ -42,7 +42,7 @@ export const generateModelCharacter = async (
       size: "1024x1024",
       response_format: ResponseFormat.Url,
     },
-    { signal: opts?.signal }
+    { signal: opts?.signal, queueSource: "model-gen" }
   );
 
   const first = resp.data[0];
@@ -65,6 +65,7 @@ export interface GenerateResponseOptions {
     description?: string;
   };
   forceIncludeProductImage?: boolean;
+  queueSource?: "chat" | "batch" | "mask-edit" | "model-gen";
 }
 
 export interface GenerateResponseResult {
@@ -235,7 +236,7 @@ export const generateResponse = async (
         size: sizeUsed,
         image: imageInputs.length ? imageInputs : undefined,
       },
-      { signal: options.signal }
+      { signal: options.signal, queueSource: options.queueSource || "chat" }
     );
 
     const images = (resp.data || [])

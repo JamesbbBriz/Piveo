@@ -92,6 +92,20 @@ const LOGIN_WINDOW_MS = Number(process.env.AUTH_LOGIN_WINDOW_MS || 10 * 60 * 100
 const LOGIN_MAX_ATTEMPTS = Number(process.env.AUTH_LOGIN_MAX_ATTEMPTS || 5);
 const LOGIN_BLOCK_MS = Number(process.env.AUTH_LOGIN_BLOCK_MS || 30 * 60 * 1000);
 const loginAttempts = new Map();
+const toPositiveInt = (raw, fallback) => {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  const v = Math.floor(n);
+  return v > 0 ? v : fallback;
+};
+const UPSTREAM_GUARD_ENABLED = String(process.env.UPSTREAM_GUARD_ENABLED || "true")
+  .trim()
+  .toLowerCase() !== "false";
+const UPSTREAM_MAX_INFLIGHT_PER_USER = toPositiveInt(process.env.UPSTREAM_MAX_INFLIGHT_PER_USER, 2);
+const UPSTREAM_MAX_INFLIGHT_GLOBAL = toPositiveInt(process.env.UPSTREAM_MAX_INFLIGHT_GLOBAL, 12);
+const UPSTREAM_GUARD_RETRY_AFTER_SEC = toPositiveInt(process.env.UPSTREAM_GUARD_RETRY_AFTER_SEC, 5);
+let upstreamImageInFlightGlobal = 0;
+const upstreamImageInFlightByUser = new Map();
 
 // 每 30 分钟清理过期的登录限流条目，防止内存泄漏
 const LOGIN_CLEANUP_INTERVAL_MS = 30 * 60 * 1000;
@@ -191,6 +205,49 @@ const requireAuth = (req, res, next) => {
     return;
   }
   req.authUser = username;
+  next();
+};
+
+const isGuardedImageRoute = (rawUrl) => {
+  const url = String(rawUrl || "");
+  return url.includes("/v1/images/generations") || url.includes("/v1/images/edits");
+};
+
+const upstreamGuard = (req, res, next) => {
+  if (!UPSTREAM_GUARD_ENABLED || !isGuardedImageRoute(req.originalUrl)) {
+    next();
+    return;
+  }
+
+  const user = String(req.authUser || "unknown");
+  const userInFlight = Number(upstreamImageInFlightByUser.get(user) || 0);
+  if (upstreamImageInFlightGlobal >= UPSTREAM_MAX_INFLIGHT_GLOBAL || userInFlight >= UPSTREAM_MAX_INFLIGHT_PER_USER) {
+    const requestId = String(req.requestId || "");
+    res.setHeader("Retry-After", String(UPSTREAM_GUARD_RETRY_AFTER_SEC));
+    res.status(429).json({
+      ok: false,
+      message: "上游繁忙，已触发并发保护，请稍后重试。",
+      request_id: requestId || undefined,
+    });
+    return;
+  }
+
+  upstreamImageInFlightGlobal += 1;
+  upstreamImageInFlightByUser.set(user, userInFlight + 1);
+
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    upstreamImageInFlightGlobal = Math.max(0, upstreamImageInFlightGlobal - 1);
+    const cur = Number(upstreamImageInFlightByUser.get(user) || 0);
+    if (cur <= 1) upstreamImageInFlightByUser.delete(user);
+    else upstreamImageInFlightByUser.set(user, cur - 1);
+  };
+
+  res.on("finish", cleanup);
+  res.on("close", cleanup);
+  req.on("aborted", cleanup);
   next();
 };
 
@@ -354,6 +411,7 @@ app.use(
     }
     next();
   },
+  upstreamGuard,
   createProxyMiddleware({
     target: targetProxy,
     changeOrigin: true,
@@ -439,6 +497,9 @@ const server = app.listen(port, host, () => {
   console.log(`Seed user: ${AUTH_USERNAME}`);
   console.log(`[UPSTREAM] target: ${targetProxy}`);
   console.log(`[UPSTREAM] auth configured: ${upstreamAuthorization ? "yes" : "no"}`);
+  console.log(
+    `[UPSTREAM] guard: ${UPSTREAM_GUARD_ENABLED ? "on" : "off"} (per-user=${UPSTREAM_MAX_INFLIGHT_PER_USER}, global=${UPSTREAM_MAX_INFLIGHT_GLOBAL})`
+  );
 });
 
 server.on("error", (err) => {

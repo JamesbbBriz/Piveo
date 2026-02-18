@@ -4,10 +4,24 @@
 
 import { ApiConfig, getEffectiveApiConfig } from "./apiConfig";
 import { dataUrlToBlob } from "./imageData";
+import {
+  QueueSource,
+  enqueueGenerationTask,
+  reportGenerationOutcome,
+  shouldUseConservativeRetry,
+} from "./generationQueue";
 
 export interface ClientRequestOptions {
   api?: Partial<ApiConfig>;
   signal?: AbortSignal;
+  retryPolicy?: {
+    maxRetries?: number;
+    baseDelayMs?: number;
+    maxDelayMs?: number;
+  };
+  queueDepthHint?: number;
+  disableModelFallback?: boolean;
+  queueSource?: QueueSource;
 }
 
 /**
@@ -174,13 +188,22 @@ const toPositiveInt = (raw: unknown, fallback: number): number => {
   return v >= 0 ? v : fallback;
 };
 
-const imageRequestMaxRetries = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_REQUEST_RETRIES, 2);
-const imageRetryBaseDelayMs = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_RETRY_BASE_DELAY_MS, 1200);
+const imageRequestMaxRetries = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_REQUEST_RETRIES, 1);
+const imageRetryBaseDelayMs = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_RETRY_BASE_DELAY_MS, 800);
 const RETRYABLE_STATUS = new Set([408, 425, 500, 502, 503, 504, 522, 524]);
 const imageFetchTimeoutMs = Math.max(
   1_000,
   toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_FETCH_TIMEOUT_MS, 120_000)
 );
+const imageRetryMaxDelayMs = Math.max(
+  imageRetryBaseDelayMs,
+  toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_RETRY_MAX_DELAY_MS, 4_000)
+);
+const modelFallbackCacheTtlMs = Math.max(
+  5_000,
+  toPositiveInt((import.meta as any)?.env?.VITE_MODEL_FALLBACK_CACHE_TTL_MS, 300_000)
+);
+const MODEL_LIST_CACHE_STORAGE_KEY = "nanobanana_model_list_cache_v1";
 
 const createRequestId = (): string => {
   try {
@@ -191,6 +214,51 @@ const createRequestId = (): string => {
     // fallback below
   }
   return `img_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
+};
+
+const parseRetryAfterSec = (raw: string | null): number | undefined => {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const sec = Number(trimmed);
+  if (Number.isFinite(sec) && sec > 0) return Math.floor(sec);
+  const ts = Date.parse(trimmed);
+  if (!Number.isFinite(ts)) return undefined;
+  const delta = Math.ceil((ts - Date.now()) / 1000);
+  return delta > 0 ? delta : undefined;
+};
+
+const toRetryPolicy = (opts?: ClientRequestOptions): { maxRetries: number; baseDelayMs: number; maxDelayMs: number } => {
+  const maxRetriesRaw = opts?.retryPolicy?.maxRetries;
+  const baseDelayRaw = opts?.retryPolicy?.baseDelayMs;
+  const maxDelayRaw = opts?.retryPolicy?.maxDelayMs;
+  const maxRetries = Number.isFinite(Number(maxRetriesRaw))
+    ? Math.max(0, Math.floor(Number(maxRetriesRaw)))
+    : imageRequestMaxRetries;
+  const baseDelayMs = Number.isFinite(Number(baseDelayRaw))
+    ? Math.max(100, Math.floor(Number(baseDelayRaw)))
+    : imageRetryBaseDelayMs;
+  const maxDelayMs = Number.isFinite(Number(maxDelayRaw))
+    ? Math.max(baseDelayMs, Math.floor(Number(maxDelayRaw)))
+    : imageRetryMaxDelayMs;
+  const conservative = shouldUseConservativeRetry(opts?.queueDepthHint || 0);
+  return {
+    maxRetries: conservative ? 0 : maxRetries,
+    baseDelayMs,
+    maxDelayMs,
+  };
+};
+
+const fetchViaQueue = async (
+  input: RequestInfo | URL,
+  init: RequestInit,
+  opts?: ClientRequestOptions
+): Promise<Response> => {
+  const source: QueueSource = opts?.queueSource || "chat";
+  return await enqueueGenerationTask(
+    async () => await fetch(input, init),
+    { source, signal: init.signal as AbortSignal | undefined }
+  );
 };
 
 const isLikelyTimeoutError = (e: unknown): boolean => {
@@ -206,9 +274,9 @@ const withTimeout = (signal?: AbortSignal): AbortSignal => {
 };
 
 /** 指数退避 + ±20% jitter */
-const retryDelay = (attempt: number): number => {
-  const base = imageRetryBaseDelayMs * Math.pow(2, attempt);
-  const capped = Math.min(base, 15_000);
+const retryDelay = (attempt: number, baseDelayMs: number, maxDelayMs: number): number => {
+  const base = baseDelayMs * Math.pow(2, attempt);
+  const capped = Math.min(base, maxDelayMs);
   const jitter = capped * (0.8 + Math.random() * 0.4); // ±20%
   return jitter;
 };
@@ -291,8 +359,50 @@ const toImageUrlForChat = (s: string): string => {
 
 const isGeminiImageModel = (model: string): boolean => /^gemini-/i.test(model) && /image/i.test(model);
 
+interface ModelListCacheEntry {
+  ids: string[];
+  expiresAt: number;
+}
+
+const modelListMemoryCache = new Map<string, ModelListCacheEntry>();
+
+const readModelListStorageCache = (): Record<string, ModelListCacheEntry> => {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(MODEL_LIST_CACHE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed as Record<string, ModelListCacheEntry>;
+  } catch {
+    return {};
+  }
+};
+
+const writeModelListStorageCache = (cache: Record<string, ModelListCacheEntry>) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(MODEL_LIST_CACHE_STORAGE_KEY, JSON.stringify(cache));
+  } catch {
+    // ignore storage failures
+  }
+};
+
 export const listModels = async (opts?: ClientRequestOptions): Promise<string[]> => {
   const cfg = getClientConfig(opts?.api);
+  const cacheKey = normalizeBaseUrl(cfg.baseUrl || "/api");
+  const now = Date.now();
+  const mem = modelListMemoryCache.get(cacheKey);
+  if (mem && mem.expiresAt > now && mem.ids.length > 0) {
+    return mem.ids;
+  }
+
+  const storageCache = readModelListStorageCache();
+  const storageHit = storageCache[cacheKey];
+  if (storageHit && storageHit.expiresAt > now && Array.isArray(storageHit.ids) && storageHit.ids.length > 0) {
+    modelListMemoryCache.set(cacheKey, storageHit);
+    return storageHit.ids;
+  }
 
   const resp = await fetch(`${cfg.baseUrl}/v1/models`, {
     headers: buildAuthHeaders(cfg),
@@ -306,6 +416,13 @@ export const listModels = async (opts?: ClientRequestOptions): Promise<string[]>
   const json = await resp.json();
   const data = Array.isArray(json?.data) ? json.data : [];
   const ids = data.map((m: any) => m?.id).filter((x: any) => typeof x === "string");
+  const entry: ModelListCacheEntry = {
+    ids,
+    expiresAt: now + modelFallbackCacheTtlMs,
+  };
+  modelListMemoryCache.set(cacheKey, entry);
+  storageCache[cacheKey] = entry;
+  writeModelListStorageCache(storageCache);
   return ids;
 };
 
@@ -495,7 +612,8 @@ const geminiImageViaChat = async (
   req: 创建图片请求,
   cfg: ApiConfig,
   model: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  opts?: ClientRequestOptions
 ): Promise<图片生成响应> => {
   const n = Math.min(Math.max(req.n ?? 1, 1), 10);
   const responseFormat = req.response_format ?? ResponseFormat.Url;
@@ -516,21 +634,43 @@ const geminiImageViaChat = async (
         ]
       : req.prompt;
 
-    const resp = await fetch(`${cfg.baseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...buildAuthHeaders(cfg),
-      },
-      credentials: "include",
-      body: JSON.stringify({
-        model,
-        // Some gateways may accept `size` for image models even on chat endpoint.
-        // If not supported, it will be ignored.
-        size,
-        messages: [{ role: "user", content }],
-      }),
-      signal: withTimeout(signal),
+    const startedAt = Date.now();
+    let resp: Response;
+    try {
+      resp = await fetchViaQueue(
+        `${cfg.baseUrl}/v1/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...buildAuthHeaders(cfg),
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            model,
+            // Some gateways may accept `size` for image models even on chat endpoint.
+            // If not supported, it will be ignored.
+            size,
+            messages: [{ role: "user", content }],
+          }),
+          signal: withTimeout(signal),
+        },
+        opts
+      );
+    } catch (e) {
+      const isAbort = e instanceof DOMException && e.name === "AbortError";
+      if (!isAbort || isLikelyTimeoutError(e)) {
+        reportGenerationOutcome({
+          networkError: true,
+          latencyMs: Date.now() - startedAt,
+        });
+      }
+      throw e;
+    }
+    reportGenerationOutcome({
+      status: resp.status,
+      latencyMs: Date.now() - startedAt,
+      retryAfterSec: parseRetryAfterSec(resp.headers.get("retry-after")),
     });
 
     const text = await resp.text();
@@ -598,6 +738,7 @@ export const imagesGenerations = async (
 ): Promise<图片生成响应> => {
   const cfg = getClientConfig(opts?.api);
   const signal = opts?.signal;
+  const retryPolicy = toRetryPolicy(opts);
 
   const callWithModel = async (model: string): Promise<图片生成响应> => {
     if (/^sora-/i.test(model)) {
@@ -631,27 +772,39 @@ export const imagesGenerations = async (
     let retryCount = 0;
     let lastRequestId = "";
 
-    for (let attempt = 0; attempt <= imageRequestMaxRetries; attempt++) {
+    for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
       let resp: Response;
       const requestId = createRequestId();
       lastRequestId = requestId;
+      const startedAt = Date.now();
       try {
-        resp = await fetch(`${cfg.baseUrl}/v1/images/generations`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Request-Id": requestId,
-            ...buildAuthHeaders(cfg),
+        resp = await fetchViaQueue(
+          `${cfg.baseUrl}/v1/images/generations`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Request-Id": requestId,
+              ...buildAuthHeaders(cfg),
+            },
+            credentials: "include",
+            body: JSON.stringify(body),
+            signal: withTimeout(signal),
           },
-          credentials: "include",
-          body: JSON.stringify(body),
-          signal: withTimeout(signal),
-        });
+          opts
+        );
       } catch (e: any) {
+        const isAbort = e instanceof DOMException && e.name === "AbortError";
+        if (!isAbort || isLikelyTimeoutError(e)) {
+          reportGenerationOutcome({
+            networkError: true,
+            latencyMs: Date.now() - startedAt,
+          });
+        }
         const msg = e?.message ? String(e.message) : String(e);
-        if (attempt < imageRequestMaxRetries) {
+        if (attempt < retryPolicy.maxRetries) {
           retryCount += 1;
-          await sleep(retryDelay(attempt), signal);
+          await sleep(retryDelay(attempt, retryPolicy.baseDelayMs, retryPolicy.maxDelayMs), signal);
           continue;
         }
         const timeoutHint = isLikelyTimeoutError(e)
@@ -663,6 +816,12 @@ export const imagesGenerations = async (
             `请检查站点到上游网关连通性（生产环境通常不是 CORS，而是代理超时或网络抖动）。${traceHint}`
         );
       }
+
+      reportGenerationOutcome({
+        status: resp.status,
+        latencyMs: Date.now() - startedAt,
+        retryAfterSec: parseRetryAfterSec(resp.headers.get("retry-after")),
+      });
 
       if (resp.ok) {
         const json = (await resp.json()) as 图片生成响应;
@@ -679,10 +838,10 @@ export const imagesGenerations = async (
       const text = await resp.text().catch(() => "");
       lastStatus = resp.status;
       lastText = text;
-      const shouldRetry = RETRYABLE_STATUS.has(resp.status) && attempt < imageRequestMaxRetries;
+      const shouldRetry = RETRYABLE_STATUS.has(resp.status) && attempt < retryPolicy.maxRetries;
       if (shouldRetry) {
         retryCount += 1;
-        await sleep(retryDelay(attempt), signal);
+        await sleep(retryDelay(attempt, retryPolicy.baseDelayMs, retryPolicy.maxDelayMs), signal);
         continue;
       }
       break;
@@ -695,7 +854,7 @@ export const imagesGenerations = async (
     // 仅在显式开启 VITE_ENABLE_CHAT_IMAGE_FALLBACK=true 且为“模型不支持”时才回退 chat。
     if (enableGeminiChatFallback && isGeminiImageModel(model) && includesUnsupportedModelError(detail)) {
       try {
-        return await geminiImageViaChat({ ...req, model: model as Model }, cfg, model, signal);
+        return await geminiImageViaChat({ ...req, model: model as Model }, cfg, model, signal, opts);
       } catch (chatErr) {
         const chatMsg = chatErr instanceof Error ? chatErr.message : String(chatErr);
         throw new Error(`${generationErr}；回退 chat/completions 失败：${chatMsg}`);
@@ -708,6 +867,7 @@ export const imagesGenerations = async (
   try {
     return await callWithModel(initialModel);
   } catch (e) {
+    if (opts?.disableModelFallback) throw e;
     const msg = e instanceof Error ? e.message : String(e);
     if (!includesUnsupportedModelError(msg)) throw e;
 
@@ -784,6 +944,7 @@ export const imagesEdits = async (
 ): Promise<图片生成响应> => {
   const cfg = getClientConfig(opts?.api);
   const signal = opts?.signal;
+  const retryPolicy = toRetryPolicy(opts);
 
   if (!Array.isArray(req.image) || req.image.length === 0) {
     throw new Error("images/edits 需要至少 1 张 image。");
@@ -829,26 +990,38 @@ export const imagesEdits = async (
   let retryCount = 0;
   let lastRequestId = "";
 
-  for (let attempt = 0; attempt <= imageRequestMaxRetries; attempt++) {
+  for (let attempt = 0; attempt <= retryPolicy.maxRetries; attempt++) {
     let resp: Response;
     const requestId = createRequestId();
     lastRequestId = requestId;
+    const startedAt = Date.now();
     try {
-      resp = await fetch(`${cfg.baseUrl}/v1/images/edits`, {
-        method: "POST",
-        headers: {
-          "X-Request-Id": requestId,
-          ...buildAuthHeaders(cfg),
+      resp = await fetchViaQueue(
+        `${cfg.baseUrl}/v1/images/edits`,
+        {
+          method: "POST",
+          headers: {
+            "X-Request-Id": requestId,
+            ...buildAuthHeaders(cfg),
+          },
+          credentials: "include",
+          body: buildFormData(),
+          signal: withTimeout(signal),
         },
-        credentials: "include",
-        body: buildFormData(),
-        signal: withTimeout(signal),
-      });
+        opts
+      );
     } catch (e: any) {
+      const isAbort = e instanceof DOMException && e.name === "AbortError";
+      if (!isAbort || isLikelyTimeoutError(e)) {
+        reportGenerationOutcome({
+          networkError: true,
+          latencyMs: Date.now() - startedAt,
+        });
+      }
       const msg = e?.message ? String(e.message) : String(e);
-      if (attempt < imageRequestMaxRetries) {
+      if (attempt < retryPolicy.maxRetries) {
         retryCount += 1;
-        await sleep(retryDelay(attempt), signal);
+        await sleep(retryDelay(attempt, retryPolicy.baseDelayMs, retryPolicy.maxDelayMs), signal);
         continue;
       }
       const timeoutHint = isLikelyTimeoutError(e)
@@ -860,6 +1033,11 @@ export const imagesEdits = async (
           `请检查站点到上游网关连通性（生产环境通常不是 CORS，而是代理超时或网络抖动）。${traceHint}`
       );
     }
+    reportGenerationOutcome({
+      status: resp.status,
+      latencyMs: Date.now() - startedAt,
+      retryAfterSec: parseRetryAfterSec(resp.headers.get("retry-after")),
+    });
 
     if (resp.ok) {
       const json = (await resp.json()) as 图片生成响应;
@@ -876,10 +1054,10 @@ export const imagesEdits = async (
     const text = await resp.text().catch(() => "");
     lastStatus = resp.status;
     lastText = text;
-    const shouldRetry = RETRYABLE_STATUS.has(resp.status) && attempt < imageRequestMaxRetries;
+    const shouldRetry = RETRYABLE_STATUS.has(resp.status) && attempt < retryPolicy.maxRetries;
     if (shouldRetry) {
       retryCount += 1;
-      await sleep(retryDelay(attempt), signal);
+      await sleep(retryDelay(attempt, retryPolicy.baseDelayMs, retryPolicy.maxDelayMs), signal);
       continue;
     }
     break;
