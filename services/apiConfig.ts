@@ -17,7 +17,7 @@ export const getEnvApiConfig = (): ApiConfig => {
   // 上游 Authorization 统一由后端网关注入。
   const authorization = "";
 
-  const defaultImageModel = (readEnvString("VITE_DEFAULT_IMAGE_MODEL") || "gemini-2.5-flash-image").trim();
+  const defaultImageModel = (readEnvString("VITE_DEFAULT_IMAGE_MODEL") || "gemini-2.5-flash-image-preview").trim();
 
   return {
     baseUrl,

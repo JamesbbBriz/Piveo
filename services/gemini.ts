@@ -37,7 +37,7 @@ export const generateModelCharacter = async (
   const resp = await imagesGenerations(
     {
       prompt,
-      model: "gemini-2.5-flash-image" as any,
+      model: "gemini-2.5-flash-image-preview" as any,
       n: 1,
       size: "1024x1024",
       response_format: ResponseFormat.Url,

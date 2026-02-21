@@ -60,8 +60,9 @@ export interface 创建图片请求 {
  * 模型，用于图像生成的模型。
  */
 export enum Model {
-  Gemini25FlashImage = "gemini-2.5-flash-image",
+  Gemini25FlashImagePreview = "gemini-2.5-flash-image-preview",
   Gemini3ProImagePreview = "gemini-3-pro-image-preview",
+  Gemini3ProImagePreview2K = "gemini-3-pro-image-preview-2K",
   GptImage15 = "gpt-image-1.5",
 }
 
@@ -317,7 +318,7 @@ const chooseFallbackModel = (current: string, available: string[]): string | nul
   const preferredOrder = [
     "gpt-image-1.5",
     "gpt-image-1",
-    "gemini-2.5-flash-image",
+    "gemini-2.5-flash-image-preview",
     "gemini-3-pro-image-preview",
   ];
 
@@ -341,7 +342,7 @@ const getClientConfig = (override?: Partial<ApiConfig>): ApiConfig => {
   };
   merged.baseUrl = normalizeBaseUrl(merged.baseUrl || "/api");
   merged.authorization = (merged.authorization || "").trim();
-  merged.defaultImageModel = (merged.defaultImageModel || Model.Gemini25FlashImage).trim();
+  merged.defaultImageModel = (merged.defaultImageModel || Model.Gemini25FlashImagePreview).trim();
   return merged;
 };
 
@@ -426,187 +427,22 @@ export const listModels = async (opts?: ClientRequestOptions): Promise<string[]>
   return ids;
 };
 
-export interface BalanceInfo {
-  amount: number | null;
-  currency?: string;
-  endpointUsed?: string;
+function sizeToAspectRatio(size: string): string | undefined {
+  const [wStr, hStr] = size.split("x");
+  const w = parseInt(wStr, 10);
+  const h = parseInt(hStr, 10);
+  if (!w || !h) return undefined;
+  const ratio = w / h;
+  const known: [number, string][] = [
+    [1 / 1, "1:1"], [2 / 3, "2:3"], [3 / 2, "3:2"],
+    [3 / 4, "3:4"], [4 / 3, "4:3"], [4 / 5, "4:5"],
+    [5 / 4, "5:4"], [9 / 16, "9:16"], [16 / 9, "16:9"], [21 / 9, "21:9"],
+  ];
+  for (const [r, str] of known) {
+    if (Math.abs(ratio - r) < 0.05) return str;
+  }
+  return undefined;
 }
-
-const toNumberOrNull = (v: unknown): number | null => {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-};
-
-const normalizeUsageToUsd = (usedRaw: number, limitUsd: number): number => {
-  // 网关常见三种口径：美元、分、千分之一美元。
-  // 选择“与额度量级最接近且不过分夸张”的口径。
-  const candidates = [usedRaw, usedRaw / 100, usedRaw / 1000];
-  const maxReasonable = Math.max(limitUsd * 1.2, 1);
-  for (const c of candidates) {
-    if (c >= 0 && c <= maxReasonable) return c;
-  }
-  // 如果都不在合理区间，优先保守地按美元处理。
-  return usedRaw;
-};
-
-const parseBalancePayload = (payload: any): { amount: number | null; currency?: string } => {
-  if (!payload || typeof payload !== "object") return { amount: null };
-
-  const directCandidates = [
-    payload?.total_available,
-    payload?.available_balance,
-    payload?.balance,
-    payload?.credit?.balance,
-    payload?.data?.total_available,
-    payload?.data?.available_balance,
-    payload?.data?.balance,
-    payload?.result?.balance,
-  ];
-  for (const c of directCandidates) {
-    const n = toNumberOrNull(c);
-    if (n !== null) {
-      return {
-        amount: n,
-        currency: payload?.currency || payload?.credit?.currency || payload?.data?.currency || "USD",
-      };
-    }
-  }
-
-  const granted = toNumberOrNull(payload?.total_granted);
-  const used = toNumberOrNull(payload?.total_used);
-  if (granted !== null && used !== null) {
-    return { amount: granted - used, currency: payload?.currency || "USD" };
-  }
-
-  return { amount: null, currency: payload?.currency || payload?.data?.currency || "USD" };
-};
-
-export const fetchBalance = async (opts?: ClientRequestOptions): Promise<BalanceInfo> => {
-  const cfg = getClientConfig(opts?.api);
-
-  const requestJson = async (path: string): Promise<any> => {
-    const resp = await fetch(`${cfg.baseUrl}${path}`, {
-      method: "GET",
-      headers: buildAuthHeaders(cfg),
-      credentials: "include",
-      signal: withTimeout(opts?.signal),
-    });
-    if (resp.status === 404 || resp.status === 405) {
-      throw new Error(`not_supported:${path}`);
-    }
-    if (resp.status === 401 || resp.status === 403) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(`鉴权失败：HTTP ${resp.status} ${text}`.trim());
-    }
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(`HTTP ${resp.status} ${text}`.trim());
-    }
-    const text = await resp.text().catch(() => "");
-    try {
-      return JSON.parse(text);
-    } catch {
-      return null;
-    }
-  };
-
-  // 优先尝试文档中明确给出的组合端点：
-  // 1) /v1/dashboard/billing/subscription（额度）
-  // 2) /v1/dashboard/billing/usage（已用）
-  try {
-    const [subscription, usage] = await Promise.all([
-      requestJson("/v1/dashboard/billing/subscription"),
-      requestJson("/v1/dashboard/billing/usage"),
-    ]);
-    const subLimitCandidates = [
-      subscription?.hard_limit_usd,
-      subscription?.soft_limit_usd,
-      subscription?.system_hard_limit_usd,
-      subscription?.data?.hard_limit_usd,
-      subscription?.data?.soft_limit_usd,
-      subscription?.balance,
-      subscription?.data?.balance,
-    ];
-    let limitUsd: number | null = null;
-    for (const c of subLimitCandidates) {
-      const n = toNumberOrNull(c);
-      if (n !== null) {
-        limitUsd = n;
-        break;
-      }
-    }
-
-    const usageCandidates = [
-      usage?.total_usage,
-      usage?.used,
-      usage?.data?.total_usage,
-      usage?.data?.used,
-      usage?.result?.total_usage,
-    ];
-    let usedRaw: number | null = null;
-    for (const c of usageCandidates) {
-      const n = toNumberOrNull(c);
-      if (n !== null) {
-        usedRaw = n;
-        break;
-      }
-    }
-
-    if (limitUsd !== null && usedRaw !== null) {
-      const usedUsd = normalizeUsageToUsd(usedRaw, limitUsd);
-      return {
-        amount: Math.max(limitUsd - usedUsd, 0),
-        currency: subscription?.currency || subscription?.data?.currency || "USD",
-        endpointUsed: "/v1/dashboard/billing/subscription + /v1/dashboard/billing/usage",
-      };
-    }
-    // 如果 subscription 已经带余额，直接返回。
-    const parsedSub = parseBalancePayload(subscription);
-    if (parsedSub.amount !== null) {
-      return {
-        amount: parsedSub.amount,
-        currency: parsedSub.currency || "USD",
-        endpointUsed: "/v1/dashboard/billing/subscription",
-      };
-    }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (/鉴权失败/.test(msg)) throw e;
-  }
-
-  const candidates = [
-    "/v1/dashboard/billing/credit_grants",
-    "/dashboard/billing/credit_grants",
-    "/v1/billing/credit_grants",
-    "/v1/billing/balance",
-    "/v1/user/balance",
-    "/v1/dashboard/billing/subscription",
-    "/v1/dashboard/billing/usage",
-  ];
-
-  let lastErr = "";
-  for (const path of candidates) {
-    try {
-      const json = await requestJson(path);
-      const parsed = parseBalancePayload(json);
-      return {
-        amount: parsed.amount,
-        currency: parsed.currency,
-        endpointUsed: path,
-      };
-    } catch (e) {
-      lastErr = e instanceof Error ? e.message : String(e);
-      if (String(lastErr).startsWith("not_supported:")) continue;
-      if (/鉴权失败/.test(lastErr)) throw e;
-    }
-  }
-
-  throw new Error(lastErr ? `余额接口暂不可用：${lastErr}` : "余额接口暂不可用");
-};
 
 const geminiImageViaChat = async (
   req: 创建图片请求,
@@ -648,10 +484,12 @@ const geminiImageViaChat = async (
           credentials: "include",
           body: JSON.stringify({
             model,
-            // Some gateways may accept `size` for image models even on chat endpoint.
-            // If not supported, it will be ignored.
-            size,
             messages: [{ role: "user", content }],
+            ...(sizeToAspectRatio(String(size)) && {
+              extra_body: {
+                google: { image_config: { aspectRatio: sizeToAspectRatio(String(size)) } },
+              },
+            }),
           }),
           signal: withTimeout(signal),
         },
@@ -686,14 +524,32 @@ const geminiImageViaChat = async (
       throw new Error(`对话接口出图失败：${formatHttpError(resp.status, msg)}`.trim());
     }
 
-    const out = json?.choices?.[0]?.message?.content;
-    if (typeof out !== "string") throw new Error("对话接口返回格式异常（message.content 不是字符串）。");
+    const rawContent = json?.choices?.[0]?.message?.content;
+    let url = "";
 
-    // Gateway returns markdown with embedded data url: ![image](data:image/png;base64,....)
-    const mdMatch = /!\[image\]\(([^)]+)\)/i.exec(out);
-    const dataUrlMatch = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/.exec(out);
-    const url = (mdMatch?.[1] || dataUrlMatch?.[0] || "").trim();
-    if (!url) throw new Error("对话接口输出中未找到图片（data url）。");
+    if (Array.isArray(rawContent)) {
+      // 新格式：content 是数组，图片在 type==="image_url" 的条目里
+      const imgItem = rawContent.find((c: any) => c?.type === "image_url");
+      url = (imgItem?.image_url?.url ?? "").trim();
+    } else if (typeof rawContent === "string") {
+      // 旧格式兜底：markdown 或裸 data-url
+      const mdMatch = /!\[image\]\(([^)]+)\)/i.exec(rawContent);
+      const dataUrlMatch = /data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/.exec(rawContent);
+      url = (mdMatch?.[1] || dataUrlMatch?.[0] || "").trim();
+    }
+
+    // 网关归一化兜底：部分上游对 chat/completions 也返回 images/generations 格式 { data: [{url|b64_json}] }
+    if (!url && Array.isArray(json?.data) && json.data.length > 0) {
+      const first = json.data[0];
+      if (first?.url) {
+        url = String(first.url).trim();
+      } else if (first?.b64_json) {
+        const mime = guessMimeTypeFromB64(String(first.b64_json));
+        url = `data:${mime};base64,${first.b64_json}`;
+      }
+    }
+
+    if (!url) throw new Error("对话接口输出中未找到图片。");
 
     if (responseFormat === ResponseFormat.B64json) {
       if (!url.startsWith("data:image/")) {
@@ -743,8 +599,13 @@ export const imagesGenerations = async (
   const callWithModel = async (model: string): Promise<图片生成响应> => {
     if (/^sora-/i.test(model)) {
       throw new Error(
-        `当前模型「${model}」是视频模型，不支持图片生成。请在左侧栏「接口」里切换到图片模型（例如 gemini-2.5-flash-image 或 gpt-image-1.5）。`
+        `当前模型「${model}」是视频模型，不支持图片生成。请在左侧栏「接口」里切换到图片模型（例如 gemini-2.5-flash-image-preview 或 gpt-image-1.5）。`
       );
+    }
+
+    // gemini-3-pro-image-preview 系列（含 -2K 变体）只走 chat/completions
+    if (/^gemini-3-pro-image-preview/i.test(model)) {
+      return await geminiImageViaChat({ ...req, model: model as Model }, cfg, model, signal, opts);
     }
 
     const body: Record<string, any> = {
@@ -851,7 +712,7 @@ export const imagesGenerations = async (
     const retrySuffix = retryCount > 0 ? `（已自动重试 ${retryCount} 次）` : "";
     const traceSuffix = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
     const generationErr = `图片接口请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}。${traceSuffix}`.trim();
-    // 仅在显式开启 VITE_ENABLE_CHAT_IMAGE_FALLBACK=true 且为“模型不支持”时才回退 chat。
+    // 仅在显式开启 VITE_ENABLE_CHAT_IMAGE_FALLBACK=true 且为"模型不支持"时才回退 chat。
     if (enableGeminiChatFallback && isGeminiImageModel(model) && includesUnsupportedModelError(detail)) {
       try {
         return await geminiImageViaChat({ ...req, model: model as Model }, cfg, model, signal, opts);
@@ -871,7 +732,7 @@ export const imagesGenerations = async (
     const msg = e instanceof Error ? e.message : String(e);
     if (!includesUnsupportedModelError(msg)) throw e;
 
-    // 自动兜底：当网关返回“模型不支持生图”时，尝试从 /v1/models 里选一个图片模型。
+    // 自动兜底：当网关返回"模型不支持生图"时，尝试从 /v1/models 里选一个图片模型。
     try {
       const models = await listModels({ api: cfg, signal });
       const fallback = chooseFallbackModel(initialModel, models);

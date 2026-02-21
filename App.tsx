@@ -111,7 +111,7 @@ const getErrorAdvice = (message: string): string[] => {
   if (isLikelyModelUnsupported(message)) {
     return [
       "在左下角模型选择器切换为可用图片模型。",
-      "推荐先用 gemini-2.5-flash-image 或 gpt-image-1.5。",
+      "推荐先用 gemini-2.5-flash-image-preview 或 gpt-image-1.5。",
       "如果走公网地址失败，改成 /api 并在 .env.local 配置 VITE_API_PROXY_TARGET=https://n.lconai.com。",
     ];
   }
@@ -119,7 +119,7 @@ const getErrorAdvice = (message: string): string[] => {
     return [
       "这是上游服务超时，不是账号配置错误，先直接重试一次。",
       "把尺寸先设为 1:1（1024x1024）、每次生成张数设为 1，可显著降低超时概率。",
-      "可切换到更快模型（如 gemini-2.5-flash-image）。",
+      "可切换到更快模型（如 gemini-2.5-flash-image-preview）。",
       "若你用 Cloudflare 代理站点，长请求可能被 100 秒限制中断，生产建议给应用域名关闭代理（DNS only）。",
     ];
   }

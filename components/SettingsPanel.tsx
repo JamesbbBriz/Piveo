@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AspectRatio, ProductScale } from "../types";
 import { ApiConfig } from "../services/apiConfig";
-import { fetchBalance, listModels } from "../services/openaiImages";
+import { listModels } from "../services/openaiImages";
 import { getSupportedAspectRatios } from "../services/sizeUtils";
 import { clearAll } from "../services/storage";
 import { Icon } from "./Icon";
@@ -63,15 +63,6 @@ const PRODUCT_SCALE_LABELS: Record<string, string> = {
   [ProductScale.Large]: "突出",
 };
 
-const formatMoney = (amount: number | null, currency = "USD"): string => {
-  if (amount === null || !Number.isFinite(amount)) return "暂不可用";
-  try {
-    return new Intl.NumberFormat("zh-CN", { style: "currency", currency }).format(amount);
-  } catch {
-    return `${amount.toFixed(2)} ${currency}`;
-  }
-};
-
 const toPositiveInt = (raw: unknown, fallback: number): number => {
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
@@ -79,10 +70,6 @@ const toPositiveInt = (raw: unknown, fallback: number): number => {
   return v >= 0 ? v : fallback;
 };
 
-const MIN_BALANCE_REFRESH_MS = Math.max(
-  10_000,
-  toPositiveInt((import.meta as any)?.env?.VITE_BALANCE_REFRESH_MIN_INTERVAL_MS, 60_000)
-);
 const MIN_MODELS_REFRESH_MS = Math.max(
   30_000,
   toPositiveInt((import.meta as any)?.env?.VITE_MODELS_REFRESH_MIN_INTERVAL_MS, 300_000)
@@ -118,24 +105,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onUpdateDefaultPreferences,
   balanceRefreshTick,
 }) => {
-  /* ── Model & balance fetching ── */
+  /* ── Model fetching ── */
   const [models, setModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
-  const [loadingBalance, setLoadingBalance] = useState(false);
   const [pendingModel, setPendingModel] = useState<string | null>(null);
-  const [balanceAmount, setBalanceAmount] = useState<number | null>(null);
-  const [balanceCurrency, setBalanceCurrency] = useState("USD");
-  const [balanceHint, setBalanceHint] = useState("加载中...");
   const mountedRef = useRef(true);
   const modelsReqIdRef = useRef(0);
-  const balanceReqIdRef = useRef(0);
-  const balanceLockRef = useRef(false);
   const lastModelsRequestedAtRef = useRef(0);
-  const lastBalanceRequestedAtRef = useRef(0);
   const modelsFailureCountRef = useRef(0);
-  const balanceFailureCountRef = useRef(0);
   const modelsCooldownUntilRef = useRef(0);
-  const balanceCooldownUntilRef = useRef(0);
 
   const [clearConfirm, setClearConfirm] = useState(false);
 
@@ -174,60 +152,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     }
   }, [apiConfig, models.length]);
 
-  const loadBalance = useCallback(async (opts?: { force?: boolean }) => {
-    const now = Date.now();
-    const force = Boolean(opts?.force);
-    if (!force) {
-      if (now < balanceCooldownUntilRef.current) return;
-      if (now - lastBalanceRequestedAtRef.current < MIN_BALANCE_REFRESH_MS) return;
-    }
-    if (balanceLockRef.current) return;
-    balanceLockRef.current = true;
-    lastBalanceRequestedAtRef.current = now;
-    const reqId = ++balanceReqIdRef.current;
-    setLoadingBalance(true);
-    try {
-      const r = await fetchBalance({ api: apiConfig, signal: AbortSignal.timeout(QUICK_TIMEOUT_MS) });
-      if (!mountedRef.current || reqId !== balanceReqIdRef.current) return;
-      setBalanceAmount(r.amount);
-      setBalanceCurrency(r.currency || "USD");
-      const now = Date.now();
-      setBalanceHint(r.amount === null ? "暂不可用" : `已更新 ${new Date(now).toLocaleTimeString("zh-CN", { hour12: false })}`);
-      balanceFailureCountRef.current = 0;
-      balanceCooldownUntilRef.current = 0;
-    } catch (e) {
-      if (!mountedRef.current || reqId !== balanceReqIdRef.current) return;
-      const msg = e instanceof Error ? e.message : String(e);
-      const hint = /鉴权失败|401|403/i.test(msg)
-        ? "余额接口鉴权失败"
-        : /not_supported|404|405/i.test(msg)
-          ? "网关未开放余额接口"
-          : /timeout|504|502|503|gateway/i.test(msg)
-            ? "余额接口超时，请稍后重试"
-            : "余额暂不可用";
-      setBalanceAmount(null);
-      setBalanceHint(hint);
-      balanceFailureCountRef.current += 1;
-      const idx = Math.min(balanceFailureCountRef.current - 1, FAILURE_BACKOFFS_MS.length - 1);
-      balanceCooldownUntilRef.current = Date.now() + FAILURE_BACKOFFS_MS[idx];
-    } finally {
-      balanceLockRef.current = false;
-      if (mountedRef.current && reqId === balanceReqIdRef.current) setLoadingBalance(false);
-    }
-  }, [apiConfig]);
-
   // Fetch on open
   useEffect(() => {
     if (!open) return;
     void loadModelList({ force: true });
-    void loadBalance({ force: true });
-  }, [open, loadModelList, loadBalance]);
-
-  // External refresh tick
-  useEffect(() => {
-    if (!open || balanceRefreshTick <= 0) return;
-    void loadBalance();
-  }, [balanceRefreshTick, open, loadBalance]);
+  }, [open, loadModelList]);
 
   // Clear pending when model syncs
   useEffect(() => {
@@ -346,23 +275,17 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 </div>
               )}
 
-              {/* Balance */}
-              <div>
-                <label className="text-[11px] text-gray-500 mb-1 block">余额</label>
-                <div className="flex items-center justify-between bg-dark-900 border border-dark-600 rounded-md px-2.5 py-2">
-                  <span className="text-sm text-gray-200">{formatMoney(balanceAmount, balanceCurrency)}</span>
-                  <button
-                    onClick={() => { void loadModelList({ force: true }); void loadBalance({ force: true }); }}
-                    className="text-gray-500 hover:text-gray-300 p-0.5 transition-colors"
-                    title="刷新模型与余额"
-                  >
-                    <Icon
-                      name={(loadingModels || loadingBalance) ? "spinner" : "arrows-rotate"}
-                      className={`text-xs ${(loadingModels || loadingBalance) ? "fa-spin" : ""}`}
-                    />
-                  </button>
-                </div>
-                <p className="text-[10px] text-gray-600 mt-1">{balanceHint}</p>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => void loadModelList({ force: true })}
+                  className="text-gray-500 hover:text-gray-300 p-0.5 transition-colors"
+                  title="刷新模型"
+                >
+                  <Icon
+                    name={loadingModels ? "spinner" : "arrows-rotate"}
+                    className={`text-xs ${loadingModels ? "fa-spin" : ""}`}
+                  />
+                </button>
               </div>
             </div>
           </section>
