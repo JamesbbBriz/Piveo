@@ -1,6 +1,10 @@
 export interface AuthUser {
   username: string;
+  isSuperAdmin?: boolean;
 }
+
+export interface ProviderOption { id: string; label: string; }
+export interface ProviderInfo { active: string; options: ProviderOption[]; }
 
 const requestJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const resp = await fetch(path, {
@@ -51,5 +55,18 @@ export const login = async (username: string, password: string): Promise<AuthUse
 
 export const logout = async (): Promise<void> => {
   await requestJson<{ ok: boolean }>("/auth/logout", { method: "POST" });
+};
+
+export const getProvider = async (): Promise<ProviderInfo> => {
+  const data = await requestJson<{ ok: boolean } & ProviderInfo>("/auth/provider", { method: "GET" });
+  return { active: data.active, options: data.options };
+};
+
+export const switchProvider = async (provider: string): Promise<{ active: string }> => {
+  const data = await requestJson<{ ok: boolean; active: string }>("/auth/provider", {
+    method: "POST",
+    body: JSON.stringify({ provider }),
+  });
+  return { active: data.active };
 };
 

@@ -45,6 +45,10 @@ export interface 创建图片请求 {
    */
   prompt: string;
   /**
+   * 系统提示词，用于 chat/completions 路径注入 system role，images/generations 路径则拼接在 prompt 前。
+   */
+  systemPrompt?: string;
+  /**
    * 响应格式，返回生成图片的格式，有些是强制返回固定格式。
    */
   response_format?: ResponseFormat;
@@ -484,10 +488,13 @@ const geminiImageViaChat = async (
           credentials: "include",
           body: JSON.stringify({
             model,
-            messages: [{ role: "user", content }],
+            messages: [
+              ...(req.systemPrompt ? [{ role: "system", content: req.systemPrompt }] : []),
+              { role: "user", content },
+            ],
             ...(sizeToAspectRatio(String(size)) && {
               extra_body: {
-                google: { image_config: { aspectRatio: sizeToAspectRatio(String(size)) } },
+                google: { image_config: { aspect_ratio: sizeToAspectRatio(String(size)) } },
               },
             }),
           }),
@@ -609,7 +616,7 @@ export const imagesGenerations = async (
     }
 
     const body: Record<string, any> = {
-      prompt: req.prompt,
+      prompt: req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt,
       model,
       n: req.n ?? 1,
       response_format: req.response_format ?? ResponseFormat.Url,
@@ -623,7 +630,7 @@ export const imagesGenerations = async (
     // Pass-through for extra fields (future-proofing)
     for (const [k, v] of Object.entries(req)) {
       if (k in body) continue;
-      if (k === "image" || k === "prompt" || k === "model" || k === "n" || k === "response_format" || k === "size")
+      if (k === "image" || k === "prompt" || k === "model" || k === "n" || k === "response_format" || k === "size" || k === "systemPrompt")
         continue;
       body[k] = v;
     }

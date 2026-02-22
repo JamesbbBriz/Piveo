@@ -2,6 +2,7 @@ import { ImageResponseFormat, Message, SessionSettings, ProductScale } from "../
 import { imageObjToDataUrl, imagesGenerations, ResponseFormat } from "./openaiImages";
 import { getSupportedSizeForAspect } from "./sizeUtils";
 import { getEffectiveApiConfig } from "./apiConfig";
+import { urlToDataUrl } from "./imageData";
 
 const aspectRatioToSize = (aspectRatio: string, model?: string): string => {
   return getSupportedSizeForAspect(aspectRatio, model);
@@ -37,7 +38,7 @@ export const generateModelCharacter = async (
   const resp = await imagesGenerations(
     {
       prompt,
-      model: "gemini-2.5-flash-image-preview" as any,
+      model: "gemini-2.5-flash-image" as any,
       n: 1,
       size: "1024x1024",
       response_format: ResponseFormat.Url,
@@ -89,6 +90,20 @@ const detectImageInputMode = (value: string): ImageInputMode => {
   return "b64";
 };
 
+/** 如果是 blob URL（/api/data/blobs/...），fetch 并转为 data URL；data URL 和 http URL 保持不变 */
+const ensureDataUrl = async (imageUrl: string | null): Promise<string | null> => {
+  if (!imageUrl) return null;
+  if (/^data:/i.test(imageUrl)) return imageUrl; // 已经是 data URL
+  if (/^https?:\/\//i.test(imageUrl)) return imageUrl; // 远程 URL，网关可直接访问
+  // 相对路径（如 /api/data/blobs/xxx）→ 需要 fetch 转为 data URL
+  try {
+    return await urlToDataUrl(imageUrl);
+  } catch (e) {
+    console.warn("[images] 转换 blob URL 为 data URL 失败:", imageUrl, e);
+    return imageUrl;
+  }
+};
+
 
 export const generateResponse = async (
   currentMessageText: string,
@@ -115,9 +130,24 @@ export const generateResponse = async (
     }
   }
 
-  const extraImages = Array.isArray(options.extraImages)
+  const extraImagesRaw = Array.isArray(options.extraImages)
     ? options.extraImages.map((img) => String(img || "").trim()).filter(Boolean)
     : [];
+
+  // 确保所有图片都是可发送格式（blob URL → data URL）
+  const [resolvedRef, resolvedHistory, resolvedProduct, resolvedModel, ...resolvedExtras] =
+    await Promise.all([
+      ensureDataUrl(referenceImage),
+      ensureDataUrl(lastHistoryImage),
+      ensureDataUrl(productImage),
+      ensureDataUrl(modelImage),
+      ...extraImagesRaw.map((img) => ensureDataUrl(img)),
+    ]);
+  referenceImage = resolvedRef;
+  lastHistoryImage = resolvedHistory;
+  productImage = resolvedProduct;
+  modelImage = resolvedModel;
+  const extraImages = resolvedExtras.filter((s): s is string => Boolean(s));
 
   // 当存在"当前参考图/连续编辑图"时，产品图只做兜底，不再并行注入，
   // 避免产品图（尤其带人物的产品图）覆盖当前编辑语义。
@@ -162,10 +192,9 @@ export const generateResponse = async (
   // --- ENHANCED SCALE LOGIC ---
   let scaleInstruction = "";
   if (settings.productScale === ProductScale.Small) {
-    scaleInstruction =
-      "尺寸要求：产品（例如发圈/头绳）必须非常纤细、细薄、精致，呈现为细线而不是厚带。相对标准版本，显著变小、变细。";
+    scaleInstruction = "产品尺寸要小而精致，线条纤细，细节轻盈，相对于标准版本显著缩小。";
   } else if (settings.productScale === ProductScale.Large) {
-    scaleInstruction = "尺寸要求：让产品更显眼、更厚、更大。";
+    scaleInstruction = "让产品更显眼、更突出。";
   }
 
   // --- PRODUCT INFO ---
@@ -201,36 +230,42 @@ export const generateResponse = async (
     finalPrompt.includes("变细") ||
     finalPrompt.includes("变小")
   ) {
-    scaleInstruction +=
-      " 关键：用户明确要求更小、更细。如果是发圈/头绳，请渲染为非常细的弹性细线，而不是厚重的发圈或宽带；相较前一版显著降低厚度与直径。";
+    scaleInstruction += " 用户明确要求更小更细，请显著降低产品的体积与线条粗细。";
   }
 
   try {
     // 这里不再拼接聊天历史文本，避免旧上下文干扰和额外时延。
     // 连续编辑的一致性仍通过图片输入（product/model/reference/last image）保证。
-    const systemText = settings.systemPrompt?.trim()
-      ? `系统指令：\n${settings.systemPrompt.trim()}\n\n`
-      : "";
+
+    // 按图片输入位置声明角色，帮助模型明确每张图的职责。
+    // 图片顺序：referenceImage/lastHistoryImage → productImage → modelImage
     let imageContext = "";
     if (includeProductImage && modelImage) {
-      imageContext += "\n图片说明：提供了产品图和模特参考图。产品图是核心参考——请严格还原产品的外观、颜色、材质与细节。模特图仅用于人物外貌一致性参考。";
+      // 图片1=产品，图片2=模特
+      imageContext = "图片1是产品参考图，图片2是模特参考图。请严格还原图片1中产品的外观、颜色、材质与细节，保持完全不变。保持图片2中人物的面部特征、体型与身份特征不变。将图片1的产品展示于图片2的模特身上，生成专业电商展示图。";
     } else if (includeProductImage) {
-      imageContext += "\n图片说明：第一张是主要产品图，请重点参考产品本身的外观、颜色、材质与细节，无视图中的模特或人物。";
+      // 图片1=产品，无模特
+      imageContext = "图片1是产品参考图。请严格还原图片1中产品的外观、颜色、材质与细节，保持完全不变。模特或人物由你自行创建，产品为视觉主体。";
+    } else if ((referenceImage || lastHistoryImage) && modelImage) {
+      // 图片1=参考/连续编辑，图片2=模特
+      imageContext = "图片1是当前编辑参考图，图片2是模特参考图。对图片1进行修改，同时保持图片2中人物的面部特征与身份特征不变。";
+    } else if (modelImage) {
+      // 图片1=模特，无产品图
+      imageContext = "图片1是模特参考图。请保持图片1中人物的面部特征与身份特征完全不变。";
     }
-    if (modelImage && !includeProductImage) {
-      imageContext += "\n有模特图作为人物一致性参考，请保持人物特征稳定。";
-    }
+
     const n = Math.min(Math.max(options.n ?? 1, 1), 10);
     const responseFormat = options.responseFormat ?? settings.responseFormat ?? "url";
     const currentModel = getEffectiveApiConfig().defaultImageModel;
     const sizeUsed = options.size ?? aspectRatioToSize(settings.aspectRatio, currentModel);
-    const sizeInstruction = sizeUsed ? `\n\n尺寸要求：请生成 ${sizeUsed} 的图片。` : "";
     const productContext = productInfoInstruction ? `\n${productInfoInstruction}` : "";
-    const promptUsed = `${systemText}${imageContext}${productContext}${finalPrompt} ${scaleInstruction}${sizeInstruction}`.trim();
+    const contextPrefix = imageContext ? `${imageContext}\n` : "";
+    const promptUsed = `${contextPrefix}${productContext}${finalPrompt} ${scaleInstruction}`.trim();
 
     const resp = await imagesGenerations(
       {
         prompt: promptUsed,
+        systemPrompt: settings.systemPrompt?.trim() || undefined,
         n,
         response_format: rfToEnum(responseFormat),
         size: sizeUsed,
