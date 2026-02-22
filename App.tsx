@@ -1,55 +1,80 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Sidebar } from './components/Sidebar';
-import { ChatMessage } from './components/ChatMessage';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import { Icon } from './components/Icon';
 import { AspectRatio, BatchJob, BatchJobStatus, BatchSceneType, BatchSlot, BatchVersion, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter, ProductCatalogItem } from './types';
-import { initPersistentStorage, loadBatchJobs, loadSessions, loadTemplates, loadModels, loadProducts, saveBatchJobs, saveSessions, saveTemplates, saveModels, saveProducts, clearAll, backupSessionsSync } from './services/storage';
+import { clearAll } from './services/storage';
 import { generateResponse, enhancePrompt, type GenerateResponseResult } from './services/gemini';
 import { DEFAULT_ASPECT_RATIO } from './constants';
 import { ApiConfig, getEffectiveApiConfig, saveStoredApiConfig } from './services/apiConfig';
-import { DefaultPreferences, loadDefaultPreferences, saveDefaultPreferences } from './components/SettingsPanel';
+import { DefaultPreferences, loadDefaultPreferences, saveDefaultPreferences, SettingsPanel } from './components/SettingsPanel';
 import { AssetsModal, type AssetItem } from './components/AssetsModal';
-import { ErrorDetailsModal, type ErrorDetails } from './components/ErrorDetailsModal';
+import { type ErrorDetails } from './components/ErrorDetailsModal';
 import { MaskEditorModal, type MaskEditorHistoryItem } from './components/MaskEditorModal';
 import { imagesEdits, imagesGenerations, imageObjToDataUrl, ResponseFormat } from './services/openaiImages';
 import { filterSizesByAspect, getSupportedAspectRatios, getSupportedSizeForAspect } from './services/sizeUtils';
-import { PromptModelPanel } from './components/PromptModelPanel';
-import { SystemPromptBar } from './components/SystemPromptBar';
-import { getSession, login, logout } from './services/auth';
+import { login, logout } from './services/auth';
 import { BatchSetItem, BatchSetModal } from './components/BatchSetModal';
 import { BatchJobsPanel } from './components/BatchJobsPanel';
 import { downloadImageWithFormat, loadDownloadOptions } from './services/imageDownload';
 import { ModelsLibraryModal } from './components/ModelsLibraryModal';
 import { ProductsLibraryModal } from './components/ProductsLibraryModal';
 import { urlToDataUrl } from './services/imageData';
-import { QueueStats, onQueueStateChange } from './services/generationQueue';
-
-const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSettings => {
-  const aspectRatioValues = getSupportedAspectRatios();
-  const productScaleValues = Object.values(ProductScale);
-
-  const aspectRatio = aspectRatioValues.includes(raw?.aspectRatio) ? raw.aspectRatio : DEFAULT_ASPECT_RATIO;
-
-  const batchCountRaw = typeof raw?.batchCount === "number" ? raw.batchCount : 1;
-  const batchCount = Math.min(Math.max(Math.round(batchCountRaw), 1), 10);
-
-  const batchSizes = [getSupportedSizeForAspect(aspectRatio)];
-
-  return {
-    systemPrompt: typeof raw?.systemPrompt === "string" ? raw.systemPrompt : defaultTemplate,
-    aspectRatio,
-    selectedModelId: typeof raw?.selectedModelId === "string" ? raw.selectedModelId : null,
-    productScale: productScaleValues.includes(raw?.productScale) ? raw.productScale : ProductScale.Standard,
-    responseFormat: "url",
-    batchCount,
-    batchSizes,
-    autoUseLastImage: typeof raw?.autoUseLastImage === "boolean" ? raw.autoUseLastImage : true,
-    productImage: raw?.productImage ?? null,
-  };
-};
+import { AppProvider, useProjects, useBatch, useLibrary, useTeam, useUI, useAppContext } from './store/AppContext';
+import { syncService } from './services/sync';
+import { TeamManager } from './components/TeamManager';
+import { Layout } from './components/Layout';
+import { MainContent } from './components/MainContent';
+import { PropertyPanel } from './components/PropertyPanel';
+import { PromptBar } from './components/PromptBar';
+import { extractImagesFromSession } from './services/projectUtils';
+import { ImageGallery } from './components/ImageGallery';
+import { ToastProvider } from './components/Toast';
+import type { GeneratedImage } from './types';
+import {
+  SET_SESSIONS,
+  SET_CURRENT_SESSION_ID,
+  ADD_SESSION,
+  UPDATE_SESSION,
+  SET_BATCH_JOBS,
+  ADD_BATCH_JOB,
+  UPDATE_BATCH_JOB,
+  SET_SELECTED_BATCH_JOB_ID,
+  SET_BATCH_GENERATING,
+  SET_BATCH_GENERATION_PROGRESS,
+  SET_REFINING_SLOT_IDS,
+  SET_MODELS,
+  ADD_MODEL,
+  UPDATE_MODEL,
+  DELETE_MODEL,
+  SET_PRODUCTS,
+  ADD_PRODUCT,
+  UPDATE_PRODUCT,
+  DELETE_PRODUCT,
+  SET_TEMPLATES,
+  SET_GENERATING,
+  SET_GENERATION_STAGE,
+  SET_GENERATION_PROGRESS,
+  SET_ENHANCING,
+  SET_PREVIEW_IMAGE,
+  SET_ERROR_DETAILS,
+  SET_MASK_EDIT_CONTEXT,
+  SET_ADVANCED_PANEL_OPEN,
+  SET_QUEUE_STATS,
+  SET_CURRENT_VIEW,
+  SET_INPUT_TEXT,
+  SET_SELECTED_IMAGE,
+  SET_API_CONFIG,
+  SET_DEFAULT_PREFERENCES,
+  SET_AUTH_USER,
+  SET_AUTH_READY,
+  SET_AUTH_LOADING,
+  ADD_TEAM,
+  DELETE_TEAM,
+  UPDATE_TEAM,
+  SET_CURRENT_TEAM_ID,
+} from './store/actions';
 
 const aspectRatioToSize = (aspectRatio: AspectRatio | string): string => {
   return getSupportedSizeForAspect(aspectRatio);
@@ -87,8 +112,6 @@ const isLikelyQueueBusy = (message: string): boolean =>
 
 const isLikelyMixedImageInput = (message: string): boolean =>
   /请只使用一种图片输入方式|one image input|url or base64|文件上传、URL 或 base64/i.test(message);
-
-const ADVANCED_PANEL_STORAGE_KEY = "topseller.ui.advanced_panel_open";
 
 const getFriendlyErrorMessage = (message: string): string => {
   if (isLikelyQueueBusy(message)) return "当前生成请求较多，任务已被限流保护，请稍后重试。";
@@ -235,76 +258,38 @@ const createNewSession = (templates: SystemTemplate[], prefs?: DefaultPreference
   };
 };
 
-const App: React.FC = () => {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [batchJobs, setBatchJobs] = useState<BatchJob[]>([]);
-  const [selectedBatchJobId, setSelectedBatchJobId] = useState<string | null>(null);
-  const [currentView, setCurrentView] = useState<"chat" | "batch">("chat");
-  const [templates, setTemplates] = useState<SystemTemplate[]>([]);
-  const [models, setModels] = useState<ModelCharacter[]>([]);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [apiConfig, setApiConfig] = useState<ApiConfig>(() => getEffectiveApiConfig());
-  const [defaultPreferences, setDefaultPreferences] = useState<DefaultPreferences>(() => loadDefaultPreferences());
+const AppInner: React.FC = () => {
+  // ——— Store hooks ———
+  const { sessions, currentSessionId, dispatch: projectDispatch } = useProjects();
+  const { batchJobs, selectedBatchJobId, isBatchGenerating, batchGenerationProgress, refiningSlotIds, dispatch: batchDispatch } = useBatch();
+  const { models, products, templates, dispatch: libraryDispatch } = useLibrary();
+  const { teams, currentTeamId, dispatch: teamDispatch } = useTeam();
+  const {
+    isGenerating, generationStage, generationProgress, isEnhancing,
+    previewImageUrl, errorDetails, maskEditContext, isAdvancedPanelOpen,
+    queueStats, currentView, inputText, selectedImage, apiConfig, defaultPreferences,
+    authUser, authReady, authLoading, isSuperAdmin,
+    dispatch: uiDispatch,
+  } = useUI();
+  const { hasHydratedStorage } = useAppContext();
 
-  const [inputText, setInputText] = useState('');
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [generationStage, setGenerationStage] = useState<string | null>(null);
-  const [generationProgress, setGenerationProgress] = useState<{ current: number; total: number } | null>(null);
-  const [isEnhancing, setIsEnhancing] = useState(false);
-  const [isBatchGenerating, setIsBatchGenerating] = useState(false);
-  const [refiningSlotIds, setRefiningSlotIds] = useState<Set<string>>(new Set());
-  const [batchGenerationProgress, setBatchGenerationProgress] = useState<{
-    currentSlot: number;
-    totalSlots: number;
-    currentSlotLabel: string;
-  } | null>(null);
-  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
-  const [errorDetails, setErrorDetails] = useState<ErrorDetails | null>(null);
-  const [isErrorModalOpen, setIsErrorModalOpen] = useState(false);
-  const [isAssetsOpen, setIsAssetsOpen] = useState(false);
+  // ——— Local UI state (not worth putting in store) ———
+  const [navView, setNavView] = useState<string>('project');
+  const [isErrorExpanded, setIsErrorExpanded] = useState(false);
   const [isBatchSetOpen, setIsBatchSetOpen] = useState(false);
   const [addSlotsTargetJobId, setAddSlotsTargetJobId] = useState<string | null>(null);
-  const [isModelsLibraryOpen, setIsModelsLibraryOpen] = useState(false);
-  const [isProductsLibraryOpen, setIsProductsLibraryOpen] = useState(false);
-  const [products, setProducts] = useState<ProductCatalogItem[]>([]);
   const [maskEditBaseUrl, setMaskEditBaseUrl] = useState<string | null>(null);
-  const [maskEditContext, setMaskEditContext] = useState<{
-    source: "chat";
-  } | {
-    source: "batch";
-    jobId: string;
-    slotId: string;
-    versionId?: string;
-    historyItems: MaskEditorHistoryItem[];
-  } | null>(null);
   const [balanceRefreshTick, setBalanceRefreshTick] = useState(0);
-  const [hasHydratedStorage, setHasHydratedStorage] = useState(false);
-  const [authReady, setAuthReady] = useState(false);
-  const [authUser, setAuthUser] = useState<string | null>(null);
-  const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
-  const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
-  const [isAdvancedPanelOpen, setIsAdvancedPanelOpen] = useState<boolean>(() => {
-    try {
-      return window.localStorage.getItem(ADVANCED_PANEL_STORAGE_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
+  const [selectedGalleryImageId, setSelectedGalleryImageId] = useState<string | null>(null);
 
+  // ——— Refs ———
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const batchAbortRef = useRef<AbortController | null>(null);
-  const saveSessionsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSessionsRef = useRef<Session[] | null>(null);
-  const latestSessionsRef = useRef<Session[]>([]);
-  const saveBatchJobsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingBatchJobsRef = useRef<BatchJob[] | null>(null);
-  const latestBatchJobsRef = useRef<BatchJob[]>([]);
+  const autoStartBatchJobIdRef = useRef<string | null>(null);
   const sessionAssetCountCacheRef = useRef<Map<string, { messagesRef: Message[]; count: number }>>(new Map());
   const batchAssetCountCacheRef = useRef<Map<string, { slotsRef: BatchSlot[]; count: number }>>(new Map());
   const lastRunRef = useRef<{
@@ -321,177 +306,7 @@ const App: React.FC = () => {
     };
   } | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    const checkAuth = async () => {
-      const session = await getSession();
-      if (cancelled) return;
-      setAuthUser(session?.username || null);
-      setAuthReady(true);
-    };
-    void checkAuth();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    const unsubscribe = onQueueStateChange((stats) => {
-      setQueueStats(stats);
-    });
-    return unsubscribe;
-  }, []);
-
-  useEffect(() => {
-    if (!authReady || !authUser) return;
-    let cancelled = false;
-    const bootstrap = async () => {
-      await initPersistentStorage();
-      const [loadedTemplates, loadedModels, loadedProducts, loadedSessions, loadedBatchJobs] = await Promise.all([
-        loadTemplates(),
-        loadModels(),
-        loadProducts(),
-        loadSessions(),
-        loadBatchJobs(),
-      ]);
-      if (cancelled) return;
-
-      setTemplates(loadedTemplates);
-      setModels(loadedModels);
-      setProducts(loadedProducts);
-      if (loadedSessions.length > 0) {
-        const defaultTemplate = loadedTemplates.length > 0 ? loadedTemplates[0].content : "";
-        const localizeLegacyText = (t: string): string => {
-          const s = String(t || "").trim();
-          if (!s) return s;
-          if (s === "An error occurred. Please verify your API settings.") return "发生错误：请检查模型、令牌或网络配置。";
-          if (s === "Failed to generate model.") return "生成模特失败。";
-          if (s.startsWith("Failed to generate model:")) return `生成模特失败：${s.replace("Failed to generate model:", "").trim()}`;
-          return t;
-        };
-        const normalized = loadedSessions.map((s) => ({
-          ...s,
-          settings: normalizeSessionSettings(s.settings, defaultTemplate),
-          messages: Array.isArray(s.messages)
-            ? s.messages.map((m: any) => ({
-                ...m,
-                parts: Array.isArray(m?.parts)
-                  ? m.parts.map((p: any) =>
-                      p?.type === "text" && typeof p?.text === "string" ? { ...p, text: localizeLegacyText(p.text) } : p
-                    )
-                  : [],
-              }))
-            : [],
-        }));
-        setSessions(normalized);
-        setCurrentSessionId(normalized[0].id);
-      } else {
-        const newSession = createNewSession(loadedTemplates);
-        setSessions([newSession]);
-        setCurrentSessionId(newSession.id);
-      }
-      if (Array.isArray(loadedBatchJobs)) {
-        setBatchJobs(loadedBatchJobs);
-        setSelectedBatchJobId((prev) => prev || loadedBatchJobs[0]?.id || null);
-      }
-      setHasHydratedStorage(true);
-    };
-    void bootstrap();
-    return () => {
-      cancelled = true;
-    };
-  }, [authReady, authUser]);
-
-  // P1-7: sessions 保存添加防抖，避免频繁写入
-  useEffect(() => {
-    latestSessionsRef.current = sessions;
-  }, [sessions]);
-
-  useEffect(() => {
-    latestBatchJobsRef.current = batchJobs;
-  }, [batchJobs]);
-
-  useEffect(() => {
-    if (!hasHydratedStorage) return;
-    pendingSessionsRef.current = sessions;
-    if (saveSessionsTimerRef.current) clearTimeout(saveSessionsTimerRef.current);
-    saveSessionsTimerRef.current = setTimeout(() => {
-      saveSessionsTimerRef.current = null;
-      if (pendingSessionsRef.current) {
-        void saveSessions(pendingSessionsRef.current);
-        pendingSessionsRef.current = null;
-      }
-    }, 400);
-    return () => {
-      if (saveSessionsTimerRef.current) clearTimeout(saveSessionsTimerRef.current);
-    };
-  }, [sessions, hasHydratedStorage]);
-
-  useEffect(() => {
-    if (!hasHydratedStorage) return;
-    pendingBatchJobsRef.current = batchJobs;
-    if (saveBatchJobsTimerRef.current) clearTimeout(saveBatchJobsTimerRef.current);
-    saveBatchJobsTimerRef.current = setTimeout(() => {
-      saveBatchJobsTimerRef.current = null;
-      if (pendingBatchJobsRef.current) {
-        void saveBatchJobs(pendingBatchJobsRef.current);
-        pendingBatchJobsRef.current = null;
-      }
-    }, 400);
-    return () => {
-      if (saveBatchJobsTimerRef.current) clearTimeout(saveBatchJobsTimerRef.current);
-    };
-  }, [batchJobs, hasHydratedStorage]);
-
-  // beforeunload 时强制 flush，并同步写一份 localStorage 紧急备份
-  useEffect(() => {
-    const flushSessions = () => {
-      let toFlush: Session[] | null = null;
-      if (saveSessionsTimerRef.current) {
-        clearTimeout(saveSessionsTimerRef.current);
-        saveSessionsTimerRef.current = null;
-      }
-      if (pendingSessionsRef.current) {
-        toFlush = pendingSessionsRef.current;
-        void saveSessions(pendingSessionsRef.current);
-        pendingSessionsRef.current = null;
-      }
-      backupSessionsSync(toFlush || latestSessionsRef.current);
-      if (saveBatchJobsTimerRef.current) {
-        clearTimeout(saveBatchJobsTimerRef.current);
-        saveBatchJobsTimerRef.current = null;
-      }
-      if (pendingBatchJobsRef.current) {
-        void saveBatchJobs(pendingBatchJobsRef.current);
-        pendingBatchJobsRef.current = null;
-      } else if (latestBatchJobsRef.current.length > 0) {
-        void saveBatchJobs(latestBatchJobsRef.current);
-      }
-    };
-    window.addEventListener("beforeunload", flushSessions);
-    return () => window.removeEventListener("beforeunload", flushSessions);
-  }, []);
-  useEffect(() => {
-    if (!hasHydratedStorage) return;
-    void saveTemplates(templates);
-  }, [templates, hasHydratedStorage]);
-  useEffect(() => {
-    if (!hasHydratedStorage) return;
-    void saveModels(models);
-  }, [models, hasHydratedStorage]);
-  useEffect(() => {
-    if (!hasHydratedStorage) return;
-    void saveProducts(products);
-  }, [products, hasHydratedStorage]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(ADVANCED_PANEL_STORAGE_KEY, isAdvancedPanelOpen ? "1" : "0");
-    } catch {
-      // Ignore localStorage write failures.
-    }
-  }, [isAdvancedPanelOpen]);
-
+  // ——— Derived state ———
   const currentSession = sessions.find(s => s.id === currentSessionId) || sessions[0];
   const currentMessageCount = currentSession?.messages.length || 0;
   const selectedBatchJob = useMemo(
@@ -515,15 +330,6 @@ const App: React.FC = () => {
     }
     return `调度器就绪：并发 ${queueStats.maxInFlight}`;
   }, [queueStats]);
-
-  useEffect(() => {
-    if (batchJobs.length === 0) {
-      if (selectedBatchJobId !== null) setSelectedBatchJobId(null);
-      return;
-    }
-    if (selectedBatchJobId && batchJobs.some((j) => j.id === selectedBatchJobId)) return;
-    setSelectedBatchJobId(batchJobs[0].id);
-  }, [batchJobs, currentView, selectedBatchJobId]);
 
   const maskHistoryItems = useMemo<MaskEditorHistoryItem[]>(() => {
     if (maskEditContext?.source === "batch") {
@@ -584,7 +390,7 @@ const App: React.FC = () => {
   }, [currentSessionId, currentMessageCount]);
 
   const allAssets: AssetItem[] = useMemo(() => {
-    if (!isAssetsOpen) return [];
+    if (navView !== 'assets') return [];
     const out: AssetItem[] = [];
     for (const s of sessions) {
       let lastUserText: string | null = null;
@@ -639,7 +445,7 @@ const App: React.FC = () => {
       }
     }
     return out;
-  }, [sessions, batchJobs, isAssetsOpen]);
+  }, [sessions, batchJobs, navView]);
 
   const totalAssetCount = useMemo(() => {
     const sessionCache = sessionAssetCountCacheRef.current;
@@ -666,9 +472,9 @@ const App: React.FC = () => {
       sessionCache.set(s.id, { messagesRef: s.messages, count: sessionCount });
       count += sessionCount;
     }
-    for (const key of Array.from(sessionCache.keys())) {
+    sessionCache.forEach((_v, key) => {
       if (!nextSessionIds.has(key)) sessionCache.delete(key);
-    }
+    });
 
     for (const job of batchJobs) {
       nextJobIds.add(job.id);
@@ -687,9 +493,9 @@ const App: React.FC = () => {
       batchCache.set(job.id, { slotsRef: job.slots, count: jobCount });
       count += jobCount;
     }
-    for (const key of Array.from(batchCache.keys())) {
+    batchCache.forEach((_v, key) => {
       if (!nextJobIds.has(key)) batchCache.delete(key);
-    }
+    });
 
     return count;
   }, [sessions, batchJobs]);
@@ -699,94 +505,153 @@ const App: React.FC = () => {
     [batchJobs]
   );
 
-  const toggleSidebar = useCallback(() => {
-    setIsSidebarOpen((v) => !v);
-  }, []);
+  // Gallery images: chat/session images + batch job primary versions
+  const galleryImages = useMemo<GeneratedImage[]>(() => {
+    if (!currentSession) return [];
+    const chatImages = extractImagesFromSession(currentSession);
+
+    const batchImages: GeneratedImage[] = [];
+    for (const job of batchJobs) {
+      if (job.status === 'deleted') continue;
+      for (const slot of job.slots) {
+        if (!slot.versions.length) continue;
+        const primary = slot.versions.find(v => v.isPrimary)
+          ?? [...slot.versions].sort((a, b) => b.createdAt - a.createdAt)[0];
+        if (!primary?.imageUrl) continue;
+        batchImages.push({
+          id: primary.id,
+          imageUrl: primary.imageUrl,
+          prompt: primary.promptUsed,
+          model: primary.model,
+          size: primary.size,
+          createdAt: primary.createdAt,
+          source: 'batch',
+          slotId: slot.id,
+          slotTitle: slot.title,
+          jobId: job.id,
+          isPrimary: primary.isPrimary,
+        });
+      }
+    }
+
+    return [...chatImages, ...batchImages];
+  }, [currentSession, batchJobs]);
+
+  // Selected gallery image object (for PropertyPanel detail view)
+  const selectedGalleryImage = useMemo<GeneratedImage | null>(() => {
+    if (!selectedGalleryImageId) return null;
+    return galleryImages.find((img) => img.id === selectedGalleryImageId) || null;
+  }, [selectedGalleryImageId, galleryImages]);
+
+  // ——— Handlers ———
 
   const openAssets = useCallback(() => {
-    setIsAssetsOpen(true);
+    setNavView('assets');
   }, []);
 
   const handleUpdateDefaultPreferences = useCallback((prefs: DefaultPreferences) => {
-    setDefaultPreferences(prefs);
+    uiDispatch({ type: SET_DEFAULT_PREFERENCES, payload: prefs });
     saveDefaultPreferences(prefs);
-  }, []);
+  }, [uiDispatch]);
 
   const handleNewSession = useCallback(() => {
     const newSession = createNewSession(templates, defaultPreferences);
-    setSessions((prev) => [newSession, ...prev]);
-    setCurrentSessionId(newSession.id);
-    setCurrentView("chat");
-    setInputText('');
-    setSelectedImage(null);
-  }, [templates, defaultPreferences]);
+    projectDispatch({ type: ADD_SESSION, payload: newSession });
+    projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: newSession.id });
+    uiDispatch({ type: SET_CURRENT_VIEW, payload: "chat" });
+    uiDispatch({ type: SET_INPUT_TEXT, payload: '' });
+    uiDispatch({ type: SET_SELECTED_IMAGE, payload: null });
+  }, [templates, defaultPreferences, projectDispatch, uiDispatch]);
 
   const handleDeleteSession = useCallback((id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSessions((prev) => {
-      const next = prev.filter((s) => s.id !== id);
-      if (next.length === 0) {
-        const fresh = createNewSession(templates, defaultPreferences);
-        setCurrentSessionId(fresh.id);
-        return [fresh];
-      }
+    // We need to handle the "if last session deleted, create new one" logic
+    const remaining = sessions.filter((s) => s.id !== id);
+    if (remaining.length === 0) {
+      const fresh = createNewSession(templates, defaultPreferences);
+      projectDispatch({ type: SET_SESSIONS, payload: [fresh] });
+      projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: fresh.id });
+    } else {
+      projectDispatch({ type: SET_SESSIONS, payload: remaining });
       if (currentSessionId === id) {
-        setCurrentSessionId(next[0].id);
+        projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: remaining[0].id });
       }
-      return next;
-    });
-  }, [currentSessionId, templates, defaultPreferences]);
+    }
+    syncService.deleteProject(id);
+  }, [currentSessionId, templates, defaultPreferences, sessions, projectDispatch]);
 
   const handleUpdateSettings = useCallback((newSettings: SessionSettings) => {
     if (!currentSessionId) return;
-    setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, settings: newSettings } : s));
-  }, [currentSessionId]);
+    projectDispatch({
+      type: UPDATE_SESSION,
+      payload: { id: currentSessionId, updater: (s) => ({ ...s, settings: newSettings }) },
+    });
+  }, [currentSessionId, projectDispatch]);
 
   const handleSaveTemplate = useCallback((newTemplate: SystemTemplate) => {
-    setTemplates((prev) => [...prev, newTemplate]);
-  }, []);
+    const updated = [...templates, newTemplate];
+    libraryDispatch({ type: SET_TEMPLATES, payload: updated });
+    syncService.saveTemplates(updated, currentTeamId ?? undefined);
+  }, [templates, libraryDispatch, currentTeamId]);
 
   const handleAddModel = useCallback((newModel: ModelCharacter) => {
-    setModels((prev) => [...prev, newModel]);
-  }, []);
+    libraryDispatch({ type: ADD_MODEL, payload: newModel });
+    syncService.saveModel(newModel, currentTeamId ?? undefined);
+  }, [libraryDispatch, currentTeamId]);
 
   const handleDeleteModel = useCallback((modelId: string) => {
-    setModels((prev) => prev.filter((m) => m.id !== modelId));
-    // If the deleted model was selected, deselect it
+    libraryDispatch({ type: DELETE_MODEL, payload: modelId });
+    syncService.deleteModel(modelId);
     if (currentSessionId) {
-      setSessions(prev => prev.map(s => {
-        if (s.id === currentSessionId && s.settings.selectedModelId === modelId) {
-          return { ...s, settings: { ...s.settings, selectedModelId: null } };
-        }
-        return s;
-      }));
+      projectDispatch({
+        type: UPDATE_SESSION,
+        payload: {
+          id: currentSessionId,
+          updater: (s) => {
+            if (s.settings.selectedModelId === modelId) {
+              return { ...s, settings: { ...s.settings, selectedModelId: null } };
+            }
+            return s;
+          },
+        },
+      });
     }
-  }, [currentSessionId]);
+  }, [currentSessionId, libraryDispatch, projectDispatch]);
 
   const handleRenameModel = useCallback((modelId: string, newName: string) => {
-    setModels((prev) => prev.map((m) => (m.id === modelId ? { ...m, name: newName } : m)));
-  }, []);
+    libraryDispatch({ type: UPDATE_MODEL, payload: { id: modelId, updates: { name: newName } } });
+    const model = models.find((m) => m.id === modelId);
+    if (model) {
+      syncService.saveModel({ ...model, name: newName }, currentTeamId ?? undefined);
+    }
+  }, [libraryDispatch, models, currentTeamId]);
 
   const handleAddProduct = useCallback((product: ProductCatalogItem) => {
-    setProducts(prev => [...prev, product]);
-  }, []);
+    libraryDispatch({ type: ADD_PRODUCT, payload: product });
+    syncService.saveProduct(product, currentTeamId ?? undefined);
+  }, [libraryDispatch, currentTeamId]);
 
   const handleUpdateProduct = useCallback((productId: string, updates: Partial<Omit<ProductCatalogItem, 'id' | 'createdAt'>>) => {
-    setProducts(prev => prev.map(p => p.id === productId ? { ...p, ...updates } : p));
-  }, []);
+    libraryDispatch({ type: UPDATE_PRODUCT, payload: { id: productId, updates } });
+    const product = products.find((p) => p.id === productId);
+    if (product) {
+      syncService.saveProduct({ ...product, ...updates }, currentTeamId ?? undefined);
+    }
+  }, [libraryDispatch, products, currentTeamId]);
 
   const handleDeleteProduct = useCallback((productId: string) => {
-    setProducts(prev => prev.filter(p => p.id !== productId));
-  }, []);
+    libraryDispatch({ type: DELETE_PRODUCT, payload: productId });
+    syncService.deleteProduct(productId);
+  }, [libraryDispatch]);
 
   const handleUpdateApiConfig = useCallback((cfg: ApiConfig) => {
-    setApiConfig(cfg);
+    uiDispatch({ type: SET_API_CONFIG, payload: cfg });
     saveStoredApiConfig(cfg);
-  }, []);
+  }, [uiDispatch]);
 
   const updateBatchJobById = useCallback((jobId: string, updater: (job: BatchJob) => BatchJob) => {
-    setBatchJobs((prev) => prev.map((job) => (job.id === jobId ? updater(job) : job)));
-  }, []);
+    batchDispatch({ type: UPDATE_BATCH_JOB, payload: { id: jobId, updater } });
+  }, [batchDispatch]);
 
   const appendBatchActionLog = useCallback((job: BatchJob, action: string, payload?: Record<string, unknown>): BatchJob => {
     const log = {
@@ -847,11 +712,8 @@ const App: React.FC = () => {
     const currentModel = getEffectiveApiConfig().defaultImageModel;
     const size = aspectRatioToSize(settings.aspectRatio);
 
-    // —— 1. 构建图片列表 ——
-    // 全部转为 data URL，避免 URL 与 base64 混合导致 API 400
     const images: string[] = [];
     if (params.referenceImage) {
-      // 参考图模式：只用参考图，不用产品图/模特图
       images.push(await urlToDataUrl(params.referenceImage));
     } else {
       if (params.productImage) images.push(await urlToDataUrl(params.productImage));
@@ -859,29 +721,25 @@ const App: React.FC = () => {
       if (needsModel && params.modelImage) images.push(await urlToDataUrl(params.modelImage));
     }
 
-    // —— 2. 构建 prompt：系统提示词 + 图片说明 + 用户指令 ——
-    const systemText = settings.systemPrompt?.trim()
-      ? `系统指令：\n${settings.systemPrompt.trim()}\n\n`
-      : "";
-
     let imageContext = "";
     if (params.referenceImage) {
-      imageContext = "\n图片说明：提供了参考图。请严格参照参考图的风格、构图、色调和整体氛围，生成同系列的套图变体。保持视觉一致性，仅按场景描述调整角度和环境。";
+      imageContext = "图片1是当前套图参考图。请严格参照参考图的风格、构图、色调和整体氛围，生成同系列的套图变体。保持视觉一致性，仅按场景描述调整角度和环境。";
     } else {
       const needsModel = params.slotType === "model" || params.slotType === "custom";
       if (params.productImage && needsModel && params.modelImage) {
-        imageContext = "\n图片说明：提供了产品图和模特参考图。产品图是核心参考——请严格还原产品的外观、颜色、材质与细节。模特图仅用于人物外貌一致性参考。";
+        imageContext = "图片1是产品参考图，图片2是模特参考图。请严格还原图片1中产品的外观、颜色、材质与细节，保持完全不变。保持图片2中人物的面部特征、体型与身份特征不变。将图片1的产品展示于图片2的模特身上，生成专业电商展示图。";
       } else if (params.productImage) {
-        imageContext = "\n图片说明：提供了产品实物图，请严格还原产品的外观、颜色、材质与细节。";
+        imageContext = "图片1是产品参考图。请严格还原图片1中产品的外观、颜色、材质与细节，保持完全不变。模特或人物由你自行创建，产品为视觉主体。";
       }
     }
 
-    const promptUsed = `${systemText}${imageContext}\n${params.slotPrompt}`.trim();
+    const contextPrefix = imageContext ? `${imageContext}\n` : "";
+    const promptUsed = `${contextPrefix}${params.slotPrompt}`.trim();
 
-    // —— 3. 直接调 imagesGenerations，不走聊天的 generateResponse ——
     const resp = await imagesGenerations(
       {
         prompt: promptUsed,
+        systemPrompt: settings.systemPrompt?.trim() || undefined,
         n: 1,
         response_format: ResponseFormat.Url,
         size,
@@ -890,7 +748,6 @@ const App: React.FC = () => {
       { signal: batchAbortRef.current?.signal, queueSource: "batch" }
     );
 
-    // —— 4. 转换结果 ——
     const generated: BatchVersion[] = await Promise.all(
       (resp.data || [])
         .map((o) => (o ? imageObjToDataUrl(o) : null))
@@ -922,41 +779,39 @@ const App: React.FC = () => {
       setAuthError("请输入账号和密码。");
       return;
     }
-    setAuthLoading(true);
+    uiDispatch({ type: SET_AUTH_LOADING, payload: true });
     setAuthError(null);
     try {
       const user = await login(loginForm.username.trim(), loginForm.password);
-      setAuthUser(user.username);
+      uiDispatch({ type: SET_AUTH_USER, payload: user.username });
       setLoginForm({ username: user.username, password: "" });
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "登录失败，请重试。");
     } finally {
-      setAuthLoading(false);
+      uiDispatch({ type: SET_AUTH_LOADING, payload: false });
     }
   };
 
   const handleLogout = async () => {
-    setAuthLoading(true);
+    uiDispatch({ type: SET_AUTH_LOADING, payload: true });
     try {
       await logout();
     } catch {
       // ignore network error, still reset local auth state
     } finally {
-      // P1-12: 登出时清除持久化数据
       await clearAll().catch(() => {});
-      setHasHydratedStorage(false);
-      setSessions([]);
-      setCurrentSessionId(null);
-      setBatchJobs([]);
-      setSelectedBatchJobId(null);
-      setCurrentView("chat");
-      setTemplates([]);
-      setModels([]);
-      setProducts([]);
-      setSelectedImage(null);
-      setInputText('');
-      setAuthUser(null);
-      setAuthLoading(false);
+      projectDispatch({ type: SET_SESSIONS, payload: [] });
+      projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: null });
+      batchDispatch({ type: SET_BATCH_JOBS, payload: [] });
+      batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: null });
+      uiDispatch({ type: SET_CURRENT_VIEW, payload: "chat" });
+      libraryDispatch({ type: SET_TEMPLATES, payload: [] });
+      libraryDispatch({ type: SET_MODELS, payload: [] });
+      libraryDispatch({ type: SET_PRODUCTS, payload: [] });
+      uiDispatch({ type: SET_SELECTED_IMAGE, payload: null });
+      uiDispatch({ type: SET_INPUT_TEXT, payload: '' });
+      uiDispatch({ type: SET_AUTH_USER, payload: null });
+      uiDispatch({ type: SET_AUTH_LOADING, payload: false });
     }
   };
 
@@ -964,7 +819,7 @@ const App: React.FC = () => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => setSelectedImage(reader.result as string);
+      reader.onloadend = () => uiDispatch({ type: SET_SELECTED_IMAGE, payload: reader.result as string });
       reader.readAsDataURL(file);
     }
     e.target.value = '';
@@ -978,7 +833,7 @@ const App: React.FC = () => {
         const file = items[i].getAsFile();
         if (file) {
           const reader = new FileReader();
-          reader.onloadend = () => setSelectedImage(reader.result as string);
+          reader.onloadend = () => uiDispatch({ type: SET_SELECTED_IMAGE, payload: reader.result as string });
           reader.readAsDataURL(file);
           return;
         }
@@ -988,19 +843,232 @@ const App: React.FC = () => {
 
   const handleEnhancePrompt = async () => {
     if (!inputText.trim() || isEnhancing || isGenerating) return;
-    setIsEnhancing(true);
+    uiDispatch({ type: SET_ENHANCING, payload: true });
     try {
       const enhancedText = await enhancePrompt(inputText);
-      setInputText(enhancedText);
+      uiDispatch({ type: SET_INPUT_TEXT, payload: enhancedText });
     } catch (e) {
       console.error(e);
-      // P1-8: prompt 增强失败时通知用户
-      setGenerationStage("提示词增强失败，将使用原始提示词");
-      setTimeout(() => setGenerationStage((prev) => prev === "提示词增强失败，将使用原始提示词" ? null : prev), 3000);
+      uiDispatch({ type: SET_GENERATION_STAGE, payload: "提示词增强失败，将使用原始提示词" });
+      setTimeout(() => {
+        uiDispatch({ type: SET_GENERATION_STAGE, payload: null });
+      }, 3000);
     } finally {
-      setIsEnhancing(false);
+      uiDispatch({ type: SET_ENHANCING, payload: false });
     }
   };
+
+  // ——— Team handlers ———
+  const handleCreateTeam = useCallback(async (name: string) => {
+    try {
+      const team = await syncService.createTeam(name);
+      teamDispatch({ type: ADD_TEAM, payload: {
+        id: team.id,
+        name: team.name,
+        createdBy: team.created_by,
+        members: [{
+          userId: team.created_by,
+          username: authUser || '',
+          displayName: authUser || '',
+          role: 'admin' as const,
+          joinedAt: team.created_at,
+        }],
+        createdAt: team.created_at,
+        updatedAt: team.updated_at,
+      } });
+    } catch (err) {
+      console.error('Failed to create team:', err);
+    }
+  }, [teamDispatch, authUser]);
+
+  const handleDeleteTeam = useCallback(async (teamId: string) => {
+    try {
+      await syncService.deleteTeam(teamId);
+      teamDispatch({ type: DELETE_TEAM, payload: teamId });
+      if (currentTeamId === teamId) {
+        teamDispatch({ type: SET_CURRENT_TEAM_ID, payload: null });
+      }
+    } catch (err) {
+      console.error('Failed to delete team:', err);
+    }
+  }, [teamDispatch, currentTeamId]);
+
+  const handleUpdateTeam = useCallback(async (teamId: string, name: string) => {
+    try {
+      await syncService.updateTeam(teamId, name);
+      teamDispatch({ type: UPDATE_TEAM, payload: { id: teamId, updater: (t) => ({ ...t, name, updatedAt: Date.now() }) } });
+    } catch (err) {
+      console.error('Failed to update team:', err);
+    }
+  }, [teamDispatch]);
+
+  const handleAddMember = useCallback(async (teamId: string, username: string) => {
+    try {
+      await syncService.addTeamMember(teamId, username);
+      // Refresh team members from server
+      const members = await syncService.fetchTeamMembers(teamId);
+      teamDispatch({ type: UPDATE_TEAM, payload: { id: teamId, updater: (t) => ({ ...t, members: members.map((m: any) => ({ userId: m.userId, username: m.username, displayName: m.displayName || m.username, role: m.role, joinedAt: m.joinedAt ?? Date.now() })) }) } });
+    } catch (err) {
+      console.error('Failed to add member:', err);
+    }
+  }, [teamDispatch]);
+
+  const handleRemoveMember = useCallback(async (teamId: string, userId: string) => {
+    try {
+      await syncService.removeTeamMember(teamId, userId);
+      teamDispatch({ type: UPDATE_TEAM, payload: { id: teamId, updater: (t) => ({ ...t, members: t.members.filter((m) => m.userId !== userId) }) } });
+    } catch (err) {
+      console.error('Failed to remove member:', err);
+    }
+  }, [teamDispatch]);
+
+  const handleSwitchTeam = useCallback((teamId: string | null) => {
+    teamDispatch({ type: SET_CURRENT_TEAM_ID, payload: teamId });
+  }, [teamDispatch]);
+
+  // ——— Onboarding handlers ———
+  const handleOnboardingFileUpload = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onloadend = () => uiDispatch({ type: SET_SELECTED_IMAGE, payload: reader.result as string });
+    reader.readAsDataURL(file);
+  }, [uiDispatch]);
+
+  const handleOnboardingPaste = useCallback(async () => {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith('image/'));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const reader = new FileReader();
+          reader.onloadend = () => uiDispatch({ type: SET_SELECTED_IMAGE, payload: reader.result as string });
+          reader.readAsDataURL(blob);
+          return;
+        }
+      }
+    } catch {
+      // Clipboard API not available or denied
+    }
+  }, [uiDispatch]);
+
+  const handleOnboardingQuickStart = useCallback((templateName: string) => {
+    const template = templates.find((t) => t.name === templateName);
+    if (template && currentSession) {
+      projectDispatch({
+        type: UPDATE_SESSION,
+        payload: {
+          id: currentSession.id,
+          updater: (s) => ({ ...s, settings: { ...s.settings, systemPrompt: template.content } }),
+        },
+      });
+    }
+  }, [templates, currentSession, projectDispatch]);
+
+  const handleOnboardingPromptSubmit = useCallback((prompt: string) => {
+    uiDispatch({ type: SET_INPUT_TEXT, payload: prompt });
+  }, [uiDispatch]);
+
+  const handleGalleryImageClick = useCallback((image: GeneratedImage) => {
+    setSelectedGalleryImageId(image.id);
+  }, []);
+
+  const handleGalleryImageAction = useCallback((image: GeneratedImage, action: string) => {
+    switch (action) {
+      case 'download':
+        if (image.imageUrl) {
+          const options = loadDownloadOptions();
+          void downloadImageWithFormat(image.imageUrl, {
+            basename: `topseller-${image.id}`,
+            format: options.format,
+            quality: options.quality,
+          });
+        }
+        break;
+      case 'preview':
+        if (image.imageUrl) {
+          uiDispatch({ type: SET_PREVIEW_IMAGE, payload: image.imageUrl });
+        }
+        break;
+      case 'mask-edit':
+        if (image.imageUrl) {
+          uiDispatch({ type: SET_MASK_EDIT_CONTEXT, payload: { source: "chat" } });
+          setMaskEditBaseUrl(image.imageUrl);
+        }
+        break;
+      case 'set-reference':
+        if (image.imageUrl) {
+          uiDispatch({ type: SET_SELECTED_IMAGE, payload: image.imageUrl });
+        }
+        break;
+      case 'copy-prompt':
+        if (image.prompt) {
+          navigator.clipboard.writeText(image.prompt).catch(() => {});
+        }
+        break;
+      case 'variation':
+        if (image.imageUrl) {
+          uiDispatch({ type: SET_SELECTED_IMAGE, payload: image.imageUrl });
+          if (image.prompt) {
+            uiDispatch({ type: SET_INPUT_TEXT, payload: image.prompt });
+          }
+        }
+        break;
+      case 'delete':
+        if (window.confirm('确定要删除这张图片吗？')) {
+          if (image.source === 'batch' && image.jobId && image.slotId) {
+            // Remove the version from batch slot
+            updateBatchJobById(image.jobId, (job) => ({
+              ...job,
+              slots: job.slots.map((s) => s.id !== image.slotId ? s : {
+                ...s,
+                versions: s.versions.filter((v) => v.id !== image.id),
+                activeVersionId: s.activeVersionId === image.id ? undefined : s.activeVersionId,
+              }),
+              updatedAt: nowTs(),
+            }));
+          } else if (currentSessionId) {
+            // Remove from chat history
+            projectDispatch({
+              type: UPDATE_SESSION,
+              payload: {
+                id: currentSessionId,
+                updater: (s) => ({
+                  ...s,
+                  messages: s.messages.map((msg) => ({
+                    ...msg,
+                    parts: msg.parts.filter((p) => !(p.type === 'image' && p.meta?.id === image.id)),
+                  })).filter((msg) => msg.parts.length > 0),
+                }),
+              },
+            });
+          }
+          if (selectedGalleryImageId === image.id) {
+            setSelectedGalleryImageId(null);
+          }
+        }
+        break;
+      case 'deselect':
+        setSelectedGalleryImageId(null);
+        break;
+      case 'batch-rerun-slot':
+        if (image.jobId && image.slotId) {
+          void handleRunSingleBatchSlot(image.jobId, image.slotId);
+        }
+        break;
+      case 'batch-view-job':
+        if (image.jobId) {
+          batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: image.jobId });
+          uiDispatch({ type: SET_CURRENT_VIEW, payload: 'batch' });
+        }
+        break;
+      case 'batch-from-image':
+        if (image.imageUrl) {
+          handleBatchFromImage(image.imageUrl);
+        }
+        break;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiDispatch, currentSessionId, projectDispatch, selectedGalleryImageId, batchDispatch, updateBatchJobById]);
 
   const cancelGeneration = () => {
     abortRef.current?.abort();
@@ -1045,13 +1113,13 @@ const App: React.FC = () => {
     abortRef.current = new AbortController();
     const controller = abortRef.current;
 
-    setIsGenerating(true);
-    setErrorDetails(null);
-    setIsErrorModalOpen(false);
-    setGenerationProgress(null);
+    uiDispatch({ type: SET_GENERATING, payload: true });
+    uiDispatch({ type: SET_ERROR_DETAILS, payload: null });
+    setIsErrorExpanded(false);
+    uiDispatch({ type: SET_GENERATION_PROGRESS, payload: null });
 
     let stage = "准备请求...";
-    setGenerationStage(stage);
+    uiDispatch({ type: SET_GENERATION_STAGE, payload: stage });
 
     let modelImage: string | null = null;
     if (currentSession.settings.selectedModelId) {
@@ -1072,11 +1140,10 @@ const App: React.FC = () => {
     try {
       for (let i = 0; i < sizes.length; i++) {
         const size = sizes[i];
-        setGenerationProgress({ current: i + 1, total: sizes.length });
-        stage = `正在生成首图（${i + 1}/${sizes.length}）· 尺寸 ${size}...`;
-        setGenerationStage(stage);
+        uiDispatch({ type: SET_GENERATION_PROGRESS, payload: { current: i + 1, total: sizes.length } });
+        stage = `正在生成首图（${i + 1}/${sizes.length}）· 比例 ${currentSession.settings.aspectRatio}...`;
+        uiDispatch({ type: SET_GENERATION_STAGE, payload: stage });
 
-        // 固定本轮上下文：同一批次内后续补图不读取新生成结果，避免“越补越漂”。
         const generationBaseMessages = updatedMessages;
 
         const firstResult = await generateResponse(
@@ -1099,7 +1166,7 @@ const App: React.FC = () => {
         setBalanceRefreshTick((v) => v + 1);
 
         stage = "解析结果...";
-        setGenerationStage(stage);
+        uiDispatch({ type: SET_GENERATION_STAGE, payload: stage });
 
         const aiMessage: Message = {
           id: uuidv4(),
@@ -1116,7 +1183,6 @@ const App: React.FC = () => {
         }
 
         const pushImagePart = async (url: string, resultMeta: GenerateResponseResult) => {
-          // 将临时 URL 转换为 data URL 持久化存储
           let persistentUrl = url;
           try {
             persistentUrl = await urlToDataUrl(url);
@@ -1155,13 +1221,21 @@ const App: React.FC = () => {
           updatedMessages = updatedMessages.map((m) =>
             m.id === aiMessageId ? { ...m, parts: [...m.parts, nextPart] } : m
           );
-          setSessions((prev) =>
-            prev.map((s) => (s.id === sessionId ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s))
-          );
+          projectDispatch({
+            type: UPDATE_SESSION,
+            payload: {
+              id: sessionId,
+              updater: (s) => ({ ...s, messages: updatedMessages, updatedAt: Date.now() }),
+            },
+          });
         };
-        setSessions(prev => prev.map(s =>
-          s.id === sessionId ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s
-        ));
+        projectDispatch({
+          type: UPDATE_SESSION,
+          payload: {
+            id: sessionId,
+            updater: (s) => ({ ...s, messages: updatedMessages, updatedAt: Date.now() }),
+          },
+        });
 
         const remaining = batchCount - 1;
         if (remaining > 0 && firstUrl) {
@@ -1192,7 +1266,6 @@ const App: React.FC = () => {
                 failed += 1;
               } else {
                 setBalanceRefreshTick((v) => v + 1);
-                // 转换为持久化 URL
                 let persistentUrl = extraUrl;
                 try {
                   persistentUrl = await urlToDataUrl(extraUrl);
@@ -1220,8 +1293,8 @@ const App: React.FC = () => {
               failed += 1;
             } finally {
               done += 1;
-              stage = `首图已出，正在补齐（${done}/${remaining}）· 尺寸 ${size}...`;
-              setGenerationStage(stage);
+              stage = `首图已出，正在补齐（${done}/${remaining}）· 比例 ${currentSession.settings.aspectRatio}...`;
+              uiDispatch({ type: SET_GENERATION_STAGE, payload: stage });
             }
           }
 
@@ -1243,33 +1316,39 @@ const App: React.FC = () => {
           timestamp: Date.now(),
         };
         updatedMessages = [...updatedMessages, cancelMsg];
-        setSessions(prev => prev.map(s =>
-          s.id === sessionId ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s
-        ));
+        projectDispatch({
+          type: UPDATE_SESSION,
+          payload: {
+            id: sessionId,
+            updater: (s) => ({ ...s, messages: updatedMessages, updatedAt: Date.now() }),
+          },
+        });
         return updatedMessages;
       }
 
       const msg = e instanceof Error ? e.message : String(e);
-      // P1-4: 401 未授权自动跳转登录页
       const httpStatus = extractHttpStatus(msg);
       if (httpStatus === 401 || isLikelyMissingAuth(msg)) {
-        setAuthUser(null);
+        uiDispatch({ type: SET_AUTH_USER, payload: null });
       }
       const friendly = getFriendlyErrorMessage(msg);
-      setErrorDetails({
-        message: msg,
-        when: Date.now(),
-        stage,
-        requestId: extractRequestId(msg),
-        status: extractHttpStatus(msg),
-        endpoint: apiConfig.baseUrl,
-        extra: {
-          model: apiConfig.defaultImageModel,
-          size: sizes,
-          n: batchCount,
-          responseFormat,
+      uiDispatch({
+        type: SET_ERROR_DETAILS,
+        payload: {
+          message: msg,
+          when: Date.now(),
+          stage,
+          requestId: extractRequestId(msg),
+          status: extractHttpStatus(msg),
+          endpoint: apiConfig.baseUrl,
+          extra: {
+            model: apiConfig.defaultImageModel,
+            size: sizes,
+            n: batchCount,
+            responseFormat,
+          },
+          advice: getErrorAdvice(msg),
         },
-        advice: getErrorAdvice(msg),
       });
 
       const errorMessage: Message = {
@@ -1279,20 +1358,23 @@ const App: React.FC = () => {
         timestamp: Date.now()
       };
       updatedMessages = [...updatedMessages, errorMessage];
-      setSessions(prev => prev.map(s =>
-        s.id === sessionId ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s
-      ));
+      projectDispatch({
+        type: UPDATE_SESSION,
+        payload: {
+          id: sessionId,
+          updater: (s) => ({ ...s, messages: updatedMessages, updatedAt: Date.now() }),
+        },
+      });
       return updatedMessages;
     } finally {
-      setIsGenerating(false);
-      setGenerationStage(null);
-      setGenerationProgress(null);
-      // 只清理当前请求对应的 controller，避免竞态覆盖新请求
+      uiDispatch({ type: SET_GENERATING, payload: false });
+      uiDispatch({ type: SET_GENERATION_STAGE, payload: null });
+      uiDispatch({ type: SET_GENERATION_PROGRESS, payload: null });
       if (abortRef.current === controller) {
         abortRef.current = null;
       }
     }
-  }, [apiConfig, currentSession, models]);
+  }, [apiConfig, currentSession, models, projectDispatch, uiDispatch]);
 
   const handleSendMessage = async () => {
     if ((!inputText.trim() && !selectedImage) || isGenerating || !currentSession) return;
@@ -1310,14 +1392,18 @@ const App: React.FC = () => {
     const updatedMessages = [...currentSession.messages, newUserMessage];
     const updatedTitle = currentSession.messages.length === 0 ? (inputText.trim().slice(0, 30) || "新创作") : currentSession.title;
 
-    setSessions(prev => prev.map(s => 
-      s.id === currentSession.id ? { ...s, messages: updatedMessages, title: updatedTitle, updatedAt: Date.now() } : s
-    ));
+    projectDispatch({
+      type: UPDATE_SESSION,
+      payload: {
+        id: currentSession.id,
+        updater: (s) => ({ ...s, messages: updatedMessages, title: updatedTitle, updatedAt: Date.now() }),
+      },
+    });
 
     const promptToPass = inputText;
     const imageToPass = selectedImage;
-    setInputText('');
-    setSelectedImage(null);
+    uiDispatch({ type: SET_INPUT_TEXT, payload: '' });
+    uiDispatch({ type: SET_SELECTED_IMAGE, payload: null });
 
     await executeGeneration(promptToPass, imageToPass, updatedMessages);
   };
@@ -1325,7 +1411,7 @@ const App: React.FC = () => {
   const handleVariation = useCallback(async (type: string, imageUrl: string) => {
     if (isGenerating || !currentSession) return;
     const variationPrompt = `基于之前的上下文，生成一个「${type}」变体，并严格保持一致性。`;
-    
+
     const newUserMessage: Message = {
       id: uuidv4(),
       role: 'user',
@@ -1337,14 +1423,20 @@ const App: React.FC = () => {
     };
 
     const updatedMessages = [...currentSession.messages, newUserMessage];
-    setSessions(prev => prev.map(s => s.id === currentSession.id ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s));
+    projectDispatch({
+      type: UPDATE_SESSION,
+      payload: {
+        id: currentSession.id,
+        updater: (s) => ({ ...s, messages: updatedMessages, updatedAt: Date.now() }),
+      },
+    });
     await executeGeneration(variationPrompt, imageUrl, updatedMessages, { action: `变体：${type}` });
-  }, [currentSession, executeGeneration, isGenerating]);
+  }, [currentSession, executeGeneration, isGenerating, projectDispatch]);
 
   const openMaskEditFromChat = useCallback((baseImageUrl: string) => {
-    setMaskEditContext({ source: "chat" });
+    uiDispatch({ type: SET_MASK_EDIT_CONTEXT, payload: { source: "chat" } });
     setMaskEditBaseUrl(baseImageUrl);
-  }, []);
+  }, [uiDispatch]);
 
   const openMaskEditFromBatch = useCallback((params: {
     jobId: string;
@@ -1353,15 +1445,18 @@ const App: React.FC = () => {
     baseImageUrl: string;
     historyItems: MaskEditorHistoryItem[];
   }) => {
-    setMaskEditContext({
-      source: "batch",
-      jobId: params.jobId,
-      slotId: params.slotId,
-      versionId: params.versionId,
-      historyItems: params.historyItems,
+    uiDispatch({
+      type: SET_MASK_EDIT_CONTEXT,
+      payload: {
+        source: "batch",
+        jobId: params.jobId,
+        slotId: params.slotId,
+        versionId: params.versionId,
+        historyItems: params.historyItems,
+      },
     });
     setMaskEditBaseUrl(params.baseImageUrl);
-  }, []);
+  }, [uiDispatch]);
 
   const ensureImageDataUrl = useCallback(async (imageUrl: string, signal?: AbortSignal): Promise<string> => {
     if (!imageUrl || isDataOrBlobUrl(imageUrl)) return imageUrl;
@@ -1387,14 +1482,13 @@ const App: React.FC = () => {
   }, [isGenerating]);
 
   const handleBatchFromImage = useCallback((imageUrl: string) => {
-    setSelectedImage(imageUrl);
+    uiDispatch({ type: SET_SELECTED_IMAGE, payload: imageUrl });
     openBatchSetModal();
-  }, [openBatchSetModal]);
+  }, [openBatchSetModal, uiDispatch]);
 
   const handleBatchSetSubmit = useCallback(async (items: BatchSetItem[]) => {
     if (!currentSession || isBatchGenerating || items.length === 0) return;
 
-    // Adding slots to existing job
     if (addSlotsTargetJobId) {
       const targetJobId = addSlotsTargetJobId;
       setAddSlotsTargetJobId(null);
@@ -1431,7 +1525,6 @@ const App: React.FC = () => {
     }
 
     setIsBatchSetOpen(false);
-    setCurrentView("batch");
 
     const createdAt = nowTs();
     const basePrompt = inputText.trim();
@@ -1471,28 +1564,13 @@ const App: React.FC = () => {
       ],
     };
 
-    setBatchJobs((prev) => [initialJob, ...prev]);
-    setSelectedBatchJobId(jobId);
-  }, [addSlotsTargetJobId, appendBatchActionLog, authUser, batchJobs, currentSession, inputText, isGenerating, selectedImage, updateBatchJobById]);
+    batchDispatch({ type: ADD_BATCH_JOB, payload: initialJob });
+    batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: jobId });
+    uiDispatch({ type: SET_CURRENT_VIEW, payload: "batch" });
+    autoStartBatchJobIdRef.current = jobId;
+  }, [addSlotsTargetJobId, appendBatchActionLog, authUser, batchJobs, currentSession, inputText, isGenerating, selectedImage, updateBatchJobById, batchDispatch, uiDispatch]);
 
-  const handleUpdateBatchJobImages = useCallback((
-    jobId: string,
-    updates: { productImageUrl?: string | null; modelImageUrl?: string | null; referenceImageUrl?: string | null }
-  ) => {
-    updateBatchJobById(jobId, (job) => ({
-      ...job,
-      ...updates,
-      updatedAt: nowTs(),
-    }));
-  }, [updateBatchJobById]);
 
-  const handleUpdateBatchJobBasePrompt = useCallback((jobId: string, basePrompt: string) => {
-    updateBatchJobById(jobId, (job) => ({
-      ...job,
-      basePrompt,
-      updatedAt: nowTs(),
-    }));
-  }, [updateBatchJobById]);
 
   const handleRenameBatchJob = useCallback((jobId: string, newTitle: string) => {
     updateBatchJobById(jobId, (job) => ({
@@ -1560,46 +1638,44 @@ const App: React.FC = () => {
   }, [appendBatchActionLog, updateBatchJobById]);
 
   const handleDuplicateBatchJob = useCallback((jobId: string) => {
-    setBatchJobs((prev) => {
-      const source = prev.find((j) => j.id === jobId);
-      if (!source) return prev;
-      const ts = nowTs();
-      const newJobId = uuidv4();
-      const newSlots: BatchSlot[] = source.slots.map((s) => ({
-        ...s,
-        id: uuidv4(),
-        jobId: newJobId,
-        status: "pending",
-        error: undefined,
-        versions: [],
-        activeVersionId: undefined,
-      }));
-      const copy: BatchJob = {
-        ...source,
-        id: newJobId,
-        title: `${source.title}（副本）`,
-        status: "draft",
-        createdAt: ts,
-        updatedAt: ts,
-        archivedAt: undefined,
-        deletedAt: undefined,
-        slots: newSlots,
-        actionLogs: [
-          {
-            id: uuidv4(),
-            jobId: newJobId,
-            action: "job_copied",
-            operator: authUser || "unknown",
-            ts,
-            payload: { fromJobId: source.id },
-          },
-        ],
-      };
-      setSelectedBatchJobId(newJobId);
-      setCurrentView("batch");
-      return [copy, ...prev];
-    });
-  }, [authUser]);
+    const source = batchJobs.find((j) => j.id === jobId);
+    if (!source) return;
+    const ts = nowTs();
+    const newJobId = uuidv4();
+    const newSlots: BatchSlot[] = source.slots.map((s) => ({
+      ...s,
+      id: uuidv4(),
+      jobId: newJobId,
+      status: "pending",
+      error: undefined,
+      versions: [],
+      activeVersionId: undefined,
+    }));
+    const copy: BatchJob = {
+      ...source,
+      id: newJobId,
+      title: `${source.title}（副本）`,
+      status: "draft",
+      createdAt: ts,
+      updatedAt: ts,
+      archivedAt: undefined,
+      deletedAt: undefined,
+      slots: newSlots,
+      actionLogs: [
+        {
+          id: uuidv4(),
+          jobId: newJobId,
+          action: "job_copied",
+          operator: authUser || "unknown",
+          ts,
+          payload: { fromJobId: source.id },
+        },
+      ],
+    };
+    batchDispatch({ type: SET_BATCH_JOBS, payload: [copy, ...batchJobs] });
+    batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: newJobId });
+    uiDispatch({ type: SET_CURRENT_VIEW, payload: "batch" });
+  }, [authUser, batchJobs, batchDispatch, uiDispatch]);
 
   const handleSetPrimaryBatchVersion = useCallback((jobId: string, slotId: string, versionId: string) => {
     updateBatchJobById(jobId, (job) => {
@@ -1640,14 +1716,13 @@ const App: React.FC = () => {
     batchAbortRef.current = new AbortController();
     const controller = batchAbortRef.current;
 
-    setIsBatchGenerating(true);
-    setBatchGenerationProgress({
-      currentSlot: 1,
-      totalSlots: 1,
-      currentSlotLabel: slot.title
+    batchDispatch({ type: SET_BATCH_GENERATING, payload: true });
+    batchDispatch({
+      type: SET_BATCH_GENERATION_PROGRESS,
+      payload: { currentSlot: 1, totalSlots: 1, currentSlotLabel: slot.title },
     });
-    setCurrentView("batch");
-    setSelectedBatchJobId(jobId);
+    uiDispatch({ type: SET_CURRENT_VIEW, payload: "batch" });
+    batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: jobId });
 
     updateBatchJobById(jobId, (target) => {
       const nextSlots = target.slots.map((s) => (s.id === slotId ? { ...s, status: "running", error: undefined } : s));
@@ -1719,13 +1794,13 @@ const App: React.FC = () => {
         return appendBatchActionLog(next, "slot_rerun_failed", { slotId, error: msg });
       });
     } finally {
-      setIsBatchGenerating(false);
-      setBatchGenerationProgress(null);
+      batchDispatch({ type: SET_BATCH_GENERATING, payload: false });
+      batchDispatch({ type: SET_BATCH_GENERATION_PROGRESS, payload: null });
       if (batchAbortRef.current === controller) {
         batchAbortRef.current = null;
       }
     }
-  }, [appendBatchActionLog, batchJobs, buildBatchSlotPrompt, currentSession, inputText, isBatchGenerating, runBatchSlotGeneration, updateBatchJobById]);
+  }, [appendBatchActionLog, batchJobs, buildBatchSlotPrompt, currentSession, inputText, isBatchGenerating, runBatchSlotGeneration, updateBatchJobById, batchDispatch, uiDispatch]);
 
   const handleRunAllBatchSlots = useCallback(async (jobId: string, mode: "pending_only" | "all") => {
     const job = batchJobs.find((j) => j.id === jobId);
@@ -1742,20 +1817,19 @@ const App: React.FC = () => {
     batchAbortRef.current = new AbortController();
     const controller = batchAbortRef.current;
 
-    setIsBatchGenerating(true);
-    setBatchGenerationProgress(null);
-    setCurrentView("batch");
-    setSelectedBatchJobId(jobId);
+    batchDispatch({ type: SET_BATCH_GENERATING, payload: true });
+    batchDispatch({ type: SET_BATCH_GENERATION_PROGRESS, payload: null });
+    uiDispatch({ type: SET_CURRENT_VIEW, payload: "batch" });
+    batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: jobId });
 
     for (let i = 0; i < slotsToRun.length; i++) {
       if (controller.signal.aborted) break;
       const slot = slotsToRun[i];
       const slotIndex = job.slots.findIndex((s) => s.id === slot.id);
 
-      setBatchGenerationProgress({
-        currentSlot: i + 1,
-        totalSlots: slotsToRun.length,
-        currentSlotLabel: slot.title,
+      batchDispatch({
+        type: SET_BATCH_GENERATION_PROGRESS,
+        payload: { currentSlot: i + 1, totalSlots: slotsToRun.length, currentSlotLabel: slot.title },
       });
 
       updateBatchJobById(jobId, (target) => {
@@ -1836,21 +1910,31 @@ const App: React.FC = () => {
       return appendBatchActionLog(next, "job_finished", { status: finalStatus });
     });
 
-    setIsBatchGenerating(false);
-    setBatchGenerationProgress(null);
+    batchDispatch({ type: SET_BATCH_GENERATING, payload: false });
+    batchDispatch({ type: SET_BATCH_GENERATION_PROGRESS, payload: null });
     if (batchAbortRef.current === controller) {
       batchAbortRef.current = null;
     }
-  }, [appendBatchActionLog, batchJobs, buildBatchSlotPrompt, currentSession, inputText, isBatchGenerating, runBatchSlotGeneration, updateBatchJobById]);
+  }, [appendBatchActionLog, batchJobs, buildBatchSlotPrompt, currentSession, inputText, isBatchGenerating, runBatchSlotGeneration, updateBatchJobById, batchDispatch, uiDispatch]);
 
-  // —— 套图槽位内联调整 ——
+  // Auto-start generation when a new batch job is created via the streamlined flow
+  useEffect(() => {
+    const targetId = autoStartBatchJobIdRef.current;
+    if (!targetId) return;
+    const job = batchJobs.find((j) => j.id === targetId);
+    if (!job) return;
+    if (job.status === "draft") {
+      autoStartBatchJobIdRef.current = null;
+      void handleRunAllBatchSlots(targetId, "all");
+    }
+  }, [batchJobs, handleRunAllBatchSlots]);
+
   const handleRefineSlot = useCallback(async (jobId: string, slotId: string, instruction: string) => {
     const job = batchJobs.find((j) => j.id === jobId);
     const slot = job?.slots.find((s) => s.id === slotId);
     if (!job || !slot || !currentSession || isBatchGenerating) return;
     if (job.status === "deleted" || job.status === "archived") return;
 
-    // 找到当前选中版本
     const activeVersion = slot.versions.find((v) => v.isPrimary)
       || (slot.activeVersionId && slot.versions.find((v) => v.id === slot.activeVersionId))
       || slot.versions[slot.versions.length - 1]
@@ -1861,9 +1945,15 @@ const App: React.FC = () => {
     batchAbortRef.current = new AbortController();
     const controller = batchAbortRef.current;
 
-    setIsBatchGenerating(true);
-    setRefiningSlotIds((prev) => new Set(prev).add(slotId));
-    setBatchGenerationProgress({ currentSlot: 1, totalSlots: 1, currentSlotLabel: `${slot.title} 优化调整` });
+    batchDispatch({ type: SET_BATCH_GENERATING, payload: true });
+    batchDispatch({
+      type: SET_REFINING_SLOT_IDS,
+      payload: new Set([...refiningSlotIds, slotId]),
+    });
+    batchDispatch({
+      type: SET_BATCH_GENERATION_PROGRESS,
+      payload: { currentSlot: 1, totalSlots: 1, currentSlotLabel: `${slot.title} 优化调整` },
+    });
 
     updateBatchJobById(jobId, (target) => {
       const nextSlots = target.slots.map((s) => (s.id === slotId ? { ...s, status: "running" as const, error: undefined } : s));
@@ -1875,10 +1965,8 @@ const App: React.FC = () => {
       const currentModel = getEffectiveApiConfig().defaultImageModel;
       const size = aspectRatioToSize(currentSession.settings.aspectRatio);
 
-      // 仅传选中版本的图片，不传产品图/模特图（已内含）
       const images = [await urlToDataUrl(activeVersion.imageUrl)];
 
-      // 构建调整 prompt
       const sceneDirective = getBatchSceneDirective(slot.type as BatchSetItem["scene"]);
       const promptUsed = [
         `当前图片类型为「${slot.title}」。${sceneDirective}`,
@@ -1951,14 +2039,16 @@ const App: React.FC = () => {
         return appendBatchActionLog(next, "slot_refine_failed", { slotId, instruction, error: msg });
       });
     } finally {
-      setIsBatchGenerating(false);
-      setRefiningSlotIds((prev) => { const next = new Set(prev); next.delete(slotId); return next; });
-      setBatchGenerationProgress(null);
+      batchDispatch({ type: SET_BATCH_GENERATING, payload: false });
+      const nextRefining = new Set(refiningSlotIds);
+      nextRefining.delete(slotId);
+      batchDispatch({ type: SET_REFINING_SLOT_IDS, payload: nextRefining });
+      batchDispatch({ type: SET_BATCH_GENERATION_PROGRESS, payload: null });
       if (batchAbortRef.current === controller) {
         batchAbortRef.current = null;
       }
     }
-  }, [appendBatchActionLog, batchJobs, currentSession, isBatchGenerating, updateBatchJobById]);
+  }, [appendBatchActionLog, batchJobs, currentSession, isBatchGenerating, refiningSlotIds, updateBatchJobById, batchDispatch]);
 
   const handleMaskSubmit = async (params: {
     baseImageUrl: string;
@@ -1983,11 +2073,10 @@ const App: React.FC = () => {
       batchAbortRef.current = new AbortController();
       const controller = batchAbortRef.current;
 
-      setIsBatchGenerating(true);
-      setBatchGenerationProgress({
-        currentSlot: 1,
-        totalSlots: 1,
-        currentSlotLabel: `${slot.title} 局部编辑`
+      batchDispatch({ type: SET_BATCH_GENERATING, payload: true });
+      batchDispatch({
+        type: SET_BATCH_GENERATION_PROGRESS,
+        payload: { currentSlot: 1, totalSlots: 1, currentSlotLabel: `${slot.title} 局部编辑` },
       });
 
       const size = aspectRatioToSize(currentSession.settings.aspectRatio);
@@ -2094,7 +2183,6 @@ const App: React.FC = () => {
           throw new Error("局部编辑未生成新图。");
         }
 
-        // 转换为持久化 URL
         const persistentUrls = await Promise.all(
           generatedImageUrls.map(async (url) => {
             try {
@@ -2123,8 +2211,8 @@ const App: React.FC = () => {
         });
         throw e;
       } finally {
-        setIsBatchGenerating(false);
-        setBatchGenerationProgress(null);
+        batchDispatch({ type: SET_BATCH_GENERATING, payload: false });
+        batchDispatch({ type: SET_BATCH_GENERATION_PROGRESS, payload: null });
         if (batchAbortRef.current === controller) {
           batchAbortRef.current = null;
         }
@@ -2144,11 +2232,14 @@ const App: React.FC = () => {
 
     const updatedMessages = [...currentSession.messages, userMsg];
     const updatedMessagesLength = updatedMessages.length;
-    setSessions((prev) =>
-      prev.map((s) => (s.id === currentSession.id ? { ...s, messages: updatedMessages, updatedAt: Date.now() } : s))
-    );
+    projectDispatch({
+      type: UPDATE_SESSION,
+      payload: {
+        id: currentSession.id,
+        updater: (s) => ({ ...s, messages: updatedMessages, updatedAt: Date.now() }),
+      },
+    });
 
-    // If the selected model supports /v1/images/edits (mostly GPT-image), prefer mask-native edit.
     const model = apiConfig.defaultImageModel || "";
     const supportsEdits = /^gpt-image/i.test(model) || /^dall-e/i.test(model);
     if (supportsEdits) {
@@ -2157,10 +2248,10 @@ const App: React.FC = () => {
       const controller = abortRef.current;
       let handoffToFallback = false;
       try {
-        setIsGenerating(true);
-        setErrorDetails(null);
-        setGenerationProgress(null);
-        setGenerationStage("正在进行遮罩编辑...");
+        uiDispatch({ type: SET_GENERATING, payload: true });
+        uiDispatch({ type: SET_ERROR_DETAILS, payload: null });
+        uiDispatch({ type: SET_GENERATION_PROGRESS, payload: null });
+        uiDispatch({ type: SET_GENERATION_STAGE, payload: "正在进行遮罩编辑..." });
 
         const n = Math.min(Math.max(currentSession.settings.batchCount || 1, 1), 10);
         const size = aspectRatioToSize(currentSession.settings.aspectRatio);
@@ -2206,9 +2297,13 @@ const App: React.FC = () => {
         }
 
         const nextMessages = [...updatedMessages, aiMessage];
-        setSessions((prev) =>
-          prev.map((s) => (s.id === currentSession.id ? { ...s, messages: nextMessages, updatedAt: Date.now() } : s))
-        );
+        projectDispatch({
+          type: UPDATE_SESSION,
+          payload: {
+            id: currentSession.id,
+            updater: (s) => ({ ...s, messages: nextMessages, updatedAt: Date.now() }),
+          },
+        });
         setBalanceRefreshTick((v) => v + 1);
         const generatedImageUrls = aiMessage.parts
           .filter((p) => p.type === "image" && p.imageUrl)
@@ -2218,18 +2313,16 @@ const App: React.FC = () => {
         }
         return { generatedImageUrls };
       } catch (e) {
-        // Fall back to the non-native approach below.
         console.warn("images/edits 失败，自动退化为参考图编辑：", e);
         handoffToFallback = true;
       } finally {
         if (!handoffToFallback) {
-          setIsGenerating(false);
-          setGenerationStage(null);
+          uiDispatch({ type: SET_GENERATING, payload: false });
+          uiDispatch({ type: SET_GENERATION_STAGE, payload: null });
         } else {
-          setGenerationStage("原生编辑失败，已切换为参考图模式");
+          uiDispatch({ type: SET_GENERATION_STAGE, payload: "原生编辑失败，已切换为参考图模式" });
         }
-        setGenerationProgress(null);
-        // 只清理当前请求对应的 controller，避免竞态覆盖新请求
+        uiDispatch({ type: SET_GENERATION_PROGRESS, payload: null });
         if (abortRef.current === controller) {
           abortRef.current = null;
         }
@@ -2285,6 +2378,8 @@ const App: React.FC = () => {
     await executeGeneration(last.prompt, last.image, currentSession.messages, last.opts);
   };
 
+  // ——— Render ———
+
   if (!authReady) {
     return (
       <div className="min-h-screen bg-dark-900 text-gray-200 flex items-center justify-center">
@@ -2334,367 +2429,390 @@ const App: React.FC = () => {
     );
   }
 
+  if (!hasHydratedStorage) {
+    return (
+      <div className="min-h-screen bg-dark-900 text-gray-200 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-6 h-6 border-2 border-banana-400 border-t-transparent rounded-full animate-spin" />
+          <div className="text-sm text-gray-400">正在加载数据...</div>
+        </div>
+      </div>
+    );
+  }
+
   if (!currentSession) return <div className="text-white text-center mt-10">初始化中...</div>;
 
-  return (
-    <div className="flex h-screen bg-dark-900 overflow-hidden font-sans">
-      <Sidebar
-        sessions={sessions}
-        currentSessionId={currentSessionId}
-        onSelectSession={(id) => {
-          setCurrentSessionId(id);
-          setCurrentView("chat");
-        }}
-        onNewSession={handleNewSession}
-        onDeleteSession={handleDeleteSession}
-        isOpen={isSidebarOpen}
-        toggleSidebar={toggleSidebar}
-        apiConfig={apiConfig}
-        onUpdateApiConfig={handleUpdateApiConfig}
-        onOpenAssets={openAssets}
-        onOpenModelsLibrary={() => setIsModelsLibraryOpen(true)}
-        onOpenProductsLibrary={() => setIsProductsLibraryOpen(true)}
-        assetCount={totalAssetCount}
-        modelCount={models.length}
-        productCount={products.length}
-        batchJobCount={activeBatchJobCount}
-        authUser={authUser}
-        authLoading={authLoading}
-        onLogout={handleLogout}
-        currentSettings={currentSession.settings}
-        onUpdateCurrentSettings={handleUpdateSettings}
-        balanceRefreshTick={balanceRefreshTick}
-        currentView={currentView}
-        onViewChange={setCurrentView}
-        defaultPreferences={defaultPreferences}
-        onUpdateDefaultPreferences={handleUpdateDefaultPreferences}
-      />
-      <div className="flex-1 flex flex-col h-full min-h-0 relative">
-        <div className="lg:hidden h-14 border-b border-dark-700 flex items-center px-4 justify-between bg-dark-800">
-          <button onClick={() => setIsSidebarOpen(true)} className="text-gray-400"><Icon name="bars" /></button>
-          <span className="font-semibold text-gray-200 truncate max-w-[200px]">
-            {currentView === "batch" ? (selectedBatchJob?.title || "套图工作台") : currentSession.title}
-          </span>
-          <button
-            onClick={handleLogout}
-            disabled={authLoading}
-            className="text-[11px] px-2 py-1 rounded border border-dark-600 bg-dark-800 text-gray-300 disabled:opacity-60"
-          >
-            退出
-          </button>
+  // Handle navView changes from NavRail
+  const handleNavChange = (view: string) => {
+    setNavView(view);
+    // Map nav views to legacy currentView where applicable
+    if (view === 'project') {
+      uiDispatch({ type: SET_CURRENT_VIEW, payload: 'chat' });
+    }
+    // Library views are now inline MainContent views
+    if (view === 'assets') {
+      openAssets();
+    }
+  };
+
+  // Property panel for the right side
+  const propertyPanelElement = navView === 'project' ? (
+    <PropertyPanel
+      settings={currentSession.settings}
+      onUpdateSettings={handleUpdateSettings}
+      models={models}
+      products={products}
+      onAddModel={handleAddModel}
+      onDeleteModel={handleDeleteModel}
+      templates={templates}
+      onSaveTemplate={handleSaveTemplate}
+      apiConfig={apiConfig}
+      onUpdateApiConfig={handleUpdateApiConfig}
+      selectedImage={selectedImage}
+      onClearSelectedImage={() => uiDispatch({ type: SET_SELECTED_IMAGE, payload: null })}
+      selectedGalleryImage={selectedGalleryImage}
+      onClearGalleryImage={() => setSelectedGalleryImageId(null)}
+      onGalleryImageAction={handleGalleryImageAction}
+    />
+  ) : undefined;
+
+  // Project view content: Gallery + PromptBar (replaces old chat view)
+  // When currentView === "batch", show BatchJobsPanel (legacy path, still functional)
+  const projectViewContent = (
+    <>
+      {currentView === "batch" ? (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <BatchJobsPanel
+            jobs={batchJobs}
+            selectedJobId={selectedBatchJobId}
+            isBusy={isBatchGenerating}
+            models={models}
+            onSelectJob={(jobId) => batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: jobId })}
+            onRunSlot={(jobId, slotId) => {
+              void handleRunSingleBatchSlot(jobId, slotId);
+            }}
+            onSetPrimaryVersion={handleSetPrimaryBatchVersion}
+            onOpenMaskEdit={openMaskEditFromBatch}
+            onArchiveJob={handleArchiveBatchJob}
+            onRestoreJob={handleRestoreBatchJob}
+            onSoftDeleteJob={handleSoftDeleteBatchJob}
+            onRecoverDeletedJob={handleRecoverDeletedBatchJob}
+            onDuplicateJob={handleDuplicateBatchJob}
+            onDownloadVersion={(v) => {
+              void handleDownloadBatchVersion(v);
+            }}
+            onCancelGeneration={cancelBatchGeneration}
+            onRunAllSlots={(jobId, mode) => {
+              void handleRunAllBatchSlots(jobId, mode);
+            }}
+            onCreateJob={openBatchSetModal}
+            onRenameJob={handleRenameBatchJob}
+            onAddSlots={handleOpenAddSlots}
+            onRefineSlot={(jobId, slotId, instruction) => {
+              void handleRefineSlot(jobId, slotId, instruction);
+            }}
+            refiningSlotIds={refiningSlotIds}
+            onGoBack={() => uiDispatch({ type: SET_CURRENT_VIEW, payload: 'chat' })}
+          />
         </div>
-        <SystemPromptBar
-          key={currentSession.id}
-          settings={currentSession.settings}
-          onUpdateSettings={handleUpdateSettings}
-          templates={templates}
-          onSaveTemplate={handleSaveTemplate}
-        />
-        {currentView === "chat" ? (
-          <>
-            <div className="flex-1 overflow-y-auto p-4 lg:p-8 scroll-smooth">
-              <div className="w-full max-w-none min-h-full flex flex-col pr-1 lg:pr-4">
-                {currentSession.messages.length === 0 ? (
-                  <div className="flex-1 flex flex-col items-center justify-center text-gray-500 opacity-50 mt-10">
-                    <Icon name="image" className="text-6xl mb-4" />
-                    <p className="text-lg text-center">写下指令，选择画幅比例，然后开始创作。</p>
+      ) : (
+        <>
+          {/* Gallery view — primary project view */}
+          <ImageGallery
+            images={galleryImages}
+            onImageClick={handleGalleryImageClick}
+            onImageAction={handleGalleryImageAction}
+            selectedImageId={selectedGalleryImageId || undefined}
+            isGenerating={isGenerating}
+            onOpenBatchSet={openBatchSetModal}
+            onGoToBatch={() => uiDispatch({ type: SET_CURRENT_VIEW, payload: 'batch' })}
+          />
+          {/* Generation progress bar (inline below gallery) */}
+          {isGenerating && (
+            <div className="shrink-0 px-4 py-2 border-t border-dark-700 bg-dark-800/80">
+              <div className="flex items-center gap-3">
+                <div className="w-6 h-6 rounded-full bg-banana-500 text-dark-900 flex items-center justify-center animate-pulse shrink-0">
+                  <Icon name="robot" className="text-[10px]" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <span className="text-[11px] text-banana-400">
+                    {generationStage || (currentSession.settings.selectedModelId ? "正在同步已锁定的人物..." : "正在整理视觉上下文...")}
+                  </span>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[10px] text-gray-500">
+                      {generationProgress
+                        ? `${generationProgress.current}/${generationProgress.total}`
+                        : "准备中..."}
+                    </span>
+                    {queueStatusText && (
+                      <span className="text-[10px] text-gray-600">{queueStatusText}</span>
+                    )}
                   </div>
-                ) : (
-                  currentSession.messages.map(msg => (
-                    <ChatMessage
-                      key={msg.id}
-                      message={msg}
-                      onPreviewImage={setPreviewImageUrl}
-                      onVariation={handleVariation}
-                      onMaskEdit={openMaskEditFromChat}
-                      onUseAsReference={setSelectedImage}
-                      onBatchFromImage={handleBatchFromImage}
-                    />
-                  ))
-                )}
-                {isGenerating && (
-                  <div className="flex items-center gap-3 text-banana-400 mb-6 max-w-[70%]">
-                     <div className="w-8 h-8 rounded-full bg-banana-500 text-dark-900 flex items-center justify-center animate-pulse"><Icon name="robot" /></div>
-                     <div className="bg-dark-800 px-4 py-3 rounded-2xl rounded-tl-none border border-dark-700">
-                       <span className="text-sm flex gap-2 items-center">
-                        {generationStage || (currentSession.settings.selectedModelId ? "正在同步已锁定的人物..." : "正在整理视觉上下文...")}
-                       </span>
-                       <div className="mt-2 text-[11px] text-gray-400 flex items-center justify-between gap-3">
-                         <span>
-                           {generationProgress
-                             ? `进度：${generationProgress.current}/${generationProgress.total}`
-                             : "进度：准备中..."}
-                         </span>
-                         <button
-                           onClick={cancelGeneration}
-                           className="px-2 py-1 bg-dark-900 hover:bg-dark-700 text-gray-200 border border-dark-600 rounded-md"
-                           title="取消当前生成"
-                         >
-                           取消
-                         </button>
-                       </div>
-                       {queueStatusText && (
-                         <div className="mt-2 text-[11px] text-gray-500">
-                           {queueStatusText}
-                         </div>
-                       )}
-                     </div>
-                  </div>
-                )}
-                <div ref={chatEndRef} className="h-4" />
+                </div>
+                <button
+                  onClick={cancelGeneration}
+                  className="px-2 py-1 text-[10px] bg-dark-900 hover:bg-dark-700 text-gray-200 border border-dark-600 rounded-md shrink-0"
+                  title="取消当前生成"
+                >
+                  取消
+                </button>
               </div>
             </div>
-            <div className="bg-dark-800 border-t border-dark-700 p-4 lg:p-6">
-              <div className="w-full max-w-none flex flex-col gap-3 pr-1 lg:pr-4">
-                {errorDetails && (
-                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2">
-                    <span className="text-xs text-red-300 truncate max-w-full">
-                      {getFriendlyErrorMessage(errorDetails.message)}
-                    </span>
-                    <button
-                      onClick={retryLastGeneration}
-                      disabled={!lastRunRef.current || isGenerating}
-                      className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md disabled:opacity-40"
-                    >
-                      重试
-                    </button>
-                    <button
-                      onClick={() => setIsErrorModalOpen(true)}
-                      className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md"
-                    >
-                      查看详情
-                    </button>
-                    <button
-                      onClick={() => {
-                        setErrorDetails(null);
-                        setIsErrorModalOpen(false);
-                      }}
-                      className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-300 border border-dark-600 rounded-md"
-                    >
-                      忽略
-                    </button>
-                  </div>
-                )}
-                <div className="rounded-lg border border-dark-600 bg-dark-800/60 px-3 py-2">
-                  <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        onClick={() => setIsAdvancedPanelOpen((v) => !v)}
-                        className="h-8 px-2.5 rounded-md border border-dark-600 bg-dark-800 hover:bg-dark-700 text-[11px] text-gray-200 transition-colors flex items-center gap-1.5"
-                      >
-                        <Icon name={isAdvancedPanelOpen ? "chevron-up" : "chevron-down"} />
-                        {isAdvancedPanelOpen ? "收起高级设置" : "展开高级设置"}
-                      </button>
-                      {currentSession.settings.productImage && (
-                        <span className="text-[10px] px-2 py-0.5 rounded-full border border-banana-500/30 bg-banana-500/10 text-banana-300">
-                          已设产品图
-                        </span>
+          )}
+          {/* Error banner (inline expandable) */}
+          {errorDetails && (
+            <div className="bg-dark-800 border-t border-dark-700 px-4 py-2 shrink-0">
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-red-300 truncate max-w-full">
+                    {getFriendlyErrorMessage(errorDetails.message)}
+                  </span>
+                  <button
+                    onClick={retryLastGeneration}
+                    disabled={!lastRunRef.current || isGenerating}
+                    className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md disabled:opacity-40"
+                  >
+                    重试
+                  </button>
+                  <button
+                    onClick={() => setIsErrorExpanded((v) => !v)}
+                    className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md"
+                  >
+                    {isErrorExpanded ? "收起详情" : "查看详情"}
+                  </button>
+                  <button
+                    onClick={() => {
+                      uiDispatch({ type: SET_ERROR_DETAILS, payload: null });
+                      setIsErrorExpanded(false);
+                    }}
+                    className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-300 border border-dark-600 rounded-md"
+                  >
+                    忽略
+                  </button>
+                </div>
+                {/* Expandable error details inline */}
+                {isErrorExpanded && (
+                  <div className="mt-3 space-y-2 border-t border-red-500/20 pt-3">
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <div>
+                        <span className="text-gray-500">时间：</span>
+                        <span className="text-gray-300">{new Date(errorDetails.when).toLocaleString()}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500">阶段：</span>
+                        <span className="text-gray-300">{errorDetails.stage || "—"}</span>
+                      </div>
+                      {errorDetails.requestId && (
+                        <div>
+                          <span className="text-gray-500">请求 ID：</span>
+                          <span className="text-gray-300 break-all">{errorDetails.requestId}</span>
+                        </div>
                       )}
-                      {currentSession.settings.selectedModelId && (
-                        <span className="text-[10px] px-2 py-0.5 rounded-full border border-banana-500/30 bg-banana-500/10 text-banana-300">
-                          已锁模特
-                        </span>
-                      )}
-                      {selectedImage && (
-                        <div className="flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
-                          <span>已设参考图</span>
-                          <button
-                            onClick={() => setIsAdvancedPanelOpen(true)}
-                            className="underline underline-offset-2 hover:text-emerald-200"
-                          >
-                            查看
-                          </button>
-                          <button
-                            onClick={() => setSelectedImage(null)}
-                            className="text-emerald-200 hover:text-white"
-                            title="清除参考图"
-                          >
-                            <Icon name="times" />
-                          </button>
+                      {typeof errorDetails.status === "number" && (
+                        <div>
+                          <span className="text-gray-500">HTTP：</span>
+                          <span className="text-gray-300">{errorDetails.status}</span>
                         </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-gray-300 font-medium">连续编辑</span>
-                      <label className="inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={currentSession.settings.autoUseLastImage}
-                          onChange={(e) => {
-                            const next = { ...currentSession.settings, autoUseLastImage: e.target.checked };
-                            if (e.target.checked && next.selectedModelId !== null) {
-                              next.selectedModelId = null;
-                            }
-                            handleUpdateSettings(next);
-                          }}
-                          className="h-4 w-4 accent-banana-500"
-                        />
-                      </label>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
-                        currentSession.settings.autoUseLastImage
-                          ? "text-emerald-300 border-emerald-500/40 bg-emerald-500/10"
-                          : "text-gray-400 border-dark-500 bg-dark-700"
-                      }`}>
-                        {currentSession.settings.autoUseLastImage ? "已开启" : "已关闭"}
-                      </span>
-                    </div>
-                  </div>
-                  {!isAdvancedPanelOpen && (
-                    <p className="mt-1 text-[10px] text-gray-500 leading-relaxed">
-                      输入指令即可生成。产品/模特、快捷词在「高级设置」中按需展开，减少占用空间。
-                    </p>
-                  )}
-                </div>
-
-                {isAdvancedPanelOpen && (
-                  <div className="space-y-2 rounded-lg border border-dark-700 bg-dark-900/30 p-2">
-                    <PromptModelPanel
-                      settings={currentSession.settings}
-                      onUpdateSettings={handleUpdateSettings}
-                      models={models}
-                      onAddModel={handleAddModel}
-                      onDeleteModel={handleDeleteModel}
-                      onOpenBatchSet={openBatchSetModal}
-                    />
-                    {selectedImage && (
-                      <div className="relative inline-block self-start">
-                        <img src={selectedImage} alt="预览" className="h-20 rounded-lg border border-dark-600 object-cover shadow-lg" loading="lazy" decoding="async" />
-                        <button
-                          onClick={() => {
-                            if (window.confirm('确定要删除参考图吗？')) {
-                              setSelectedImage(null);
-                            }
-                          }}
-                          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-md hover:bg-red-600 transition-colors"
-                        >
-                          <Icon name="times" />
-                        </button>
+                    {Array.isArray(errorDetails.advice) && errorDetails.advice.length > 0 && (
+                      <div className="text-[11px]">
+                        <div className="text-gray-500 mb-1">建议操作：</div>
+                        {errorDetails.advice.map((item, idx) => (
+                          <div key={idx} className="text-gray-300 leading-relaxed">{idx + 1}. {item}</div>
+                        ))}
                       </div>
                     )}
-                    <div className="flex flex-wrap items-center gap-2">
-                      {QUICK_PROMPT_PRESETS.map((p) => (
-                        <button
-                          key={p}
-                          onClick={() => setInputText((prev) => (prev ? `${prev}\n${p}` : p))}
-                          className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md"
-                        >
-                          {p}
-                        </button>
-                      ))}
+                    <div>
+                      <button
+                        onClick={async () => {
+                          const payload = {
+                            when: errorDetails.when,
+                            stage: errorDetails.stage,
+                            message: errorDetails.message,
+                            requestId: errorDetails.requestId,
+                            status: errorDetails.status,
+                            endpoint: errorDetails.endpoint,
+                            extra: errorDetails.extra || {},
+                          };
+                          try { await navigator.clipboard.writeText(JSON.stringify(payload, null, 2)); } catch {}
+                        }}
+                        className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md"
+                      >
+                        复制诊断信息
+                      </button>
                     </div>
                   </div>
                 )}
-                <div className="flex items-end gap-3 bg-dark-900 border border-dark-600 rounded-xl p-2 focus-within:border-dark-500 transition-colors">
-                  <button onClick={() => fileInputRef.current?.click()} className="p-3 text-gray-400 hover:text-banana-400 transition-colors rounded-lg hover:bg-dark-800"><Icon name="image" className="text-lg" /></button>
-                  <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" className="hidden" />
-                  <textarea value={inputText} onChange={(e) => setInputText(e.target.value)} onKeyDown={handleKeyDown} onPaste={handlePaste} placeholder="例如：给人物加一顶红色帽子..." className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-gray-200 placeholder-gray-600 max-h-32 py-3 resize-none custom-scrollbar" rows={1} style={{ minHeight: '44px' }} />
-                  <button onClick={handleEnhancePrompt} disabled={!inputText.trim() || isEnhancing || isGenerating} className={`p-3 text-banana-500 hover:text-banana-400 rounded-lg hover:bg-dark-800 ${isEnhancing ? 'animate-pulse' : ''}`}><Icon name="magic" /></button>
-                  <button onClick={handleSendMessage} disabled={(!inputText.trim() && !selectedImage) || isGenerating} className={`p-3 rounded-lg font-semibold transition-all ${(!inputText.trim() && !selectedImage) || isGenerating ? 'bg-dark-700 text-gray-500' : 'bg-banana-500 hover:bg-banana-400 text-dark-900 shadow-lg'}`}><Icon name="paper-plane" /></button>
-                </div>
-                <div className="text-[11px] text-gray-500">
-                  回车发送，Shift+回车换行。支持粘贴图片，或在素材库中一键设为参考图。
-                </div>
               </div>
             </div>
-          </>
-        ) : (
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <BatchJobsPanel
-              jobs={batchJobs}
-              selectedJobId={selectedBatchJobId}
-              isBusy={isBatchGenerating}
-              models={models}
-              onSelectJob={(jobId) => setSelectedBatchJobId(jobId)}
-              onRunSlot={(jobId, slotId) => {
-                void handleRunSingleBatchSlot(jobId, slotId);
-              }}
-              onSetPrimaryVersion={handleSetPrimaryBatchVersion}
-              onOpenMaskEdit={openMaskEditFromBatch}
-              onArchiveJob={handleArchiveBatchJob}
-              onRestoreJob={handleRestoreBatchJob}
-              onSoftDeleteJob={handleSoftDeleteBatchJob}
-              onRecoverDeletedJob={handleRecoverDeletedBatchJob}
-              onDuplicateJob={handleDuplicateBatchJob}
-              onDownloadVersion={(v) => {
-                void handleDownloadBatchVersion(v);
-              }}
-              onCancelGeneration={cancelBatchGeneration}
-              onUpdateJobImages={handleUpdateBatchJobImages}
-              onRunAllSlots={(jobId, mode) => {
-                void handleRunAllBatchSlots(jobId, mode);
-              }}
-              onCreateJob={openBatchSetModal}
-              onUpdateJobBasePrompt={handleUpdateBatchJobBasePrompt}
-              onRenameJob={handleRenameBatchJob}
-              onAddSlots={handleOpenAddSlots}
-              products={products}
-              onRefineSlot={(jobId, slotId, instruction) => {
-                void handleRefineSlot(jobId, slotId, instruction);
-              }}
-              refiningSlotIds={refiningSlotIds}
-            />
-          </div>
-        )}
-        {previewImageUrl && <ImagePreviewModal imageUrl={previewImageUrl} onClose={() => setPreviewImageUrl(null)} />}
-        <AssetsModal
-          isOpen={isAssetsOpen}
-          assets={allAssets}
-          onClose={() => setIsAssetsOpen(false)}
-          onOpenMaskEdit={openMaskEditFromChat}
-          onUseAsReference={(imageUrl) => {
-            setSelectedImage(imageUrl);
-            setIsAssetsOpen(false);
-          }}
-          onUsePrompt={(prompt) => {
-            setInputText(prompt);
-            setIsAssetsOpen(false);
-          }}
-        />
-        <BatchSetModal
-          isOpen={isBatchSetOpen}
-          onClose={() => { setIsBatchSetOpen(false); setAddSlotsTargetJobId(null); }}
-          onSubmit={(items) => {
-            void handleBatchSetSubmit(items);
-          }}
-        />
-        {isModelsLibraryOpen && (
+          )}
+          {/* Prompt Bar */}
+          <PromptBar
+            inputText={inputText}
+            onInputChange={(text) => uiDispatch({ type: SET_INPUT_TEXT, payload: text })}
+            onSend={handleSendMessage}
+            onImageUpload={(file) => {
+              const reader = new FileReader();
+              reader.onloadend = () => uiDispatch({ type: SET_SELECTED_IMAGE, payload: reader.result as string });
+              reader.readAsDataURL(file);
+            }}
+            onEnhance={handleEnhancePrompt}
+            isGenerating={isGenerating}
+            isEnhancing={isEnhancing}
+            selectedImage={selectedImage ? { url: selectedImage, source: 'user' } : null}
+            onClearImage={() => uiDispatch({ type: SET_SELECTED_IMAGE, payload: null })}
+          />
+        </>
+      )}
+    </>
+  );
+
+  return (
+    <Layout
+      navView={navView}
+      onNavChange={handleNavChange}
+      propertyPanel={propertyPanelElement}
+      sessions={sessions}
+      currentSessionId={currentSessionId}
+      onSelectSession={(id) => {
+        projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: id });
+        uiDispatch({ type: SET_CURRENT_VIEW, payload: "chat" });
+        setNavView('project');
+      }}
+      onNewSession={handleNewSession}
+      onDeleteSession={handleDeleteSession}
+      authUser={authUser}
+      onLogout={handleLogout}
+      onOpenSettings={() => setNavView('settings')}
+      assetCount={totalAssetCount}
+      modelCount={models.length}
+      productCount={products.length}
+    >
+      <MainContent
+        navView={navView}
+        galleryProps={{
+          images: galleryImages,
+          onImageClick: handleGalleryImageClick,
+          onImageAction: handleGalleryImageAction,
+          selectedImageId: selectedGalleryImageId || undefined,
+          isGenerating,
+          onboardingProps: {
+            onFileUpload: handleOnboardingFileUpload,
+            onPaste: handleOnboardingPaste,
+            onQuickStart: handleOnboardingQuickStart,
+            onPromptSubmit: handleOnboardingPromptSubmit,
+            templates: templates.map((t) => ({ name: t.name, content: t.content })),
+          },
+        }}
+        projectListProps={{
+          projects: sessions,
+          currentProjectId: currentSessionId,
+          onSelectProject: (id) => {
+            projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: id });
+            uiDispatch({ type: SET_CURRENT_VIEW, payload: 'chat' });
+            setNavView('project');
+          },
+          onCreateProject: handleNewSession,
+          onDeleteProject: handleDeleteSession,
+          currentTeamId,
+        }}
+        settingsElement={
+          <SettingsPanel
+            apiConfig={apiConfig}
+            onUpdateApiConfig={handleUpdateApiConfig}
+            hasActiveFeature={currentSession.settings.selectedModelId !== null || currentSession.settings.autoUseLastImage}
+            authUser={authUser}
+            authLoading={authLoading}
+            onLogout={handleLogout}
+            defaultPreferences={defaultPreferences}
+            onUpdateDefaultPreferences={handleUpdateDefaultPreferences}
+            balanceRefreshTick={balanceRefreshTick}
+            isSuperAdmin={isSuperAdmin}
+            onClose={() => setNavView('project')}
+          />
+        }
+        assetsElement={
+          <AssetsModal
+            assets={allAssets}
+            onOpenMaskEdit={openMaskEditFromChat}
+            onUseAsReference={(imageUrl) => {
+              uiDispatch({ type: SET_SELECTED_IMAGE, payload: imageUrl });
+              setNavView('project');
+            }}
+            onUsePrompt={(prompt) => {
+              uiDispatch({ type: SET_INPUT_TEXT, payload: prompt });
+              setNavView('project');
+            }}
+          />
+        }
+        modelsElement={
           <ModelsLibraryModal
             models={models}
             onAddModel={handleAddModel}
             onDeleteModel={handleDeleteModel}
             onRenameModel={handleRenameModel}
-            onClose={() => setIsModelsLibraryOpen(false)}
           />
-        )}
-        {isProductsLibraryOpen && (
+        }
+        productsElement={
           <ProductsLibraryModal
             products={products}
             onAddProduct={handleAddProduct}
             onUpdateProduct={handleUpdateProduct}
             onDeleteProduct={handleDeleteProduct}
-            onClose={() => setIsProductsLibraryOpen(false)}
           />
-        )}
-        {errorDetails && isErrorModalOpen && (
-          <ErrorDetailsModal
-            error={errorDetails}
-            onClose={() => setIsErrorModalOpen(false)}
+        }
+        teamElement={
+          <TeamManager
+            teams={teams}
+            currentTeamId={currentTeamId}
+            onCreateTeam={handleCreateTeam}
+            onDeleteTeam={handleDeleteTeam}
+            onUpdateTeam={handleUpdateTeam}
+            onAddMember={handleAddMember}
+            onRemoveMember={handleRemoveMember}
+            onSwitchTeam={handleSwitchTeam}
           />
-        )}
-        {maskEditBaseUrl && (
-          <MaskEditorModal
-            baseImageUrl={maskEditBaseUrl}
-            historyItems={maskHistoryItems}
-            onSelectBaseImage={setMaskEditBaseUrl}
-            onClose={() => {
-              setMaskEditBaseUrl(null);
-              setMaskEditContext(null);
-            }}
-            onSubmit={handleMaskSubmit}
-          />
-        )}
-      </div>
-    </div>
+        }
+      >
+        {projectViewContent}
+      </MainContent>
+
+      {/* Modals — rendered inside Layout but overlay on top */}
+      {previewImageUrl && <ImagePreviewModal imageUrl={previewImageUrl} onClose={() => uiDispatch({ type: SET_PREVIEW_IMAGE, payload: null })} />}
+      <BatchSetModal
+        isOpen={isBatchSetOpen}
+        onClose={() => { setIsBatchSetOpen(false); setAddSlotsTargetJobId(null); }}
+        onSubmit={(items) => {
+          void handleBatchSetSubmit(items);
+        }}
+        referenceImageUrl={selectedImage || undefined}
+      />
+      {/* ErrorDetailsModal replaced by inline expandable banner above */}
+      {maskEditBaseUrl && (
+        <MaskEditorModal
+          baseImageUrl={maskEditBaseUrl}
+          historyItems={maskHistoryItems}
+          onSelectBaseImage={setMaskEditBaseUrl}
+          onClose={() => {
+            setMaskEditBaseUrl(null);
+            uiDispatch({ type: SET_MASK_EDIT_CONTEXT, payload: null });
+          }}
+          onSubmit={handleMaskSubmit}
+        />
+      )}
+
+    </Layout>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <ToastProvider>
+      <AppProvider>
+        <AppInner />
+      </AppProvider>
+    </ToastProvider>
   );
 };
 
