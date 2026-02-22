@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./Icon";
 import { useModalA11y } from "./useModalA11y";
+import { useToast } from "./Toast";
 
 export interface MaskEditorHistoryItem {
   id: string;
@@ -63,6 +64,7 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({
   const modalRef = useRef<HTMLDivElement>(null);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
 
+  const { addToast } = useToast();
   const [isReady, setIsReady] = useState(false);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -384,11 +386,11 @@ export const MaskEditorModal: React.FC<MaskEditorModalProps> = ({
   const submit = async () => {
     const p = prompt.trim();
     if (!p) {
-      window.alert("请输入编辑提示词。");
+      addToast({ type: 'warning', message: '请输入编辑提示词。' });
       return;
     }
     if (!isReady || loadState !== "ready") {
-      window.alert("图片尚未加载完成，请稍后再试。");
+      addToast({ type: 'warning', message: '图片尚未加载完成，请稍后再试。' });
       return;
     }
 

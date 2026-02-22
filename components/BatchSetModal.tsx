@@ -22,6 +22,7 @@ interface BatchSetModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (items: BatchSetItem[]) => void;
+  referenceImageUrl?: string;
 }
 
 const SCENE_OPTIONS: Array<{ value: BatchSceneType; label: string; hint: string }> = [
@@ -49,11 +50,27 @@ const DETAIL_ANGLES = [
   { id: "in_use", label: "使用场景", directive: "手持或佩戴特写，展示产品在使用中的细节" },
 ];
 
+const FLATLAY_PRESETS = [
+  { id: "centered", label: "居中平铺", directive: "产品居中平铺，干净背景，展示完整外观和材质" },
+  { id: "with_props", label: "搭配道具", directive: "产品搭配应季道具（花/咖啡/杂志等），增强场景感" },
+  { id: "overhead", label: "俯拍全景", directive: "正上方俯拍，展示产品完整轮廓与细节" },
+  { id: "warm_life", label: "暖调生活", directive: "暖色木纹/织物背景，搭配生活道具，温馨氛围" },
+  { id: "cool_modern", label: "冷调现代", directive: "大理石/金属/深色背景，冷调高级质感" },
+];
+
+const WHITE_BG_PRESETS = [
+  { id: "main_image", label: "电商主图", directive: "纯白背景正面居中，符合电商平台主图规范" },
+  { id: "side_view", label: "侧面图", directive: "纯白背景侧面拍摄，展示产品轮廓和厚度" },
+  { id: "size_ref", label: "尺寸参考", directive: "纯白背景带比例参照物，直观展示产品大小" },
+  { id: "group", label: "组合展示", directive: "纯白背景多件/多色并排展示，突出系列感" },
+  { id: "floating", label: "悬浮效果", directive: "纯白背景产品悬浮展示，带自然投影，增强立体感" },
+];
+
 const sceneLabelOf = (scene: BatchSceneType): string =>
   SCENE_OPTIONS.find((s) => s.value === scene)?.label || "自定义";
 
 const defaultCheckedPoses = (scene: BatchSceneType, count: number): string[] => {
-  const presets = scene === "model" ? MODEL_POSES : scene === "detail" ? DETAIL_ANGLES : null;
+  const presets = scene === "model" ? MODEL_POSES : scene === "detail" ? DETAIL_ANGLES : scene === "flatlay" ? FLATLAY_PRESETS : scene === "white" ? WHITE_BG_PRESETS : null;
   if (!presets) return [];
   return presets.slice(0, count).map((p) => p.id);
 };
@@ -71,7 +88,7 @@ const clampCount = (v: number) => {
   return Math.min(10, Math.max(1, Math.round(v)));
 };
 
-export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, onSubmit }) => {
+export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, onSubmit, referenceImageUrl }) => {
   const [rules, setRules] = useState<BatchSetRule[]>([
     createRule("model", 2),
     createRule("flatlay", 1),
@@ -163,6 +180,23 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
         </div>
 
         <div className="p-4 overflow-y-auto space-y-3">
+          {referenceImageUrl && (
+            <div className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3">
+              <img
+                src={referenceImageUrl}
+                alt="参考图"
+                className="w-16 h-16 rounded-lg object-cover border border-dark-600 shrink-0"
+              />
+              <div className="min-w-0">
+                <div className="text-xs text-emerald-300 font-medium flex items-center gap-1.5">
+                  <Icon name="lock" className="text-[10px]" />
+                  参考图（已锁定）
+                </div>
+                <p className="text-[11px] text-gray-400 mt-0.5">将基于此图风格生成所有场景变体</p>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <button
               onClick={applyQuickPreset}
@@ -245,7 +279,7 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
                 {hasPoseCheckboxes && (
                   <div className="mt-2">
                     <div className="text-[11px] text-gray-400 mb-1.5">
-                      {rule.scene === "model" ? "姿态" : "角度"}（勾选即生成，每个勾选项 = 1 张图）
+                      {rule.scene === "model" ? "姿态" : rule.scene === "detail" ? "角度" : rule.scene === "flatlay" ? "构图" : "用途"}（勾选即生成，每个勾选项 = 1 张图）
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {presets.map((p) => {

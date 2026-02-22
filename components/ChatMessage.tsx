@@ -4,6 +4,7 @@ import { Message } from '../types';
 import { Icon } from './Icon';
 import { DownloadOptionsModal } from './DownloadOptionsModal';
 import { downloadImageWithFormat, loadDownloadOptions, saveDownloadOptions } from '../services/imageDownload';
+import { useToast } from './Toast';
 
 interface ChatMessageProps {
   message: Message;
@@ -27,6 +28,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
   const [showActionsIdx, setShowActionsIdx] = React.useState<number | null>(null);
   const [downloadOptions, setDownloadOptions] = React.useState(loadDownloadOptions);
   const [pendingDownload, setPendingDownload] = React.useState<{ url: string; basename: string } | null>(null);
+  const { addToast } = useToast();
 
   const downloadImage = (imageUrl: string, imageId?: string) => {
     setPendingDownload({
@@ -47,7 +49,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
       setPendingDownload(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      window.alert(`下载失败：${msg}`);
+      addToast({ type: 'error', message: `下载失败：${msg}` });
     }
   };
 

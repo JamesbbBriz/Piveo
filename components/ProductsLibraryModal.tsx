@@ -8,7 +8,7 @@ interface ProductsLibraryModalProps {
   onAddProduct: (product: ProductCatalogItem) => void;
   onUpdateProduct: (productId: string, updates: Partial<Omit<ProductCatalogItem, 'id' | 'createdAt'>>) => void;
   onDeleteProduct: (productId: string) => void;
-  onClose: () => void;
+  onClose?: () => void;
 }
 
 interface AnnotateForm {
@@ -110,11 +110,7 @@ export const ProductsLibraryModal: React.FC<ProductsLibraryModalProps> = ({
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
-        <div
-          className="bg-dark-900 border border-dark-700 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl"
-          onClick={(e) => e.stopPropagation()}
-        >
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
             <div className="flex items-center gap-3">
@@ -144,12 +140,6 @@ export const ProductsLibraryModal: React.FC<ProductsLibraryModalProps> = ({
                 title="粘贴产品图"
               >
                 粘贴产品
-              </button>
-              <button
-                onClick={onClose}
-                className="w-8 h-8 rounded-lg bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-200 flex items-center justify-center transition-colors"
-              >
-                <Icon name="times" />
               </button>
             </div>
           </div>
@@ -259,14 +249,7 @@ export const ProductsLibraryModal: React.FC<ProductsLibraryModalProps> = ({
                 ? "现在直接按 Cmd/Ctrl + V 即可把剪贴板图片放进产品库。"
                 : "提示：点击标注可添加产品尺寸和描述"}
             </p>
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm rounded-lg bg-dark-800 hover:bg-dark-700 text-gray-200 border border-dark-600 transition-colors"
-            >
-              关闭
-            </button>
           </div>
-        </div>
       </div>
 
       {/* Image Preview */}

@@ -4,6 +4,7 @@ import { AspectRatio, ModelCharacter, ProductImage, ProductScale, SessionSetting
 import { generateModelCharacter } from "../services/gemini";
 import { getSupportedAspectRatios, getSupportedSizeForAspect } from "../services/sizeUtils";
 import { Icon } from "./Icon";
+import { useToast } from "./Toast";
 
 interface PromptModelPanelProps {
   settings: SessionSettings;
@@ -27,6 +28,7 @@ const PromptModelPanelInner: React.FC<PromptModelPanelProps> = ({
   const modelInputRef = useRef<HTMLInputElement>(null);
   const productInputRef = useRef<HTMLInputElement>(null);
   const productSlotRef = useRef<HTMLDivElement>(null);
+  const { addToast } = useToast();
 
   const selectModel = (id: string | null) => {
     const newId = id === settings.selectedModelId ? null : id;
@@ -50,7 +52,7 @@ const PromptModelPanelInner: React.FC<PromptModelPanelProps> = ({
       selectModel(model.id);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      alert(`生成模特失败：${msg}`);
+      addToast({ type: 'error', message: `生成模特失败：${msg}` });
     } finally {
       setIsGeneratingModel(false);
     }

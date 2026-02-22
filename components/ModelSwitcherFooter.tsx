@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ApiConfig } from "../services/apiConfig";
 import { listModels } from "../services/openaiImages";
 import { Icon } from "./Icon";
+import { useToast } from "./Toast";
 
 interface ModelSwitcherFooterProps {
   apiConfig: ApiConfig;
@@ -48,6 +49,7 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
   onLogout,
   compact = false,
 }) => {
+  const { addToast } = useToast();
   const [models, setModels] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [pendingModel, setPendingModel] = useState<string | null>(null);
@@ -161,7 +163,7 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
                 onClick={() => {
                   // N-1: 校验 pendingModel 是否仍在模型列表中
                   if (!models.includes(pendingModel)) {
-                    alert("该模型已不在可用列表中，请重新选择。");
+                    addToast({ type: 'warning', message: '该模型已不在可用列表中，请重新选择。' });
                     setPendingModel(null);
                     return;
                   }

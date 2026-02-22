@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import JSZip from "jszip";
 import { Icon } from "./Icon";
-import { DownloadOptionsModal } from "./DownloadOptionsModal";
 import { downloadImageWithFormat, loadDownloadOptions, saveDownloadOptions } from "../services/imageDownload";
 import { dataUrlToBlob } from "../services/imageData";
-import { useModalA11y } from "./useModalA11y";
+import { useToast } from "./Toast";
+import type { DownloadOptions } from "../services/imageDownload";
 
 export interface AssetItem {
   id: string;
@@ -20,9 +20,9 @@ export interface AssetItem {
 }
 
 interface AssetsModalProps {
-  isOpen: boolean;
+  isOpen?: boolean;
   assets: AssetItem[];
-  onClose: () => void;
+  onClose?: () => void;
   onOpenMaskEdit: (baseImageUrl: string) => void;
   onUseAsReference: (imageUrl: string) => void;
   onUsePrompt: (prompt: string) => void;
@@ -69,7 +69,7 @@ const guessExt = (url: string): string => {
 };
 
 export const AssetsModal: React.FC<AssetsModalProps> = ({
-  isOpen,
+  isOpen = true,
   assets,
   onClose,
   onOpenMaskEdit,
@@ -81,18 +81,14 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tagMap, setTagMap] = useState<Record<string, string[]>>({});
   const [isExporting, setIsExporting] = useState(false);
-  const [exportHint, setExportHint] = useState<string | null>(null);
-  const [downloadOptions, setDownloadOptions] = useState(loadDownloadOptions);
-  const [pendingDownload, setPendingDownload] = useState<AssetItem | null>(null);
-  const modalRef = useRef<HTMLDivElement>(null);
+  const [downloadOptions] = useState<DownloadOptions>(loadDownloadOptions);
+  const { addToast } = useToast();
 
   useEffect(() => {
     if (!isOpen) return;
     setTagMap(loadTags());
     setSessionFilter("__all__");
   }, [isOpen]);
-
-  useModalA11y(isOpen && pendingDownload === null, modalRef, onClose);
 
   const sessions = useMemo(() => {
     const m = new Map<string, string>();
@@ -128,11 +124,9 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
   const handleCopy = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setExportHint("已复制到剪贴板");
-      setTimeout(() => setExportHint(null), 1200);
+      addToast({ type: 'success', message: '已复制到剪贴板' });
     } catch {
-      setExportHint("复制失败（浏览器权限限制）");
-      setTimeout(() => setExportHint(null), 1500);
+      addToast({ type: 'error', message: '复制失败（浏览器权限限制）' });
     }
   };
 
@@ -148,30 +142,21 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
     downloadBlob(blob, `topseller-assets-${Date.now()}.json`);
   };
 
-  const downloadOne = (a: AssetItem) => {
-    setPendingDownload(a);
-  };
-
-  const confirmDownload = async () => {
-    if (!pendingDownload) return;
-    saveDownloadOptions(downloadOptions);
+  const downloadOne = async (a: AssetItem) => {
     try {
-      await downloadImageWithFormat(pendingDownload.url, {
-        basename: `topseller-${pendingDownload.id}`,
+      await downloadImageWithFormat(a.url, {
+        basename: `topseller-${a.id}`,
         format: downloadOptions.format,
         quality: downloadOptions.quality,
       });
-      setPendingDownload(null);
     } catch (e) {
-      setExportHint("下载失败（可能是跨域或链接已失效）");
-      setTimeout(() => setExportHint(null), 1600);
+      addToast({ type: 'error', message: '下载失败（可能是跨域或链接已失效）' });
       console.warn("downloadOne failed:", e);
     }
   };
 
   const exportZip = async () => {
     setIsExporting(true);
-    setExportHint(null);
     try {
       const zip = new JSZip();
       const manifest = filtered.map((a) => ({
@@ -215,13 +200,13 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
       const blob = await zip.generateAsync({ type: "blob" });
       downloadBlob(blob, `topseller-assets-${Date.now()}.zip`);
       if (skipped > 0) {
-        setExportHint(`导出完成，跳过 ${skipped} 张失效图片。`);
-        setTimeout(() => setExportHint(null), 2400);
+        addToast({ type: 'warning', message: `导出完成，跳过 ${skipped} 张失效图片。` });
+      } else {
+        addToast({ type: 'success', message: '导出 ZIP 完成' });
       }
     } catch (e) {
       console.warn("exportZip failed:", e);
-      setExportHint("导出失败，请重试。");
-      setTimeout(() => setExportHint(null), 1800);
+      addToast({ type: 'error', message: '导出失败，请重试。' });
     } finally {
       setIsExporting(false);
     }
@@ -230,8 +215,8 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div ref={modalRef} tabIndex={-1} className="relative w-full max-w-6xl h-[85vh] bg-dark-800 border border-dark-700 rounded-2xl shadow-2xl flex overflow-hidden">
+    <div className="flex-1 flex overflow-hidden">
+      <div className="relative w-full h-full flex overflow-hidden">
         {/* Left: list */}
         <div className="w-full lg:w-[55%] border-r border-dark-700 flex flex-col">
           <div className="p-4 border-b border-dark-700 flex items-center justify-between gap-3">
@@ -258,12 +243,6 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
               >
                 <Icon name={isExporting ? "spinner" : "file-archive"} className={isExporting ? "fa-spin" : ""} />{" "}
                 导出 ZIP
-              </button>
-              <button
-                onClick={onClose}
-                className="px-3 py-2 text-xs bg-dark-900 hover:bg-dark-700 text-gray-200 border border-dark-600 rounded-lg"
-              >
-                关闭
               </button>
             </div>
           </div>
@@ -358,8 +337,7 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
                   <button
                     onClick={() => {
                       onUseAsReference(selected.url);
-                      setExportHint("已设为参考图");
-                      setTimeout(() => setExportHint(null), 1200);
+                      addToast({ type: 'success', message: '已设为参考图' });
                     }}
                     className="px-3 py-2 text-xs bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-lg"
                   >
@@ -369,8 +347,7 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
                     <button
                       onClick={() => {
                         onUsePrompt(selected.prompt || "");
-                        setExportHint("已回填提示词");
-                        setTimeout(() => setExportHint(null), 1200);
+                        addToast({ type: 'success', message: '已回填提示词' });
                       }}
                       className="px-3 py-2 text-xs bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-lg"
                     >
@@ -414,7 +391,6 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
                   />
                 </div>
 
-                {exportHint && <div className="text-[11px] text-banana-400">{exportHint}</div>}
               </div>
             </>
           )}
@@ -436,12 +412,7 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
                   {selected.model || "—"} · {selected.size || "—"}
                 </div>
               </div>
-              <button
-                onClick={onClose}
-                className="px-3 py-2 text-xs bg-dark-900 hover:bg-dark-700 text-gray-200 border border-dark-600 rounded-lg"
-              >
-                关闭
-              </button>
+              <div />
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -453,8 +424,7 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
                 <button
                   onClick={() => {
                     onUseAsReference(selected.url);
-                    setExportHint("已设为参考图");
-                    setTimeout(() => setExportHint(null), 1200);
+                    addToast({ type: 'success', message: '已设为参考图' });
                   }}
                   className="px-3 py-2 text-xs bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-lg"
                 >
@@ -464,8 +434,7 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
                   <button
                     onClick={() => {
                       onUsePrompt(selected.prompt || "");
-                      setExportHint("已回填提示词");
-                      setTimeout(() => setExportHint(null), 1200);
+                      addToast({ type: 'success', message: '已回填提示词' });
                     }}
                     className="px-3 py-2 text-xs bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-lg"
                   >
@@ -520,20 +489,9 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
                   placeholder="例如：电商, 白底, 发圈"
                 />
               </div>
-
-              {exportHint && <div className="text-[11px] text-banana-400">{exportHint}</div>}
             </div>
           </div>
         )}
-        <DownloadOptionsModal
-          isOpen={pendingDownload !== null}
-          options={downloadOptions}
-          onChange={setDownloadOptions}
-          onCancel={() => setPendingDownload(null)}
-          onConfirm={() => void confirmDownload()}
-          title="下载设置"
-          confirmLabel="开始下载"
-        />
       </div>
     </div>
   );

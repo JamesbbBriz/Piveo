@@ -3,13 +3,14 @@ import { ModelCharacter } from "../types";
 import { Icon } from "./Icon";
 import { ImagePreviewModal } from "./ImagePreviewModal";
 import { generateModelCharacter } from "../services/gemini";
+import { useToast } from "./Toast";
 
 interface ModelsLibraryModalProps {
   models: ModelCharacter[];
   onAddModel: (model: ModelCharacter) => void;
   onDeleteModel: (modelId: string) => void;
   onRenameModel: (modelId: string, newName: string) => void;
-  onClose: () => void;
+  onClose?: () => void;
 }
 
 export const ModelsLibraryModal: React.FC<ModelsLibraryModalProps> = ({
@@ -27,6 +28,7 @@ export const ModelsLibraryModal: React.FC<ModelsLibraryModalProps> = ({
   const [isGenerating, setIsGenerating] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const pasteTargetRef = useRef<HTMLDivElement>(null);
+  const { addToast } = useToast();
 
   const handleGenerate = async () => {
     setIsGenerating(true);
@@ -44,7 +46,7 @@ export const ModelsLibraryModal: React.FC<ModelsLibraryModalProps> = ({
       setGenDescription("");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      alert(`生成模特失败：${msg}`);
+      addToast({ type: 'error', message: `生成模特失败：${msg}` });
     } finally {
       setIsGenerating(false);
     }
@@ -114,11 +116,7 @@ export const ModelsLibraryModal: React.FC<ModelsLibraryModalProps> = ({
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
-        <div
-          className="bg-dark-900 border border-dark-700 rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl"
-          onClick={(e) => e.stopPropagation()}
-        >
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
             <div className="flex items-center gap-3">
@@ -172,12 +170,6 @@ export const ModelsLibraryModal: React.FC<ModelsLibraryModalProps> = ({
                 title="粘贴模特图"
               >
                 粘贴模特
-              </button>
-              <button
-                onClick={onClose}
-                className="w-8 h-8 rounded-lg bg-dark-800 hover:bg-dark-700 text-gray-400 hover:text-gray-200 flex items-center justify-center transition-colors"
-              >
-                <Icon name="times" />
               </button>
             </div>
           </div>
@@ -310,14 +302,7 @@ export const ModelsLibraryModal: React.FC<ModelsLibraryModalProps> = ({
                 ? "现在直接按 Cmd/Ctrl + V 即可把剪贴板图片放进模特库。"
                 : "提示：点击模特名称可以重命名"}
             </p>
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm rounded-lg bg-dark-800 hover:bg-dark-700 text-gray-200 border border-dark-600 transition-colors"
-            >
-              关闭
-            </button>
           </div>
-        </div>
       </div>
 
       {/* Image Preview */}

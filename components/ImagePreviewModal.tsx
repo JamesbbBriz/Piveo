@@ -3,6 +3,7 @@ import { Icon } from './Icon';
 import { DownloadOptionsModal } from './DownloadOptionsModal';
 import { downloadImageWithFormat, loadDownloadOptions, saveDownloadOptions } from '../services/imageDownload';
 import { useModalA11y } from './useModalA11y';
+import { useToast } from './Toast';
 
 interface ImagePreviewModalProps {
   imageUrl: string;
@@ -13,6 +14,7 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ imageUrl, 
   const [downloadOptions, setDownloadOptions] = React.useState(loadDownloadOptions);
   const [downloadOpen, setDownloadOpen] = React.useState(false);
   const modalRef = React.useRef<HTMLDivElement>(null);
+  const { addToast } = useToast();
   useModalA11y(!downloadOpen, modalRef, onClose);
 
   const handleDownload = (e: React.MouseEvent) => {
@@ -31,7 +33,7 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ imageUrl, 
       setDownloadOpen(false);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      window.alert(`下载失败：${msg}`);
+      addToast({ type: 'error', message: `下载失败：${msg}` });
     }
   };
 
