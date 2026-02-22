@@ -169,3 +169,75 @@ export interface BatchJob {
   slots: BatchSlot[];
   actionLogs: BatchActionLog[];
 }
+
+// === NEW: Unified Project Model ===
+
+// Project settings (extends/aliases SessionSettings)
+export interface ProjectSettings extends SessionSettings {}
+
+// Unified project (replaces Session + BatchJob separation)
+export interface Project {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  userId: string;
+  teamId?: string;  // undefined = personal project
+
+  settings: ProjectSettings;
+
+  productImage: ProductImage | null;
+  modelImage: string | null;
+  referenceImage: string | null;
+
+  images: GeneratedImage[];
+  chatHistory: Message[];
+  batchConfig?: BatchConfig;
+}
+
+// Unified image record
+export interface GeneratedImage {
+  id: string;
+  imageUrl: string;
+  prompt: string;
+  model: string;
+  size: string;
+  createdAt: number;
+
+  source: 'chat' | 'batch' | 'mask-edit' | 'refine' | 'variation';
+  parentImageId?: string;
+
+  slotId?: string;
+  slotTitle?: string;
+  jobId?: string;
+  isPrimary?: boolean;
+  tags?: string[];
+  action?: string;
+}
+
+// BatchConfig for project-level batch settings
+export interface BatchConfig {
+  basePrompt: string;
+  referenceImageUrl?: string;
+  productImageUrl?: string;
+  modelImageUrl?: string;
+  slots: BatchSlot[];
+}
+
+// Team types
+export interface Team {
+  id: string;
+  name: string;
+  createdBy: string;
+  members: TeamMember[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface TeamMember {
+  userId: string;
+  username: string;
+  displayName?: string;
+  role: 'admin' | 'member';
+  joinedAt: number;
+}
