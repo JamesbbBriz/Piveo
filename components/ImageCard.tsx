@@ -12,6 +12,14 @@ export interface ImageCardProps {
   onAction: (action: string) => void;
 }
 
+const toThumbUrl = (url: string | undefined): string | undefined => {
+  if (!url) return url;
+  // Only rewrite server blob URLs to use thumbnail endpoint
+  const m = /^\/api\/data\/blobs\/([a-f0-9-]+)$/i.exec(url);
+  if (m) return `${url}/thumb`;
+  return url;
+};
+
 export const ImageCard: React.FC<ImageCardProps> = ({
   image,
   isSelected = false,
@@ -77,7 +85,7 @@ export const ImageCard: React.FC<ImageCardProps> = ({
       <div className="aspect-square bg-zinc-950 relative overflow-hidden">
         {image.imageUrl ? (
           <img
-            src={image.imageUrl}
+            src={toThumbUrl(image.imageUrl) || image.imageUrl}
             alt={promptExcerpt}
             className="absolute inset-0 w-full h-full object-cover"
             loading="lazy"

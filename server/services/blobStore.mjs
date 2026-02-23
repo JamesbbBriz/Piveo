@@ -1,7 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { v4 as uuidv4 } from "uuid";
+import sharp from "sharp";
 import { getDb, getDataDir } from "../db.mjs";
+
+const THUMB_MAX_DIM = 400;
+const THUMB_QUALITY = 80;
 
 const EXT_MAP = {
   "image/png": ".png",
@@ -83,7 +87,51 @@ export function deleteBlob(blobId) {
   if (fs.existsSync(absPath)) {
     fs.unlinkSync(absPath);
   }
+  // Clean up thumbnail if exists
+  const thumbPath = thumbPathFor(absPath);
+  if (fs.existsSync(thumbPath)) {
+    fs.unlinkSync(thumbPath);
+  }
 
   db.prepare("DELETE FROM blobs WHERE id = ?").run(blobId);
   return true;
+}
+
+// ---------- Thumbnails ----------
+
+function thumbPathFor(absOriginalPath) {
+  const dir = path.dirname(absOriginalPath);
+  const base = path.basename(absOriginalPath, path.extname(absOriginalPath));
+  return path.join(dir, `${base}_thumb.webp`);
+}
+
+/**
+ * Get or lazily generate a WebP thumbnail for a blob.
+ * Returns { filePath, contentType } or null if blob not found.
+ */
+export async function getThumbnail(blobId) {
+  const original = getBlob(blobId);
+  if (!original) return null;
+
+  // Only generate thumbnails for raster images
+  if (!/^image\/(png|jpe?g|webp|gif)$/i.test(original.contentType)) {
+    return original; // serve original for SVG etc.
+  }
+
+  const thumbFile = thumbPathFor(original.filePath);
+  if (fs.existsSync(thumbFile)) {
+    return { filePath: thumbFile, contentType: "image/webp" };
+  }
+
+  // Generate thumbnail
+  try {
+    await sharp(original.filePath)
+      .resize(THUMB_MAX_DIM, THUMB_MAX_DIM, { fit: "inside", withoutEnlargement: true })
+      .webp({ quality: THUMB_QUALITY })
+      .toFile(thumbFile);
+    return { filePath: thumbFile, contentType: "image/webp" };
+  } catch (e) {
+    console.error(`[BLOB] thumbnail generation failed for ${blobId}:`, e.message);
+    return original; // fallback to original
+  }
 }

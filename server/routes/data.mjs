@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
 import { getDb } from "../db.mjs";
 import { requireAuth, isSuperAdmin } from "./auth.mjs";
-import { saveBlob, getBlob, deleteBlob } from "../services/blobStore.mjs";
+import { saveBlob, getBlob, deleteBlob, getThumbnail } from "../services/blobStore.mjs";
 import { getAllUsersUsageStats, getUserUsageStats } from "../services/usageTracker.mjs";
 import * as providerStore from "../services/providerStore.mjs";
 
@@ -134,6 +134,20 @@ router.get("/api/data/blobs/:id", (req, res) => {
   res.setHeader("Content-Type", blob.contentType);
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   fs.createReadStream(blob.filePath).pipe(res);
+});
+
+router.get("/api/data/blobs/:id/thumb", async (req, res) => {
+  try {
+    const thumb = await getThumbnail(req.params.id);
+    if (!thumb) return res.status(404).json({ ok: false, message: "文件不存在。" });
+
+    res.setHeader("Content-Type", thumb.contentType);
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    fs.createReadStream(thumb.filePath).pipe(res);
+  } catch (e) {
+    console.error("[DATA] thumbnail error:", e.message);
+    res.status(500).json({ ok: false, message: "缩略图生成失败。" });
+  }
 });
 
 // ---------- Teams ----------
