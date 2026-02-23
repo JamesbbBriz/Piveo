@@ -51,7 +51,7 @@ if (IS_PROD && !upstreamAuthorization) {
   throw new Error("生产环境必须配置 UPSTREAM_AUTHORIZATION。");
 }
 if (!AUTH_USERNAME || !AUTH_PASSWORD) {
-  throw new Error("必须配置 AUTH_USER 与 AUTH_PASSWORD，禁止使用硬编码默认凭据。");
+  throw new Error("必须配置 AUTH_USER 与 AUTH_PASSWORD（或 AUTH_USER_2 等），禁止使用硬编码默认凭据。");
 }
 
 // ---------- Initialize database & seed user ----------

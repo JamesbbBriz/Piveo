@@ -161,24 +161,35 @@ export const requireAuth = (req, res, next) => {
  * Called on startup. Insert only if the user doesn't already exist.
  */
 export async function seedUser() {
-  const username = String(process.env.AUTH_USER || "").trim();
-  const password = String(process.env.AUTH_PASSWORD || "");
+  // Collect seed user pairs: AUTH_USER/AUTH_PASSWORD, AUTH_USER_2/AUTH_PASSWORD_2, ...
+  const pairs = [];
+  const primary = String(process.env.AUTH_USER || "").trim();
+  const primaryPw = String(process.env.AUTH_PASSWORD || "");
+  if (primary && primaryPw) pairs.push({ username: primary, password: primaryPw });
 
-  if (!username || !password) {
+  for (let i = 2; i <= 10; i++) {
+    const u = String(process.env[`AUTH_USER_${i}`] || "").trim();
+    const p = String(process.env[`AUTH_PASSWORD_${i}`] || "");
+    if (u && p) pairs.push({ username: u, password: p });
+  }
+
+  if (pairs.length === 0) {
     throw new Error("必须配置 AUTH_USER 与 AUTH_PASSWORD，禁止使用硬编码默认凭据。");
   }
 
   const db = getDb();
-  const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
-  if (!existing) {
-    const hash = await bcrypt.hash(password, 10);
-    const now = Date.now();
-    db.prepare(
-      "INSERT INTO users (id, username, password_hash, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
-    ).run(uuidv4(), username, hash, username, now, now);
-    console.log(`[AUTH] Seeded user: ${username}`);
-  } else {
-    console.log(`[AUTH] User already exists: ${username}`);
+  for (const { username, password } of pairs) {
+    const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
+    if (!existing) {
+      const hash = await bcrypt.hash(password, 10);
+      const now = Date.now();
+      db.prepare(
+        "INSERT INTO users (id, username, password_hash, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      ).run(uuidv4(), username, hash, username, now, now);
+      console.log(`[AUTH] Seeded user: ${username}`);
+    } else {
+      console.log(`[AUTH] User already exists: ${username}`);
+    }
   }
 }
 
