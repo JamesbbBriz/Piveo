@@ -10,7 +10,7 @@ const DATA_DIR = path.resolve(
   process.env.DATA_DIR || path.join(__dirname, "..", "data")
 );
 
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 4;
 
 let db = null;
 
@@ -46,6 +46,7 @@ export function initDatabase() {
   if (currentVersion < 1) applySchemaV1(db);
   if (currentVersion < 2) applySchemaV2(db);
   if (currentVersion < 3) applySchemaV3(db);
+  if (currentVersion < 4) applySchemaV4(db);
 
   if (currentVersion < CURRENT_SCHEMA_VERSION) {
     db.prepare(
@@ -221,6 +222,18 @@ function applySchemaV3(db) {
       monthly_limit INTEGER NOT NULL DEFAULT -1,
       daily_limit INTEGER NOT NULL DEFAULT -1,
       updated_at INTEGER NOT NULL
+    );
+  `);
+}
+
+function applySchemaV4(db) {
+  // Only stores activation state + cached model lists. URL/API Key live in env vars.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS providers (
+      id TEXT PRIMARY KEY,
+      is_active INTEGER NOT NULL DEFAULT 0,
+      models_cache TEXT,
+      models_fetched_at INTEGER
     );
   `);
 }

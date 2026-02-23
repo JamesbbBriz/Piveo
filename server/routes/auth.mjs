@@ -16,10 +16,7 @@ const SUPER_ADMIN_USERS = new Set(
 export const isSuperAdmin = (username) =>
   SUPER_ADMIN_USERS.has(String(username || "").trim().toLowerCase());
 
-// Global active provider (in-memory, resets to "primary" on restart)
-let activeProvider = "primary";
-export const getActiveProvider = () => activeProvider;
-export const setActiveProvider = (p) => { activeProvider = p === "alt" ? "alt" : "primary"; };
+import * as providerStore from "../services/providerStore.mjs";
 const SESSION_COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "topseller_session";
 const SESSION_TTL_SECONDS = Number(process.env.AUTH_SESSION_TTL_SECONDS || 60 * 60 * 24 * 7);
 const JWT_SECRET = process.env.AUTH_JWT_SECRET || "dev-only-change-me";
@@ -238,14 +235,12 @@ router.get("/auth/session", (req, res) => {
 });
 
 router.get("/auth/provider", requireAuth, (req, res) => {
-  const hasAlt = Boolean(process.env.UPSTREAM_API_BASE_URL_ALT);
+  const providers = providerStore.getAll();
+  const active = providerStore.getActive();
   res.json({
     ok: true,
-    active: getActiveProvider(),
-    options: [
-      { id: "primary", label: "主线路" },
-      ...(hasAlt ? [{ id: "alt", label: "备用线路" }] : []),
-    ],
+    active: active?.id || "primary",
+    options: providers.map((p) => ({ id: p.id, label: p.name })),
   });
 });
 
@@ -253,13 +248,14 @@ router.post("/auth/provider", express.json({ limit: "1mb" }), requireAuth, (req,
   if (!isSuperAdmin(req.authUser)) {
     return res.status(403).json({ ok: false, message: "无权限" });
   }
-  const provider = String(req.body?.provider || "");
-  if (provider !== "primary" && provider !== "alt") {
-    return res.status(400).json({ ok: false, message: "无效线路" });
+  const providerId = String(req.body?.provider || "");
+  try {
+    providerStore.activate(providerId);
+    console.info(`[AUTH] Super admin ${req.authUser} switched provider → ${providerId}`);
+    res.json({ ok: true, active: providerId });
+  } catch (e) {
+    return res.status(400).json({ ok: false, message: e.message });
   }
-  setActiveProvider(provider);
-  console.info(`[AUTH] Super admin ${req.authUser} switched provider → ${provider}`);
-  res.json({ ok: true, active: provider });
 });
 
 router.post("/auth/logout", (_req, res) => {

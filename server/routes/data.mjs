@@ -7,6 +7,7 @@ import { getDb } from "../db.mjs";
 import { requireAuth, isSuperAdmin } from "./auth.mjs";
 import { saveBlob, getBlob, deleteBlob } from "../services/blobStore.mjs";
 import { getAllUsersUsageStats, getUserUsageStats } from "../services/usageTracker.mjs";
+import * as providerStore from "../services/providerStore.mjs";
 
 const router = express.Router();
 
@@ -219,7 +220,7 @@ router.delete("/api/data/teams/:id", (req, res) => {
   const userId = getUserId(req.authUser);
   if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
 
-  if (!assertTeamAccess(userId, req.params.id, "admin")) {
+  if (!isSuperAdmin(req.authUser) && !assertTeamAccess(userId, req.params.id, "admin")) {
     return res.status(403).json({ ok: false, message: "无权限操作此团队。" });
   }
 
@@ -234,7 +235,7 @@ router.get("/api/data/teams/:id/members", (req, res) => {
   const userId = getUserId(req.authUser);
   if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
 
-  if (!assertTeamAccess(userId, req.params.id)) {
+  if (!isSuperAdmin(req.authUser) && !assertTeamAccess(userId, req.params.id)) {
     return res.status(403).json({ ok: false, message: "无权限查看此团队。" });
   }
 
@@ -255,7 +256,7 @@ router.post("/api/data/teams/:id/members", (req, res) => {
   const userId = getUserId(req.authUser);
   if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
 
-  if (!assertTeamAccess(userId, req.params.id, "admin")) {
+  if (!isSuperAdmin(req.authUser) && !assertTeamAccess(userId, req.params.id, "admin")) {
     return res.status(403).json({ ok: false, message: "仅管理员可添加成员。" });
   }
 
@@ -283,9 +284,9 @@ router.delete("/api/data/teams/:id/members/:uid", (req, res) => {
   if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
 
   const targetUid = req.params.uid;
-  // Allow self-removal or admin removal
+  // Allow self-removal, admin removal, or super admin
   const isSelf = targetUid === userId;
-  if (!isSelf && !assertTeamAccess(userId, req.params.id, "admin")) {
+  if (!isSelf && !isSuperAdmin(req.authUser) && !assertTeamAccess(userId, req.params.id, "admin")) {
     return res.status(403).json({ ok: false, message: "无权限操作。" });
   }
 
@@ -422,7 +423,7 @@ router.delete("/api/data/projects/:id", (req, res) => {
   const project = db.prepare("SELECT user_id, team_id FROM projects WHERE id = ?").get(req.params.id);
   if (!project) return res.status(404).json({ ok: false, message: "项目不存在。" });
 
-  if (project.user_id !== userId) {
+  if (project.user_id !== userId && !isSuperAdmin(req.authUser)) {
     if (!project.team_id || !assertTeamAccess(userId, project.team_id, "admin")) {
       return res.status(403).json({ ok: false, message: "无权限删除此项目。" });
     }
@@ -783,6 +784,55 @@ router.put("/api/data/preferences", (req, res) => {
   ).run(userId, default_image_model ?? null, aspect_ratio ?? null, product_scale ?? null, batch_count ?? 1, Date.now());
 
   res.json({ ok: true });
+});
+
+// ---------- Providers (super admin only) ----------
+// Config (URL, API key) lives in env vars — DB only stores activation state + model cache.
+
+const maskApiKey = (key) => {
+  if (!key || key.length <= 8) return "****";
+  return "****" + key.slice(-4);
+};
+
+router.get("/api/data/providers", (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+  const providers = providerStore.getAll().map((p) => ({
+    id: p.id,
+    name: p.name,
+    baseUrl: p.baseUrl,
+    apiKey: maskApiKey(p.apiKey),
+    isActive: p.isActive,
+    modelsCache: p.modelsCache,
+    modelsFetchedAt: p.modelsFetchedAt,
+  }));
+  res.json({ ok: true, providers });
+});
+
+router.post("/api/data/providers/:id/activate", (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+  try {
+    providerStore.activate(req.params.id);
+    console.info(`[DATA] Super admin ${req.authUser} activated provider ${req.params.id}`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ ok: false, message: e.message });
+  }
+});
+
+router.post("/api/data/providers/:id/models", async (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+  try {
+    const models = await providerStore.fetchModelsFromUpstream(req.params.id);
+    res.json({ ok: true, models });
+  } catch (e) {
+    res.status(502).json({ ok: false, message: e.message });
+  }
 });
 
 // ---------- Sync ----------

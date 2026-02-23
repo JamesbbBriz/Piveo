@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Icon } from './Icon';
 import { syncService } from '@/services/sync';
 
-type AdminTab = 'users' | 'teams' | 'projects';
+type AdminTab = 'users' | 'teams' | 'projects' | 'providers';
 
 interface AdminPanelProps {
   onClose: () => void;
@@ -13,6 +13,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
   const [users, setUsers] = useState<any[]>([]);
   const [teams, setTeams] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
+  const [providers, setProviders] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -33,6 +34,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
         case 'projects': {
           const data = await syncService.fetchAllProjects();
           setProjects(data);
+          break;
+        }
+        case 'providers': {
+          const data = await syncService.fetchProviders();
+          setProviders(data);
           break;
         }
       }
@@ -66,6 +72,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
     { key: 'users', label: '用户管理', icon: 'users' },
     { key: 'teams', label: '团队管理', icon: 'people-group' },
     { key: 'projects', label: '项目管理', icon: 'th-large' },
+    { key: 'providers', label: '供应商管理', icon: 'server' },
   ];
 
   const filteredUsers = users.filter(
@@ -162,10 +169,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
               <UsersTable users={filteredUsers} formatDate={formatDate} onRefresh={() => loadData('users')} />
             )}
             {tab === 'teams' && (
-              <TeamsTable teams={filteredTeams} formatDate={formatDate} />
+              <TeamsTable teams={filteredTeams} formatDate={formatDate} onRefresh={() => loadData('teams')} />
             )}
             {tab === 'projects' && (
-              <ProjectsTable projects={filteredProjects} formatDate={formatDate} />
+              <ProjectsTable projects={filteredProjects} formatDate={formatDate} onRefresh={() => loadData('projects')} />
+            )}
+            {tab === 'providers' && (
+              <ProvidersTable providers={providers} formatDate={formatDate} onRefresh={() => loadData('providers')} />
             )}
           </>
         )}
@@ -438,45 +448,188 @@ const UsersTable: React.FC<{
   );
 };
 
-const TeamsTable: React.FC<{ teams: any[]; formatDate: (ts: number | null) => string }> = ({
-  teams,
-  formatDate,
-}) => {
+/* ── Add Member Inline ── */
+
+const AddMemberInline: React.FC<{
+  teamId: string;
+  onAdded: () => void;
+  onCancel: () => void;
+}> = ({ teamId, onAdded, onCancel }) => {
+  const [username, setUsername] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleAdd = async () => {
+    if (!username.trim()) return;
+    setError('');
+    setSaving(true);
+    try {
+      await syncService.addTeamMember(teamId, username.trim());
+      setUsername('');
+      onAdded();
+    } catch (err: any) {
+      setError(err?.message || '添加失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <tr className="bg-dark-800/80">
+      <td colSpan={5} className="px-4 py-3">
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500">用户名:</span>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+            placeholder="输入要添加的用户名"
+            className="w-48 px-2 py-1 rounded bg-dark-900 border border-dark-600 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-banana-500/50"
+          />
+          <button
+            onClick={handleAdd}
+            disabled={saving || !username.trim()}
+            className="px-2.5 py-1 rounded text-xs bg-banana-500/20 text-banana-400 hover:bg-banana-500/30 transition-colors disabled:opacity-50"
+          >
+            {saving ? '添加中...' : '添加'}
+          </button>
+          <button
+            onClick={onCancel}
+            className="px-2.5 py-1 rounded text-xs bg-dark-700 text-gray-400 hover:bg-dark-600 transition-colors"
+          >
+            取消
+          </button>
+          {error && <span className="text-xs text-red-400">{error}</span>}
+        </div>
+      </td>
+    </tr>
+  );
+};
+
+/* ── Teams Table ── */
+
+const TeamsTable: React.FC<{
+  teams: any[];
+  formatDate: (ts: number | null) => string;
+  onRefresh: () => void;
+}> = ({ teams, formatDate, onRefresh }) => {
+  const [addingMemberTeamId, setAddingMemberTeamId] = useState<string | null>(null);
+  const [removingMember, setRemovingMember] = useState<string | null>(null);
+
+  const handleRemoveMember = async (teamId: string, userId: string) => {
+    const key = `${teamId}:${userId}`;
+    setRemovingMember(key);
+    try {
+      await syncService.removeTeamMember(teamId, userId);
+      onRefresh();
+    } catch (e: any) {
+      console.error('[Admin] 移除成员失败:', e);
+    } finally {
+      setRemovingMember(null);
+    }
+  };
+
+  const handleDeleteTeam = async (teamId: string) => {
+    try {
+      await syncService.deleteTeam(teamId);
+      onRefresh();
+    } catch (e: any) {
+      console.error('[Admin] 删除团队失败:', e);
+    }
+  };
+
   if (teams.length === 0) return <EmptyState text="暂无团队数据" />;
   return (
     <table className="w-full">
       <thead className="border-b border-dark-700">
         <tr>
           <TableHeader>团队名称</TableHeader>
-          <TableHeader>成员数</TableHeader>
           <TableHeader>成员</TableHeader>
           <TableHeader>创建时间</TableHeader>
+          <TableHeader>操作</TableHeader>
         </tr>
       </thead>
       <tbody className="divide-y divide-dark-700/50">
         {teams.map((t) => (
-          <tr key={t.id} className="hover:bg-dark-800/50 transition-colors">
-            <TableCell>
-              <span className="font-medium text-gray-200">{t.name}</span>
-            </TableCell>
-            <TableCell>{t.members?.length ?? 0}</TableCell>
-            <TableCell>
-              <span className="text-xs text-gray-500">
-                {t.members?.map((m: any) => m.username).join(', ') || '—'}
-              </span>
-            </TableCell>
-            <TableCell className="text-gray-500">{formatDate(t.created_at)}</TableCell>
-          </tr>
+          <React.Fragment key={t.id}>
+            <tr className="hover:bg-dark-800/50 transition-colors">
+              <TableCell>
+                <span className="font-medium text-gray-200">{t.name}</span>
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-wrap gap-1.5">
+                  {t.members?.map((m: any) => (
+                    <span key={m.userId} className="inline-flex items-center gap-1 text-xs bg-dark-700 rounded px-1.5 py-0.5 text-gray-300">
+                      {m.username}
+                      <button
+                        onClick={() => handleRemoveMember(t.id, m.userId)}
+                        disabled={removingMember === `${t.id}:${m.userId}`}
+                        className="text-gray-500 hover:text-red-400 transition-colors disabled:opacity-50"
+                        title="移除成员"
+                      >
+                        <Icon name="xmark" className="text-[9px]" />
+                      </button>
+                    </span>
+                  )) || <span className="text-xs text-gray-600">无成员</span>}
+                </div>
+              </TableCell>
+              <TableCell className="text-gray-500">{formatDate(t.created_at)}</TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setAddingMemberTeamId(addingMemberTeamId === t.id ? null : t.id)}
+                    className="text-xs text-banana-400 hover:text-banana-300 transition-colors"
+                  >
+                    添加成员
+                  </button>
+                  <button
+                    onClick={() => handleDeleteTeam(t.id)}
+                    className="text-xs text-red-400/60 hover:text-red-400 transition-colors"
+                  >
+                    删除
+                  </button>
+                </div>
+              </TableCell>
+            </tr>
+            {addingMemberTeamId === t.id && (
+              <AddMemberInline
+                teamId={t.id}
+                onAdded={() => {
+                  setAddingMemberTeamId(null);
+                  onRefresh();
+                }}
+                onCancel={() => setAddingMemberTeamId(null)}
+              />
+            )}
+          </React.Fragment>
         ))}
       </tbody>
     </table>
   );
 };
 
+/* ── Projects Table ── */
+
 const ProjectsTable: React.FC<{
   projects: any[];
   formatDate: (ts: number | null) => string;
-}> = ({ projects, formatDate }) => {
+  onRefresh: () => void;
+}> = ({ projects, formatDate, onRefresh }) => {
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const handleDelete = async (projectId: string) => {
+    setDeleting(projectId);
+    try {
+      await syncService.deleteProject(projectId);
+      onRefresh();
+    } catch (e: any) {
+      console.error('[Admin] 删除项目失败:', e);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
   if (projects.length === 0) return <EmptyState text="暂无项目数据" />;
   return (
     <table className="w-full">
@@ -486,6 +639,7 @@ const ProjectsTable: React.FC<{
           <TableHeader>所有者</TableHeader>
           <TableHeader>创建时间</TableHeader>
           <TableHeader>更新时间</TableHeader>
+          <TableHeader>操作</TableHeader>
         </tr>
       </thead>
       <tbody className="divide-y divide-dark-700/50">
@@ -499,9 +653,160 @@ const ProjectsTable: React.FC<{
             <TableCell>{p.owner_username || '—'}</TableCell>
             <TableCell className="text-gray-500">{formatDate(p.created_at)}</TableCell>
             <TableCell className="text-gray-500">{formatDate(p.updated_at)}</TableCell>
+            <TableCell>
+              <button
+                onClick={() => handleDelete(p.id)}
+                disabled={deleting === p.id}
+                className="text-xs text-red-400/60 hover:text-red-400 transition-colors disabled:opacity-50"
+              >
+                {deleting === p.id ? '删除中...' : '删除'}
+              </button>
+            </TableCell>
           </tr>
         ))}
       </tbody>
     </table>
+  );
+};
+
+/* ── Providers Table ── */
+
+const ProvidersTable: React.FC<{
+  providers: any[];
+  formatDate: (ts: number | null) => string;
+  onRefresh: () => void;
+}> = ({ providers, onRefresh }) => {
+  const [activating, setActivating] = useState<string | null>(null);
+  const [fetchingModels, setFetchingModels] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const handleActivate = async (id: string) => {
+    if (!confirm('确定要激活此供应商？切换后所有用户的请求将路由到新线路。')) return;
+    setActivating(id);
+    try {
+      await syncService.activateProvider(id);
+      onRefresh();
+    } catch (e: any) {
+      console.error('[Admin] 激活供应商失败:', e);
+    } finally {
+      setActivating(null);
+    }
+  };
+
+  const handleFetchModels = async (id: string) => {
+    setFetchingModels(id);
+    try {
+      await syncService.fetchProviderModels(id);
+      setExpandedId(id);
+      onRefresh();
+    } catch (e: any) {
+      alert(e?.message || '获取模型列表失败');
+    } finally {
+      setFetchingModels(null);
+    }
+  };
+
+  if (providers.length === 0) {
+    return (
+      <div className="text-center py-16 space-y-3">
+        <EmptyState text="未配置供应商" />
+        <p className="text-xs text-gray-600">
+          在 .env.local 中配置 UPSTREAM_API_BASE_URL / UPSTREAM_AUTHORIZATION 环境变量后重启服务
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <p className="text-xs text-gray-600 mb-4">
+        供应商配置来自环境变量，如需修改 URL 或 API Key 请更新 .env.local 后重启服务。
+      </p>
+      <table className="w-full">
+        <thead className="border-b border-dark-700">
+          <tr>
+            <TableHeader>名称</TableHeader>
+            <TableHeader>URL</TableHeader>
+            <TableHeader>API Key</TableHeader>
+            <TableHeader>模型数</TableHeader>
+            <TableHeader>状态</TableHeader>
+            <TableHeader>操作</TableHeader>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-dark-700/50">
+          {providers.map((p) => (
+            <React.Fragment key={p.id}>
+              <tr className={`hover:bg-dark-800/50 transition-colors ${p.isActive ? 'bg-banana-500/5' : ''}`}>
+                <TableCell>
+                  <span className="font-medium text-gray-200">{p.name}</span>
+                </TableCell>
+                <TableCell>
+                  <span className="text-xs text-gray-400 font-mono truncate max-w-[200px] inline-block">{p.baseUrl}</span>
+                </TableCell>
+                <TableCell>
+                  <span className="text-xs text-gray-500 font-mono">{p.apiKey}</span>
+                </TableCell>
+                <TableCell>
+                  <button
+                    onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
+                    className="text-xs text-gray-300 hover:text-banana-400 transition-colors"
+                  >
+                    {p.modelsCache ? p.modelsCache.length : '—'}
+                  </button>
+                </TableCell>
+                <TableCell>
+                  {p.isActive ? (
+                    <span className="inline-flex items-center gap-1 text-xs bg-banana-500/20 text-banana-400 rounded-full px-2 py-0.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-banana-400" />
+                      使用中
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-600">未激活</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {!p.isActive && (
+                      <button
+                        onClick={() => handleActivate(p.id)}
+                        disabled={activating === p.id}
+                        className="text-xs text-green-400/70 hover:text-green-400 transition-colors disabled:opacity-50"
+                      >
+                        {activating === p.id ? '切换中...' : '激活'}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleFetchModels(p.id)}
+                      disabled={fetchingModels === p.id}
+                      className="text-xs text-blue-400/70 hover:text-blue-400 transition-colors disabled:opacity-50"
+                    >
+                      {fetchingModels === p.id ? (
+                        <><Icon name="spinner" className="animate-spin text-[10px] mr-0.5" />刷新中</>
+                      ) : '刷新模型'}
+                    </button>
+                  </div>
+                </TableCell>
+              </tr>
+              {expandedId === p.id && p.modelsCache && p.modelsCache.length > 0 && (
+                <tr className="bg-dark-800/30">
+                  <td colSpan={6} className="px-4 py-2">
+                    <div className="flex flex-wrap gap-1">
+                      {p.modelsCache.map((m: string) => (
+                        <span
+                          key={m}
+                          className="inline-block text-[10px] bg-dark-700 text-gray-400 rounded px-1.5 py-0.5 font-mono"
+                        >
+                          {m}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
+    </>
   );
 };

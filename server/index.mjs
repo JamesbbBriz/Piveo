@@ -1,18 +1,16 @@
+import "./env.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import cookieParser from "cookie-parser";
-import dotenv from "dotenv";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { initDatabase, getDb } from "./db.mjs";
-import authRoutes, { requireAuth, seedUser, getActiveProvider, isSuperAdmin } from "./routes/auth.mjs";
+import authRoutes, { requireAuth, seedUser, isSuperAdmin } from "./routes/auth.mjs";
 import dataRoutes from "./routes/data.mjs";
 import { checkQuota, recordUsage } from "./services/usageTracker.mjs";
-
-dotenv.config({ path: ".env.local", override: false });
-dotenv.config();
+import * as providerStore from "./services/providerStore.mjs";
 
 const IS_PROD = process.env.NODE_ENV === "production";
 const JWT_SECRET = process.env.AUTH_JWT_SECRET || "dev-only-change-me";
@@ -59,6 +57,7 @@ if (!AUTH_USERNAME || !AUTH_PASSWORD) {
 // ---------- Initialize database & seed user ----------
 initDatabase();
 await seedUser();
+providerStore.init();
 
 // ---------- Express app ----------
 const app = express();
@@ -149,6 +148,16 @@ const quotaGuard = (req, res, next) => {
 // ---------- Upstream proxy (/api) ----------
 // Data routes are mounted under /api/data and handled by dataRoutes above.
 // All other /api/* requests are proxied to the upstream gateway.
+/** Resolve active upstream config: providerStore first, env var fallback. */
+const getUpstreamConfig = () => {
+  const active = providerStore.getActive();
+  if (active) {
+    return { baseUrl: active.baseUrl, authorization: normalizeAuthorization(active.apiKey) };
+  }
+  // Fallback to env vars
+  return { baseUrl: targetProxy, authorization: upstreamAuthorization };
+};
+
 app.use(
   "/api",
   (req, res, next) => {
@@ -160,8 +169,8 @@ app.use(
   },
   requireAuth,
   (req, res, next) => {
-    const auth = getActiveProvider() === "alt" ? upstreamAuthorizationAlt : upstreamAuthorization;
-    if (!auth) {
+    const { authorization } = getUpstreamConfig();
+    if (!authorization) {
       res.status(500).json({ ok: false, message: "当前线路未配置上游鉴权。" });
       return;
     }
@@ -171,7 +180,7 @@ app.use(
   quotaGuard,
   createProxyMiddleware({
     target: targetProxy,
-    router: () => getActiveProvider() === "alt" && targetProxyAlt ? targetProxyAlt : targetProxy,
+    router: () => getUpstreamConfig().baseUrl,
     changeOrigin: true,
     secure: true,
     proxyTimeout: Number(process.env.UPSTREAM_PROXY_TIMEOUT_MS || 90000),
@@ -180,20 +189,19 @@ app.use(
     on: {
       proxyReq: (proxyReq, req) => {
         const requestId = String(req.requestId || "");
-        const auth = getActiveProvider() === "alt" ? upstreamAuthorizationAlt : upstreamAuthorization;
-        const target = getActiveProvider() === "alt" && targetProxyAlt ? targetProxyAlt : targetProxy;
-        proxyReq.setHeader("Authorization", auth);
+        const { baseUrl, authorization } = getUpstreamConfig();
+        proxyReq.setHeader("Authorization", authorization);
         proxyReq.setHeader("X-Auth-User", String(req.authUser || ""));
         if (requestId) {
           proxyReq.setHeader("X-Request-Id", requestId);
         }
         if (req.originalUrl.includes("/v1/images/generations") || req.originalUrl.includes("/v1/images/edits")) {
-          console.info(`[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} -> ${target}`);
+          console.info(`[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} -> ${baseUrl}`);
         }
       },
       proxyRes: (proxyRes, req) => {
         const requestId = String(req.requestId || "");
-        const target = getActiveProvider() === "alt" && targetProxyAlt ? targetProxyAlt : targetProxy;
+        const { baseUrl } = getUpstreamConfig();
         if (req.originalUrl.includes("/v1/images/generations") || req.originalUrl.includes("/v1/images/edits")) {
           console.info(
             `[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} <- ${proxyRes.statusCode || 0}`
@@ -215,7 +223,7 @@ app.use(
         }
         if ((proxyRes.statusCode || 0) >= 500) {
           console.warn(
-            `[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} -> ${proxyRes.statusCode} (${target})`
+            `[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} -> ${proxyRes.statusCode} (${baseUrl})`
           );
         }
       },
@@ -269,8 +277,8 @@ let shuttingDown = false;
 const server = app.listen(port, host, () => {
   console.log(`Auth server running on http://${host}:${port}`);
   console.log(`Seed user: ${AUTH_USERNAME}`);
-  console.log(`[UPSTREAM] target: ${targetProxy}`);
-  console.log(`[UPSTREAM] auth configured: ${upstreamAuthorization ? "yes" : "no"}`);
+  const active = providerStore.getActive();
+  console.log(`[UPSTREAM] active provider: ${active ? `${active.name} (${active.baseUrl})` : `env fallback (${targetProxy})`}`);
   console.log(
     `[UPSTREAM] guard: ${UPSTREAM_GUARD_ENABLED ? "on" : "off"} (per-user=${UPSTREAM_MAX_INFLIGHT_PER_USER}, global=${UPSTREAM_MAX_INFLIGHT_GLOBAL})`
   );

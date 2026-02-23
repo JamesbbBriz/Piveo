@@ -199,7 +199,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     } finally {
       if (mountedRef.current && reqId === modelsReqIdRef.current) setLoadingModels(false);
     }
-  }, [apiConfig, models.length]);
+  }, [apiConfig]);
 
   // Fetch on open
   useEffect(() => {

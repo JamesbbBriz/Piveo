@@ -278,6 +278,24 @@ class SyncService {
     return res.projects ?? [];
   }
 
+  // ——— Providers (super admin) ———
+
+  async fetchProviders(): Promise<any[]> {
+    const res = await this.fetchJson<{ providers: any[] }>("/api/data/providers");
+    return res.providers ?? [];
+  }
+
+  async activateProvider(id: string): Promise<void> {
+    await this.fetchJson(`/api/data/providers/${id}/activate`, { method: "POST" });
+  }
+
+  async fetchProviderModels(id: string): Promise<string[]> {
+    const res = await this.fetchJson<{ models: string[] }>(`/api/data/providers/${id}/models`, {
+      method: "POST",
+    });
+    return res.models ?? [];
+  }
+
   // ——— Teams ———
 
   async fetchTeams(): Promise<any[]> {
