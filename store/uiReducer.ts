@@ -3,6 +3,7 @@ import type { DefaultPreferences } from '@/components/SettingsPanel';
 import type { ErrorDetails } from '@/components/ErrorDetailsModal';
 import type { MaskEditorHistoryItem } from '@/components/MaskEditorModal';
 import type { QueueStats } from '@/services/generationQueue';
+import type { ReferenceIntent } from '../types';
 import {
   SET_GENERATING,
   SET_GENERATION_STAGE,
@@ -17,6 +18,7 @@ import {
   SET_CURRENT_VIEW,
   SET_INPUT_TEXT,
   SET_SELECTED_IMAGE,
+  SET_REFERENCE_INTENT,
   SET_API_CONFIG,
   SET_DEFAULT_PREFERENCES,
   SET_AUTH_USER,
@@ -49,6 +51,7 @@ export interface UIState {
   currentView: 'chat' | 'batch';
   inputText: string;
   selectedImage: string | null;
+  referenceIntent: ReferenceIntent;
   apiConfig: ApiConfig;
   defaultPreferences: DefaultPreferences;
   authUser: string | null;
@@ -71,6 +74,7 @@ export type UIAction =
   | { type: typeof SET_CURRENT_VIEW; payload: 'chat' | 'batch' }
   | { type: typeof SET_INPUT_TEXT; payload: string }
   | { type: typeof SET_SELECTED_IMAGE; payload: string | null }
+  | { type: typeof SET_REFERENCE_INTENT; payload: ReferenceIntent }
   | { type: typeof SET_API_CONFIG; payload: ApiConfig }
   | { type: typeof SET_DEFAULT_PREFERENCES; payload: DefaultPreferences }
   | { type: typeof SET_AUTH_USER; payload: string | null }
@@ -118,6 +122,9 @@ export function uiReducer(state: UIState, action: UIAction): UIState {
 
     case SET_SELECTED_IMAGE:
       return { ...state, selectedImage: action.payload };
+
+    case SET_REFERENCE_INTENT:
+      return { ...state, referenceIntent: action.payload };
 
     case SET_API_CONFIG:
       return { ...state, apiConfig: action.payload };

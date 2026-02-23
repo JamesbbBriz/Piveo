@@ -198,6 +198,7 @@ const uiInitialState: UIState = {
   currentView: 'chat',
   inputText: '',
   selectedImage: null,
+  referenceIntent: 'all' as const,
   apiConfig: getEffectiveApiConfig(),
   defaultPreferences: loadDefaultPreferences(),
   authUser: null,

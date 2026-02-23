@@ -5,6 +5,7 @@ import { listModels } from "../services/openaiImages";
 import { getSupportedAspectRatios } from "../services/sizeUtils";
 import { clearAll } from "../services/storage";
 import { getProvider, switchProvider, type ProviderOption } from "../services/auth";
+import { syncService } from "../services/sync";
 import { Icon } from "./Icon";
 import { getModelDisplayName } from "./ModelSwitcherFooter";
 import { useToast } from "./Toast";
@@ -152,6 +153,18 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setProviderSwitching(false);
     }
   }, [activeProvider, providerSwitching, providerOptions, addToast]);
+
+  /* ── Usage stats ── */
+  const [usageData, setUsageData] = useState<{ monthlyPercent: number; dailyPercent: number } | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    syncService.fetchMyUsage().then((data) => {
+      if (!cancelled) setUsageData(data);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [open, balanceRefreshTick]);
 
   useEffect(() => {
     return () => { mountedRef.current = false; };
@@ -334,6 +347,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               />
             </button>
           </div>
+
+          {/* Usage progress bar */}
+          {usageData && <UsageBar label="本月用量" percent={usageData.monthlyPercent} />}
         </div>
       </section>
 
@@ -457,6 +473,37 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         <div className="max-w-lg mx-auto p-5 space-y-6">
           {settingsContent}
         </div>
+      </div>
+    </div>
+  );
+};
+
+/* ── Usage Bar ── */
+
+const UsageBar: React.FC<{ label: string; percent: number }> = ({ label, percent }) => {
+  // -1 means unlimited
+  if (percent === -1) {
+    return (
+      <div className="p-3 rounded-lg border border-dark-600 bg-dark-800/50">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] text-gray-400">{label}</span>
+          <span className="text-[11px] text-gray-500">不限量</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-3 rounded-lg border border-dark-600 bg-dark-800/50">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[11px] text-gray-400">{label}</span>
+        <span className="text-[11px] text-gray-400">{percent}%</span>
+      </div>
+      <div className="w-full h-1.5 rounded-full bg-dark-600 overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-300 bg-banana-500"
+          style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+        />
       </div>
     </div>
   );

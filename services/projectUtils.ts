@@ -8,7 +8,9 @@ export function extractImagesFromSession(session: Session): GeneratedImage[] {
   const images: GeneratedImage[] = [];
 
   for (const msg of session.messages) {
-    // Find the prompt text from the same message (for user messages) or preceding user message
+    // Only extract AI-generated images (model responses), skip user-uploaded reference images
+    if (msg.role !== 'model') continue;
+
     const textPart = msg.parts.find((p) => p.type === 'text');
     const promptText = textPart?.text || '';
 

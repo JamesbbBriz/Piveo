@@ -13,6 +13,7 @@ interface MainContentProps {
   modelsElement?: React.ReactNode;
   productsElement?: React.ReactNode;
   teamElement?: React.ReactNode;
+  adminElement?: React.ReactNode;
 }
 
 const PlaceholderView: React.FC<{ icon: string; title: string; subtitle: string }> = ({ icon, title, subtitle }) => (
@@ -23,7 +24,7 @@ const PlaceholderView: React.FC<{ icon: string; title: string; subtitle: string 
   </div>
 );
 
-export const MainContent: React.FC<MainContentProps> = ({ navView, children, galleryProps, projectListProps, settingsElement, assetsElement, modelsElement, productsElement, teamElement }) => {
+export const MainContent: React.FC<MainContentProps> = ({ navView, children, galleryProps, projectListProps, settingsElement, assetsElement, modelsElement, productsElement, teamElement, adminElement }) => {
   switch (navView) {
     case 'project':
       return <>{children}</>;
@@ -69,6 +70,12 @@ export const MainContent: React.FC<MainContentProps> = ({ navView, children, gal
         return <>{teamElement}</>;
       }
       return <PlaceholderView icon="users" title="团队管理" subtitle="即将推出" />;
+
+    case 'admin':
+      if (adminElement) {
+        return <>{adminElement}</>;
+      }
+      return <PlaceholderView icon="shield-halved" title="系统管理" subtitle="无权限" />;
 
     default:
       return <>{children}</>;

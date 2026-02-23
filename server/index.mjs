@@ -6,9 +6,10 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import { createProxyMiddleware } from "http-proxy-middleware";
-import { initDatabase } from "./db.mjs";
+import { initDatabase, getDb } from "./db.mjs";
 import authRoutes, { requireAuth, seedUser, getActiveProvider, isSuperAdmin } from "./routes/auth.mjs";
 import dataRoutes from "./routes/data.mjs";
+import { checkQuota, recordUsage } from "./services/usageTracker.mjs";
 
 dotenv.config({ path: ".env.local", override: false });
 dotenv.config();
@@ -129,6 +130,22 @@ const upstreamGuard = (req, res, next) => {
   next();
 };
 
+// ---------- Quota guard ----------
+const quotaGuard = (req, res, next) => {
+  if (!isGuardedImageRoute(req.originalUrl)) return next();
+  const username = String(req.authUser || "");
+  const db = getDb();
+  const user = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
+  if (!user) return next();
+  req._quotaUserId = user.id;
+  if (isSuperAdmin(username)) return next();
+  const result = checkQuota(user.id);
+  if (!result.allowed) {
+    return res.status(429).json({ ok: false, message: result.message, quota_exceeded: true });
+  }
+  next();
+};
+
 // ---------- Upstream proxy (/api) ----------
 // Data routes are mounted under /api/data and handled by dataRoutes above.
 // All other /api/* requests are proxied to the upstream gateway.
@@ -151,6 +168,7 @@ app.use(
     next();
   },
   upstreamGuard,
+  quotaGuard,
   createProxyMiddleware({
     target: targetProxy,
     router: () => getActiveProvider() === "alt" && targetProxyAlt ? targetProxyAlt : targetProxy,
@@ -180,6 +198,19 @@ app.use(
           console.info(
             `[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} <- ${proxyRes.statusCode || 0}`
           );
+          if (req._quotaUserId) {
+            try {
+              recordUsage({
+                userId: req._quotaUserId,
+                username: String(req.authUser || ""),
+                endpoint: req.originalUrl.includes("/v1/images/generations")
+                  ? "/v1/images/generations" : "/v1/images/edits",
+                model: null,
+                statusCode: proxyRes.statusCode || 0,
+                requestId,
+              });
+            } catch (e) { console.error(`[USAGE] record error: ${e.message}`); }
+          }
           return;
         }
         if ((proxyRes.statusCode || 0) >= 500) {

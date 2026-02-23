@@ -241,6 +241,43 @@ class SyncService {
     );
   }
 
+  // ——— Admin (super admin only) ———
+
+  async createUser(username: string, password: string, displayName?: string): Promise<any> {
+    const res = await this.fetchJson<{ user: any }>("/api/data/users", {
+      method: "POST",
+      body: JSON.stringify({ username, password, displayName: displayName || undefined }),
+    });
+    return res.user;
+  }
+
+  async updateUserQuota(userId: string, monthlyLimit: number, dailyLimit: number): Promise<void> {
+    await this.fetchJson(`/api/data/users/${userId}/quota`, {
+      method: "PUT",
+      body: JSON.stringify({ monthlyLimit, dailyLimit }),
+    });
+  }
+
+  async fetchMyUsage(): Promise<{ monthlyPercent: number; dailyPercent: number }> {
+    const res = await this.fetchJson<{ usage: { monthlyPercent: number; dailyPercent: number } }>("/api/data/usage/me");
+    return res.usage;
+  }
+
+  async fetchAllUsers(): Promise<any[]> {
+    const res = await this.fetchJson<{ users: any[] }>("/api/data/users");
+    return res.users ?? [];
+  }
+
+  async fetchAllTeams(): Promise<any[]> {
+    const res = await this.fetchJson<{ teams: any[] }>("/api/data/teams?all=true");
+    return res.teams ?? [];
+  }
+
+  async fetchAllProjects(): Promise<any[]> {
+    const res = await this.fetchJson<{ projects: any[] }>("/api/data/projects?all=true");
+    return res.projects ?? [];
+  }
+
   // ——— Teams ———
 
   async fetchTeams(): Promise<any[]> {

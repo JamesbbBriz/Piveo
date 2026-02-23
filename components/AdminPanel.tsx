@@ -1,0 +1,507 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Icon } from './Icon';
+import { syncService } from '@/services/sync';
+
+type AdminTab = 'users' | 'teams' | 'projects';
+
+interface AdminPanelProps {
+  onClose: () => void;
+}
+
+export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
+  const [tab, setTab] = useState<AdminTab>('users');
+  const [users, setUsers] = useState<any[]>([]);
+  const [teams, setTeams] = useState<any[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
+
+  const loadData = useCallback(async (targetTab: AdminTab) => {
+    setLoading(true);
+    try {
+      switch (targetTab) {
+        case 'users': {
+          const data = await syncService.fetchAllUsers();
+          setUsers(data);
+          break;
+        }
+        case 'teams': {
+          const data = await syncService.fetchAllTeams();
+          setTeams(data);
+          break;
+        }
+        case 'projects': {
+          const data = await syncService.fetchAllProjects();
+          setProjects(data);
+          break;
+        }
+      }
+    } catch (e) {
+      console.error('[Admin] 加载数据失败:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadData(tab);
+  }, [tab, loadData]);
+
+  const handleTabChange = (newTab: AdminTab) => {
+    setTab(newTab);
+    setSearch('');
+  };
+
+  const formatDate = (ts: number | null) => {
+    if (!ts) return '—';
+    return new Date(ts).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const tabs: { key: AdminTab; label: string; icon: string }[] = [
+    { key: 'users', label: '用户管理', icon: 'users' },
+    { key: 'teams', label: '团队管理', icon: 'people-group' },
+    { key: 'projects', label: '项目管理', icon: 'th-large' },
+  ];
+
+  const filteredUsers = users.filter(
+    (u) =>
+      !search ||
+      u.username?.toLowerCase().includes(search.toLowerCase()) ||
+      u.displayName?.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  const filteredTeams = teams.filter(
+    (t) =>
+      !search ||
+      t.name?.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  const filteredProjects = projects.filter(
+    (p) =>
+      !search ||
+      p.title?.toLowerCase().includes(search.toLowerCase()) ||
+      p.owner_username?.toLowerCase().includes(search.toLowerCase()),
+  );
+
+  return (
+    <div className="flex-1 flex flex-col h-full bg-dark-900">
+      {/* Header */}
+      <div className="shrink-0 px-6 py-4 border-b border-dark-700 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Icon name="shield-halved" className="text-banana-400 text-lg" />
+          <h1 className="text-lg font-semibold text-gray-100">系统管理</h1>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-gray-400 hover:text-gray-200 transition-colors p-1"
+        >
+          <Icon name="xmark" className="text-lg" />
+        </button>
+      </div>
+
+      {/* Tabs + Search */}
+      <div className="shrink-0 px-6 py-3 border-b border-dark-700 flex items-center gap-4 flex-wrap">
+        <div className="flex gap-1">
+          {tabs.map((t) => (
+            <button
+              key={t.key}
+              onClick={() => handleTabChange(t.key)}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                tab === t.key
+                  ? 'bg-banana-500/20 text-banana-400'
+                  : 'text-gray-400 hover:text-gray-200 hover:bg-dark-700/60'
+              }`}
+            >
+              <Icon name={t.icon} className="text-xs" />
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1" />
+
+        <div className="relative">
+          <Icon
+            name="search"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 text-xs"
+          />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="搜索..."
+            className="w-48 pl-8 pr-3 py-1.5 rounded-md bg-dark-700 border border-dark-600 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-banana-500/50"
+          />
+        </div>
+
+        <button
+          onClick={() => loadData(tab)}
+          disabled={loading}
+          className="px-3 py-1.5 rounded-md text-sm text-gray-400 hover:text-gray-200 hover:bg-dark-700/60 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+        >
+          <Icon name="arrows-rotate" className={`text-xs ${loading ? 'animate-spin' : ''}`} />
+          刷新
+        </button>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-6 py-4">
+        {loading ? (
+          <div className="flex items-center justify-center py-20 text-gray-500">
+            <Icon name="spinner" className="animate-spin text-2xl mr-3" />
+            加载中...
+          </div>
+        ) : (
+          <>
+            {tab === 'users' && (
+              <UsersTable users={filteredUsers} formatDate={formatDate} onRefresh={() => loadData('users')} />
+            )}
+            {tab === 'teams' && (
+              <TeamsTable teams={filteredTeams} formatDate={formatDate} />
+            )}
+            {tab === 'projects' && (
+              <ProjectsTable projects={filteredProjects} formatDate={formatDate} />
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* ── Table Components ── */
+
+const TableHeader: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+    {children}
+  </th>
+);
+
+const TableCell: React.FC<{ children: React.ReactNode; className?: string }> = ({
+  children,
+  className,
+}) => (
+  <td className={`px-4 py-3 text-sm text-gray-300 ${className ?? ''}`}>{children}</td>
+);
+
+const EmptyState: React.FC<{ text: string }> = ({ text }) => (
+  <div className="text-center text-gray-600 py-16 text-sm">{text}</div>
+);
+
+/* ── Create User Form ── */
+
+const CreateUserForm: React.FC<{ onCreated: () => void }> = ({ onCreated }) => {
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSaving(true);
+    try {
+      await syncService.createUser(username, password, displayName || undefined);
+      setUsername('');
+      setPassword('');
+      setDisplayName('');
+      setOpen(false);
+      onCreated();
+    } catch (err: any) {
+      setError(err?.message || '创建失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="mb-4 px-3 py-1.5 rounded-md text-sm bg-banana-500/20 text-banana-400 hover:bg-banana-500/30 transition-colors flex items-center gap-1.5"
+      >
+        <Icon name="plus" className="text-xs" />
+        创建用户
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mb-4 p-4 rounded-lg border border-dark-600 bg-dark-800/50 space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-gray-200">创建用户</h3>
+        <button type="button" onClick={() => setOpen(false)} className="text-gray-500 hover:text-gray-300 transition-colors">
+          <Icon name="xmark" className="text-xs" />
+        </button>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <label className="text-[11px] text-gray-500 mb-1 block">用户名 *</label>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="2-32 位字母数字"
+            required
+            pattern="[a-zA-Z0-9_-]{2,32}"
+            className="w-full px-2.5 py-1.5 rounded-md bg-dark-900 border border-dark-600 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-banana-500/50"
+          />
+        </div>
+        <div>
+          <label className="text-[11px] text-gray-500 mb-1 block">密码 *</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="至少 6 位"
+            required
+            minLength={6}
+            className="w-full px-2.5 py-1.5 rounded-md bg-dark-900 border border-dark-600 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-banana-500/50"
+          />
+        </div>
+        <div>
+          <label className="text-[11px] text-gray-500 mb-1 block">显示名</label>
+          <input
+            type="text"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="可选"
+            className="w-full px-2.5 py-1.5 rounded-md bg-dark-900 border border-dark-600 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-banana-500/50"
+          />
+        </div>
+      </div>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={saving}
+          className="px-3 py-1.5 rounded-md text-sm bg-banana-500/20 text-banana-400 hover:bg-banana-500/30 transition-colors disabled:opacity-50"
+        >
+          {saving ? '创建中...' : '创建'}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          className="px-3 py-1.5 rounded-md text-sm bg-dark-700 text-gray-400 hover:bg-dark-600 transition-colors"
+        >
+          取消
+        </button>
+      </div>
+    </form>
+  );
+};
+
+/* ── Quota Inline Editor ── */
+
+const QuotaEditor: React.FC<{
+  userId: string;
+  monthlyLimit: number;
+  dailyLimit: number;
+  onSaved: () => void;
+  onCancel: () => void;
+}> = ({ userId, monthlyLimit, dailyLimit, onSaved, onCancel }) => {
+  const [ml, setMl] = useState(monthlyLimit);
+  const [dl, setDl] = useState(dailyLimit);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await syncService.updateUserQuota(userId, ml, dl);
+      onSaved();
+    } catch (e) {
+      console.error('[Admin] 配额保存失败:', e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <tr className="bg-dark-800/80">
+      <td colSpan={10} className="px-4 py-3">
+        <div className="flex items-center gap-4">
+          <span className="text-xs text-gray-500">月配额:</span>
+          <input
+            type="number"
+            value={ml}
+            onChange={(e) => setMl(Number(e.target.value))}
+            className="w-24 px-2 py-1 rounded bg-dark-900 border border-dark-600 text-sm text-gray-200 focus:outline-none focus:border-banana-500/50"
+          />
+          <span className="text-xs text-gray-500">日配额:</span>
+          <input
+            type="number"
+            value={dl}
+            onChange={(e) => setDl(Number(e.target.value))}
+            className="w-24 px-2 py-1 rounded bg-dark-900 border border-dark-600 text-sm text-gray-200 focus:outline-none focus:border-banana-500/50"
+          />
+          <span className="text-[10px] text-gray-600">-1 = 不限</span>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-2.5 py-1 rounded text-xs bg-banana-500/20 text-banana-400 hover:bg-banana-500/30 transition-colors disabled:opacity-50"
+          >
+            {saving ? '保存中...' : '保存'}
+          </button>
+          <button
+            onClick={onCancel}
+            className="px-2.5 py-1 rounded text-xs bg-dark-700 text-gray-400 hover:bg-dark-600 transition-colors"
+          >
+            取消
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+};
+
+/* ── Users Table ── */
+
+const UsersTable: React.FC<{
+  users: any[];
+  formatDate: (ts: number | null) => string;
+  onRefresh: () => void;
+}> = ({ users, formatDate, onRefresh }) => {
+  const [editingQuotaId, setEditingQuotaId] = useState<string | null>(null);
+
+  const formatLimit = (v: number) => (v === -1 ? '不限' : String(v));
+
+  return (
+    <>
+      <CreateUserForm onCreated={onRefresh} />
+      {users.length === 0 ? (
+        <EmptyState text="暂无用户数据" />
+      ) : (
+        <table className="w-full">
+          <thead className="border-b border-dark-700">
+            <tr>
+              <TableHeader>用户名</TableHeader>
+              <TableHeader>显示名</TableHeader>
+              <TableHeader>今日</TableHeader>
+              <TableHeader>本月</TableHeader>
+              <TableHeader>月配额</TableHeader>
+              <TableHeader>日配额</TableHeader>
+              <TableHeader>团队</TableHeader>
+              <TableHeader>项目</TableHeader>
+              <TableHeader>注册时间</TableHeader>
+              <TableHeader>操作</TableHeader>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-dark-700/50">
+            {users.map((u) => (
+              <React.Fragment key={u.id}>
+                <tr className="hover:bg-dark-800/50 transition-colors">
+                  <TableCell>
+                    <span className="font-medium text-gray-200">{u.username}</span>
+                  </TableCell>
+                  <TableCell>{u.displayName || '—'}</TableCell>
+                  <TableCell>{u.today ?? 0}</TableCell>
+                  <TableCell>{u.thisMonth ?? 0}</TableCell>
+                  <TableCell>{formatLimit(u.monthlyLimit ?? -1)}</TableCell>
+                  <TableCell>{formatLimit(u.dailyLimit ?? -1)}</TableCell>
+                  <TableCell>{u.teamCount}</TableCell>
+                  <TableCell>{u.projectCount}</TableCell>
+                  <TableCell className="text-gray-500">{formatDate(u.createdAt)}</TableCell>
+                  <TableCell>
+                    <button
+                      onClick={() => setEditingQuotaId(editingQuotaId === u.id ? null : u.id)}
+                      className="text-xs text-banana-400 hover:text-banana-300 transition-colors"
+                    >
+                      配额
+                    </button>
+                  </TableCell>
+                </tr>
+                {editingQuotaId === u.id && (
+                  <QuotaEditor
+                    userId={u.id}
+                    monthlyLimit={u.monthlyLimit ?? -1}
+                    dailyLimit={u.dailyLimit ?? -1}
+                    onSaved={() => {
+                      setEditingQuotaId(null);
+                      onRefresh();
+                    }}
+                    onCancel={() => setEditingQuotaId(null)}
+                  />
+                )}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </>
+  );
+};
+
+const TeamsTable: React.FC<{ teams: any[]; formatDate: (ts: number | null) => string }> = ({
+  teams,
+  formatDate,
+}) => {
+  if (teams.length === 0) return <EmptyState text="暂无团队数据" />;
+  return (
+    <table className="w-full">
+      <thead className="border-b border-dark-700">
+        <tr>
+          <TableHeader>团队名称</TableHeader>
+          <TableHeader>成员数</TableHeader>
+          <TableHeader>成员</TableHeader>
+          <TableHeader>创建时间</TableHeader>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-dark-700/50">
+        {teams.map((t) => (
+          <tr key={t.id} className="hover:bg-dark-800/50 transition-colors">
+            <TableCell>
+              <span className="font-medium text-gray-200">{t.name}</span>
+            </TableCell>
+            <TableCell>{t.members?.length ?? 0}</TableCell>
+            <TableCell>
+              <span className="text-xs text-gray-500">
+                {t.members?.map((m: any) => m.username).join(', ') || '—'}
+              </span>
+            </TableCell>
+            <TableCell className="text-gray-500">{formatDate(t.created_at)}</TableCell>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+};
+
+const ProjectsTable: React.FC<{
+  projects: any[];
+  formatDate: (ts: number | null) => string;
+}> = ({ projects, formatDate }) => {
+  if (projects.length === 0) return <EmptyState text="暂无项目数据" />;
+  return (
+    <table className="w-full">
+      <thead className="border-b border-dark-700">
+        <tr>
+          <TableHeader>项目标题</TableHeader>
+          <TableHeader>所有者</TableHeader>
+          <TableHeader>创建时间</TableHeader>
+          <TableHeader>更新时间</TableHeader>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-dark-700/50">
+        {projects.map((p) => (
+          <tr key={p.id} className="hover:bg-dark-800/50 transition-colors">
+            <TableCell>
+              <span className="font-medium text-gray-200">
+                {p.title || '未命名项目'}
+              </span>
+            </TableCell>
+            <TableCell>{p.owner_username || '—'}</TableCell>
+            <TableCell className="text-gray-500">{formatDate(p.created_at)}</TableCell>
+            <TableCell className="text-gray-500">{formatDate(p.updated_at)}</TableCell>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+};

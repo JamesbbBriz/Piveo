@@ -18,6 +18,7 @@ interface NavRailProps {
   assetCount: number;
   modelCount: number;
   productCount: number;
+  isSuperAdmin?: boolean;
 }
 
 /* ── Icon Rail Button ── */
@@ -65,6 +66,7 @@ export const NavRail: React.FC<NavRailProps> = ({
   assetCount,
   modelCount,
   productCount,
+  isSuperAdmin,
 }) => {
   const [panelOpen, setPanelOpen] = useState(() => {
     try {
@@ -147,6 +149,19 @@ export const NavRail: React.FC<NavRailProps> = ({
           active={panelOpen}
           onClick={() => setPanelOpen((v) => !v)}
         />
+
+        {/* Super Admin */}
+        {isSuperAdmin && (
+          <>
+            <RailDivider />
+            <RailBtn
+              icon="shield-halved"
+              label="管理面板"
+              active={navView === 'admin'}
+              onClick={() => onNavChange('admin')}
+            />
+          </>
+        )}
 
         {/* Spacer */}
         <div className="flex-1" />

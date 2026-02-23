@@ -24,6 +24,7 @@ import { urlToDataUrl } from './services/imageData';
 import { AppProvider, useProjects, useBatch, useLibrary, useTeam, useUI, useAppContext } from './store/AppContext';
 import { syncService } from './services/sync';
 import { TeamManager } from './components/TeamManager';
+import { AdminPanel } from './components/AdminPanel';
 import { Layout } from './components/Layout';
 import { MainContent } from './components/MainContent';
 import { PropertyPanel } from './components/PropertyPanel';
@@ -65,6 +66,7 @@ import {
   SET_CURRENT_VIEW,
   SET_INPUT_TEXT,
   SET_SELECTED_IMAGE,
+  SET_REFERENCE_INTENT,
   SET_API_CONFIG,
   SET_DEFAULT_PREFERENCES,
   SET_AUTH_USER,
@@ -267,7 +269,7 @@ const AppInner: React.FC = () => {
   const {
     isGenerating, generationStage, generationProgress, isEnhancing,
     previewImageUrl, errorDetails, maskEditContext, isAdvancedPanelOpen,
-    queueStats, currentView, inputText, selectedImage, apiConfig, defaultPreferences,
+    queueStats, currentView, inputText, selectedImage, referenceIntent, apiConfig, defaultPreferences,
     authUser, authReady, authLoading, isSuperAdmin,
     dispatch: uiDispatch,
   } = useUI();
@@ -1089,6 +1091,7 @@ const AppInner: React.FC = () => {
       batchCountOverride?: number;
       forceNoAutoReuse?: boolean;
       queueSource?: "chat" | "batch" | "mask-edit" | "model-gen";
+      referenceIntent?: import('./types').ReferenceIntent;
     }
   ) => {
     if (!currentSession) return;
@@ -1161,6 +1164,7 @@ const AppInner: React.FC = () => {
             disableAutoUseLastImage: Boolean(opts?.forceNoAutoReuse),
             signal: controller.signal,
             queueSource: opts?.queueSource || "chat",
+            referenceIntent: opts?.referenceIntent,
           }
         );
         setBalanceRefreshTick((v) => v + 1);
@@ -1259,6 +1263,7 @@ const AppInner: React.FC = () => {
                   disableAutoUseLastImage: Boolean(opts?.forceNoAutoReuse),
                   signal: controller.signal,
                   queueSource: opts?.queueSource || "chat",
+                  referenceIntent: opts?.referenceIntent,
                 }
               );
               const extraUrl = extra.images[0];
@@ -1402,10 +1407,12 @@ const AppInner: React.FC = () => {
 
     const promptToPass = inputText;
     const imageToPass = selectedImage;
+    const intentToPass = selectedImage ? referenceIntent : undefined;
     uiDispatch({ type: SET_INPUT_TEXT, payload: '' });
     uiDispatch({ type: SET_SELECTED_IMAGE, payload: null });
+    uiDispatch({ type: SET_REFERENCE_INTENT, payload: 'all' });
 
-    await executeGeneration(promptToPass, imageToPass, updatedMessages);
+    await executeGeneration(promptToPass, imageToPass, updatedMessages, { referenceIntent: intentToPass });
   };
 
   const handleVariation = useCallback(async (type: string, imageUrl: string) => {
@@ -2661,7 +2668,9 @@ const AppInner: React.FC = () => {
             isGenerating={isGenerating}
             isEnhancing={isEnhancing}
             selectedImage={selectedImage ? { url: selectedImage, source: 'user' } : null}
-            onClearImage={() => uiDispatch({ type: SET_SELECTED_IMAGE, payload: null })}
+            onClearImage={() => { uiDispatch({ type: SET_SELECTED_IMAGE, payload: null }); uiDispatch({ type: SET_REFERENCE_INTENT, payload: 'all' }); }}
+            referenceIntent={referenceIntent}
+            onReferenceIntentChange={(intent) => uiDispatch({ type: SET_REFERENCE_INTENT, payload: intent })}
           />
         </>
       )}
@@ -2688,6 +2697,7 @@ const AppInner: React.FC = () => {
       assetCount={totalAssetCount}
       modelCount={models.length}
       productCount={products.length}
+      isSuperAdmin={isSuperAdmin}
     >
       <MainContent
         navView={navView}
@@ -2761,6 +2771,11 @@ const AppInner: React.FC = () => {
             onUpdateProduct={handleUpdateProduct}
             onDeleteProduct={handleDeleteProduct}
           />
+        }
+        adminElement={
+          isSuperAdmin ? (
+            <AdminPanel onClose={() => setNavView('project')} />
+          ) : undefined
         }
         teamElement={
           <TeamManager

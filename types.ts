@@ -20,6 +20,9 @@ export enum ProductScale {
 
 export type ImageResponseFormat = "url" | "b64_json";
 
+/** 参考图意图：用户上传参考图时选择参考什么 */
+export type ReferenceIntent = 'style' | 'product' | 'composition' | 'all';
+
 export interface SystemTemplate {
   id: string;
   name: string;

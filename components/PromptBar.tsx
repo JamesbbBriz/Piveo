@@ -1,5 +1,13 @@
 import React, { useRef } from 'react';
+import type { ReferenceIntent } from '../types';
 import { Icon } from './Icon';
+
+const INTENT_OPTIONS: { value: ReferenceIntent; label: string }[] = [
+  { value: 'all', label: '全部参考' },
+  { value: 'product', label: '产品外观' },
+  { value: 'style', label: '风格氛围' },
+  { value: 'composition', label: '构图排版' },
+];
 
 interface PromptBarProps {
   inputText: string;
@@ -11,6 +19,8 @@ interface PromptBarProps {
   isEnhancing: boolean;
   selectedImage: { url: string; source: string } | null;
   onClearImage: () => void;
+  referenceIntent: ReferenceIntent;
+  onReferenceIntentChange: (intent: ReferenceIntent) => void;
   disabled?: boolean;
 }
 
@@ -24,6 +34,8 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   isEnhancing,
   selectedImage,
   onClearImage,
+  referenceIntent,
+  onReferenceIntentChange,
   disabled = false,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -62,22 +74,39 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   return (
     <div className="bg-dark-800 border-t border-dark-700 p-4 lg:p-4 shrink-0">
       <div className="w-full flex flex-col gap-2">
-        {/* Selected image preview */}
+        {/* Selected image preview + intent selector */}
         {selectedImage && (
-          <div className="relative inline-block self-start">
-            <img
-              src={selectedImage.url}
-              alt="参考图"
-              className="h-16 rounded-lg border border-emerald-500/50 object-cover shadow-lg"
-              loading="lazy"
-              decoding="async"
-            />
-            <button
-              onClick={onClearImage}
-              className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] shadow-md hover:bg-red-600"
-            >
-              <Icon name="times" />
-            </button>
+          <div className="flex items-center gap-3">
+            <div className="relative inline-block shrink-0">
+              <img
+                src={selectedImage.url}
+                alt="参考图"
+                className="h-16 rounded-lg border border-emerald-500/50 object-cover shadow-lg"
+                loading="lazy"
+                decoding="async"
+              />
+              <button
+                onClick={onClearImage}
+                className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] shadow-md hover:bg-red-600"
+              >
+                <Icon name="times" />
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {INTENT_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => onReferenceIntentChange(opt.value)}
+                  className={`px-2.5 py-1 text-[11px] rounded-md border transition-colors ${
+                    referenceIntent === opt.value
+                      ? 'bg-banana-500/20 border-banana-500/60 text-banana-300'
+                      : 'bg-dark-700 border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

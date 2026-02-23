@@ -1,10 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import express from "express";
+import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
 import { getDb } from "../db.mjs";
-import { requireAuth } from "./auth.mjs";
+import { requireAuth, isSuperAdmin } from "./auth.mjs";
 import { saveBlob, getBlob, deleteBlob } from "../services/blobStore.mjs";
+import { getAllUsersUsageStats, getUserUsageStats } from "../services/usageTracker.mjs";
 
 const router = express.Router();
 
@@ -28,6 +30,83 @@ function assertTeamAccess(userId, teamId, requiredRole) {
   if (requiredRole === "admin" && member.role !== "admin") return false;
   return true;
 }
+
+// ---------- Users (super admin only) ----------
+
+router.get("/api/data/users", (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+  const users = getAllUsersUsageStats();
+  res.json({ ok: true, users });
+});
+
+router.post("/api/data/users", async (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+
+  const { username, password, displayName } = req.body;
+  if (!username || typeof username !== "string" || !/^[a-zA-Z0-9_-]{2,32}$/.test(username)) {
+    return res.status(400).json({ ok: false, message: "用户名须为 2-32 位字母数字下划线或连字符。" });
+  }
+  if (!password || typeof password !== "string" || password.length < 6) {
+    return res.status(400).json({ ok: false, message: "密码至少 6 位。" });
+  }
+
+  const db = getDb();
+  const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
+  if (existing) {
+    return res.status(409).json({ ok: false, message: "用户名已存在。" });
+  }
+
+  const hash = await bcrypt.hash(password, 10);
+  const id = uuidv4();
+  const now = Date.now();
+  db.prepare(
+    "INSERT INTO users (id, username, password_hash, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(id, username, hash, displayName || username, now, now);
+
+  res.json({ ok: true, user: { id, username, displayName: displayName || username } });
+});
+
+router.put("/api/data/users/:id/quota", (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+
+  const { monthlyLimit, dailyLimit } = req.body;
+  const ml = typeof monthlyLimit === "number" ? monthlyLimit : -1;
+  const dl = typeof dailyLimit === "number" ? dailyLimit : -1;
+
+  const db = getDb();
+  db.prepare(
+    "INSERT OR REPLACE INTO user_quotas (user_id, monthly_limit, daily_limit, updated_at) VALUES (?, ?, ?, ?)"
+  ).run(req.params.id, ml, dl, Date.now());
+
+  res.json({ ok: true });
+});
+
+router.get("/api/data/usage/me", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const stats = getUserUsageStats(userId);
+
+  const toPercent = (used, limit) => {
+    if (limit === -1) return -1;
+    if (limit === 0) return 100;
+    return Math.min(100, Math.round((used / limit) * 100));
+  };
+
+  res.json({
+    ok: true,
+    usage: {
+      monthlyPercent: toPercent(stats.thisMonth, stats.monthlyLimit),
+      dailyPercent: toPercent(stats.today, stats.dailyLimit),
+    },
+  });
+});
 
 // ---------- Blobs ----------
 
@@ -63,14 +142,21 @@ router.get("/api/data/teams", (req, res) => {
   if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
 
   const db = getDb();
-  const teams = db
-    .prepare(
-      `SELECT t.* FROM teams t
-       INNER JOIN team_members tm ON t.id = tm.team_id
-       WHERE tm.user_id = ?
-       ORDER BY t.created_at DESC`
-    )
-    .all(userId);
+  const all = req.query.all === "true" && isSuperAdmin(req.authUser);
+
+  let teams;
+  if (all) {
+    teams = db.prepare("SELECT t.* FROM teams t ORDER BY t.created_at DESC").all();
+  } else {
+    teams = db
+      .prepare(
+        `SELECT t.* FROM teams t
+         INNER JOIN team_members tm ON t.id = tm.team_id
+         WHERE tm.user_id = ?
+         ORDER BY t.created_at DESC`
+      )
+      .all(userId);
+  }
 
   // Attach members to each team
   const memberStmt = db.prepare(
@@ -219,9 +305,19 @@ router.get("/api/data/projects", (req, res) => {
 
   const db = getDb();
   const teamId = req.query.team_id;
+  const all = req.query.all === "true" && isSuperAdmin(req.authUser);
 
   let projects;
-  if (teamId) {
+  if (all) {
+    projects = db
+      .prepare(
+        `SELECT p.*, u.username AS owner_username
+         FROM projects p
+         LEFT JOIN users u ON p.user_id = u.id
+         ORDER BY p.updated_at DESC`
+      )
+      .all();
+  } else if (teamId) {
     if (!assertTeamAccess(userId, teamId)) {
       return res.status(403).json({ ok: false, message: "无权限查看此团队项目。" });
     }

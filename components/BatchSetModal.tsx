@@ -69,8 +69,15 @@ const WHITE_BG_PRESETS = [
 const sceneLabelOf = (scene: BatchSceneType): string =>
   SCENE_OPTIONS.find((s) => s.value === scene)?.label || "自定义";
 
+const presetsForScene = (scene: BatchSceneType) =>
+  scene === "model" ? MODEL_POSES
+    : scene === "detail" ? DETAIL_ANGLES
+    : scene === "flatlay" ? FLATLAY_PRESETS
+    : scene === "white" ? WHITE_BG_PRESETS
+    : null;
+
 const defaultCheckedPoses = (scene: BatchSceneType, count: number): string[] => {
-  const presets = scene === "model" ? MODEL_POSES : scene === "detail" ? DETAIL_ANGLES : scene === "flatlay" ? FLATLAY_PRESETS : scene === "white" ? WHITE_BG_PRESETS : null;
+  const presets = presetsForScene(scene);
   if (!presets) return [];
   return presets.slice(0, count).map((p) => p.id);
 };
@@ -100,7 +107,7 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
   const totalCount = useMemo(
     () =>
       rules.reduce((sum, r) => {
-        const presets = r.scene === "model" ? MODEL_POSES : r.scene === "detail" ? DETAIL_ANGLES : null;
+        const presets = presetsForScene(r.scene);
         return sum + (presets ? r.checkedPoses.length : clampCount(r.count));
       }, 0),
     [rules]
@@ -123,15 +130,17 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
     setRules((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.id !== id)));
   };
 
-  const applyQuickPreset = () => {
-    setRules([createRule("model", 2), createRule("flatlay", 1)]);
-  };
+  const QUICK_PRESETS: Array<{ label: string; factory: () => BatchSetRule[] }> = [
+    { label: "2模特+1平铺", factory: () => [createRule("model", 2), createRule("flatlay", 1)] },
+    { label: "2模特+2细节+1平铺", factory: () => [createRule("model", 2), createRule("detail", 2), createRule("flatlay", 1)] },
+    { label: "2模特+1平铺+1白底", factory: () => [createRule("model", 2), createRule("flatlay", 1), createRule("white", 1)] },
+    { label: "3模特+1细节+1白底", factory: () => [createRule("model", 3), createRule("detail", 1), createRule("white", 1)] },
+  ];
 
   const handleSubmit = () => {
     const items: BatchSetItem[] = [];
     for (const rule of rules) {
-      const presets =
-        rule.scene === "model" ? MODEL_POSES : rule.scene === "detail" ? DETAIL_ANGLES : null;
+      const presets = presetsForScene(rule.scene);
 
       if (presets && rule.checkedPoses.length > 0) {
         for (const poseId of rule.checkedPoses) {
@@ -197,22 +206,26 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
             </div>
           )}
 
-          <div className="flex items-center justify-between">
-            <button
-              onClick={applyQuickPreset}
-              className="px-2.5 py-1.5 text-xs rounded-md border border-dark-600 bg-dark-900 text-gray-300 hover:bg-dark-700"
-            >
-              示例：2张模特 + 1张平铺
-            </button>
-            <div className="text-xs text-gray-300">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-1.5">
+              {QUICK_PRESETS.map((p, i) => (
+                <button
+                  key={i}
+                  onClick={() => setRules(p.factory())}
+                  className="px-2 py-1.5 text-[11px] rounded-md border border-dark-600 bg-dark-900 text-gray-300 hover:bg-dark-700 hover:border-dark-500 transition-colors"
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div className="text-xs text-gray-300 shrink-0">
               总张数 <span className="text-banana-400 font-semibold">{totalCount}</span>
             </div>
           </div>
 
           {rules.map((rule, index) => {
             const sceneMeta = SCENE_OPTIONS.find((s) => s.value === rule.scene);
-            const presets =
-              rule.scene === "model" ? MODEL_POSES : rule.scene === "detail" ? DETAIL_ANGLES : null;
+            const presets = presetsForScene(rule.scene);
             const hasPoseCheckboxes = !!presets;
 
             const togglePose = (poseId: string) => {
@@ -279,7 +292,7 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
                 {hasPoseCheckboxes && (
                   <div className="mt-2">
                     <div className="text-[11px] text-gray-400 mb-1.5">
-                      {rule.scene === "model" ? "姿态" : rule.scene === "detail" ? "角度" : rule.scene === "flatlay" ? "构图" : "用途"}（勾选即生成，每个勾选项 = 1 张图）
+                      {rule.scene === "model" ? "姿态" : rule.scene === "detail" ? "角度" : rule.scene === "flatlay" ? "构图" : rule.scene === "white" ? "用途" : "预设"}（勾选即生成，每个勾选项 = 1 张图）
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {presets.map((p) => {

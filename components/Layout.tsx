@@ -18,6 +18,7 @@ interface LayoutProps {
   assetCount: number;
   modelCount: number;
   productCount: number;
+  isSuperAdmin?: boolean;
 }
 
 export const Layout: React.FC<LayoutProps> = ({
@@ -36,6 +37,7 @@ export const Layout: React.FC<LayoutProps> = ({
   assetCount,
   modelCount,
   productCount,
+  isSuperAdmin,
 }) => {
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
@@ -72,6 +74,7 @@ export const Layout: React.FC<LayoutProps> = ({
           assetCount={assetCount}
           modelCount={modelCount}
           productCount={productCount}
+          isSuperAdmin={isSuperAdmin}
         />
       </div>
 

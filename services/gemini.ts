@@ -1,4 +1,4 @@
-import { ImageResponseFormat, Message, SessionSettings, ProductScale } from "../types";
+import { ImageResponseFormat, Message, SessionSettings, ProductScale, ReferenceIntent } from "../types";
 import { imageObjToDataUrl, imagesGenerations, ResponseFormat } from "./openaiImages";
 import { getSupportedSizeForAspect } from "./sizeUtils";
 import { getEffectiveApiConfig } from "./apiConfig";
@@ -67,6 +67,8 @@ export interface GenerateResponseOptions {
   };
   forceIncludeProductImage?: boolean;
   queueSource?: "chat" | "batch" | "mask-edit" | "model-gen";
+  /** 参考图意图（仅当 referenceImage 存在时生效） */
+  referenceIntent?: ReferenceIntent;
 }
 
 export interface GenerateResponseResult {
@@ -149,11 +151,16 @@ export const generateResponse = async (
   modelImage = resolvedModel;
   const extraImages = resolvedExtras.filter((s): s is string => Boolean(s));
 
-  // 当存在"当前参考图/连续编辑图"时，产品图只做兜底，不再并行注入，
-  // 避免产品图（尤其带人物的产品图）覆盖当前编辑语义。
+  // 参考图意图决定产品图是否共存：
+  // - intent=product 或 intent=all：参考图替代产品图（用户贴的就是产品）
+  // - intent=style 或 intent=composition：参考图只做风格/构图参考，产品图保留
   // 套图模式通过 forceIncludeProductImage 绕过聊天模式的排除逻辑。
+  const refIntent = options.referenceIntent ?? 'all';
+  const refExcludesProduct = refIntent === 'product' || refIntent === 'all';
   const includeProductImage = Boolean(productImage) && (
-    options.forceIncludeProductImage || (!referenceImage && !lastHistoryImage)
+    options.forceIncludeProductImage || (
+      referenceImage ? !refExcludesProduct : !lastHistoryImage
+    )
   );
 
   const imageInputsRaw: string[] = [];
@@ -239,18 +246,48 @@ export const generateResponse = async (
 
     // 按图片输入位置声明角色，帮助模型明确每张图的职责。
     // 图片顺序：referenceImage/lastHistoryImage → productImage → modelImage
+    // 铁律：有模特图时，人物特征锁定模特图，其他图中的人物一律忽略。
+    const MODEL_LOCK = "人物的面部特征、肤色、身材、发型全部以模特参考图为准，忽略其他图片中可能出现的人物外观。";
     let imageContext = "";
-    if (includeProductImage && modelImage) {
-      // 图片1=产品，图片2=模特
-      imageContext = "图片1是产品参考图，图片2是模特参考图。请严格还原图片1中产品的外观、颜色、材质与细节，保持完全不变。保持图片2中人物的面部特征、体型与身份特征不变。将图片1的产品展示于图片2的模特身上，生成专业电商展示图。";
+
+    if (referenceImage && includeProductImage && modelImage) {
+      // 三图共存（intent=style/composition 时参考图+产品图+模特图）
+      const refRole = refIntent === 'style'
+        ? "图片1是风格参考——请参考其色调、光影和整体氛围，不要参考其中的具体商品或人物外观"
+        : "图片1是构图参考——请参考其拍摄角度、人物姿态和画面布局，不要参考其中的具体商品外观";
+      imageContext = `${refRole}。图片2是产品参考图——仅参考商品外观（款式/颜色/材质），忽略图中可能出现的人物。图片3是模特参考图——${MODEL_LOCK}`;
+    } else if (referenceImage && modelImage) {
+      // 参考图+模特图（intent=product/all 时参考图替代产品图）
+      const refRole = refIntent === 'product'
+        ? "图片1是产品参考——请严格还原其中商品的款式、颜色和材质细节，忽略图中可能出现的人物"
+        : "图片1是参考图——请参考其中的商品外观、风格氛围和构图布局，但不参考其中的人物外观";
+      imageContext = `${refRole}。图片2是模特参考图——${MODEL_LOCK}`;
+    } else if (referenceImage && includeProductImage) {
+      // 参考图+产品图，无模特
+      const refRole = refIntent === 'style'
+        ? "图片1是风格参考——请参考其色调、光影和整体氛围"
+        : "图片1是构图参考——请参考其拍摄角度和画面布局";
+      imageContext = `${refRole}。图片2是产品参考图——请严格还原其中商品的外观、颜色、材质与细节。`;
+    } else if (referenceImage) {
+      // 仅参考图，无模特无产品
+      imageContext = refIntent === 'style'
+        ? "图片1是风格参考——请参考其色调、光影和整体氛围。"
+        : refIntent === 'composition'
+        ? "图片1是构图参考——请参考其拍摄角度、人物姿态和画面布局。"
+        : refIntent === 'product'
+        ? "图片1是产品参考——请严格还原其中商品的款式、颜色和材质细节。"
+        : "图片1是参考图——请参考其中的所有元素，包括商品、人物、风格和构图。";
+    } else if (includeProductImage && modelImage) {
+      // 产品图+模特图（无参考图）
+      imageContext = `图片1是产品参考图——仅参考商品外观（款式/颜色/材质），忽略图中可能出现的人物。图片2是模特参考图——${MODEL_LOCK}`;
     } else if (includeProductImage) {
-      // 图片1=产品，无模特
+      // 仅产品图
       imageContext = "图片1是产品参考图。请严格还原图片1中产品的外观、颜色、材质与细节，保持完全不变。模特或人物由你自行创建，产品为视觉主体。";
-    } else if ((referenceImage || lastHistoryImage) && modelImage) {
-      // 图片1=参考/连续编辑，图片2=模特
-      imageContext = "图片1是当前编辑参考图，图片2是模特参考图。对图片1进行修改，同时保持图片2中人物的面部特征与身份特征不变。";
+    } else if ((lastHistoryImage) && modelImage) {
+      // 连续编辑图+模特图
+      imageContext = `图片1是当前编辑参考图，对图片1进行修改。图片2是模特参考图——${MODEL_LOCK}`;
     } else if (modelImage) {
-      // 图片1=模特，无产品图
+      // 仅模特图
       imageContext = "图片1是模特参考图。请保持图片1中人物的面部特征与身份特征完全不变。";
     }
 

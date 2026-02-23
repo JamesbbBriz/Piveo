@@ -10,7 +10,7 @@ const DATA_DIR = path.resolve(
   process.env.DATA_DIR || path.join(__dirname, "..", "data")
 );
 
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 
 let db = null;
 
@@ -45,6 +45,7 @@ export function initDatabase() {
 
   if (currentVersion < 1) applySchemaV1(db);
   if (currentVersion < 2) applySchemaV2(db);
+  if (currentVersion < 3) applySchemaV3(db);
 
   if (currentVersion < CURRENT_SCHEMA_VERSION) {
     db.prepare(
@@ -198,6 +199,29 @@ function applySchemaV1(db) {
     CREATE INDEX IF NOT EXISTS idx_models_team ON model_characters(team_id);
     CREATE INDEX IF NOT EXISTS idx_products_team ON products(team_id);
     CREATE INDEX IF NOT EXISTS idx_templates_team ON templates(team_id);
+  `);
+}
+
+function applySchemaV3(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS usage_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      username TEXT NOT NULL,
+      endpoint TEXT NOT NULL,
+      model TEXT,
+      status_code INTEGER NOT NULL,
+      request_id TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_user_time ON usage_records(user_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS user_quotas (
+      user_id TEXT PRIMARY KEY,
+      monthly_limit INTEGER NOT NULL DEFAULT -1,
+      daily_limit INTEGER NOT NULL DEFAULT -1,
+      updated_at INTEGER NOT NULL
+    );
   `);
 }
 

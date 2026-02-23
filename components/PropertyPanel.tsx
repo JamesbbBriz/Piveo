@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { AspectRatio, GeneratedImage, ModelCharacter, ProductCatalogItem, ProductImage, ProductScale, SessionSettings, SystemTemplate } from '../types';
+import { AspectRatio, GeneratedImage, ModelCharacter, ProductCatalogItem, ProductImage, SessionSettings, SystemTemplate } from '../types';
 import { getSupportedAspectRatios, getSupportedSizeForAspect } from '../services/sizeUtils';
 import { generateModelCharacter } from '../services/gemini';
 import { Icon } from './Icon';
@@ -27,27 +27,20 @@ interface PropertyPanelProps {
   onGalleryImageAction?: (image: GeneratedImage, action: string) => void;
 }
 
-/* ── Collapsible Section ── */
+/* ── Section (always expanded, scroll to see all) ── */
 const Section: React.FC<{
   title: string;
   children: React.ReactNode;
   defaultExpanded?: boolean;
-}> = ({ title, children, defaultExpanded = true }) => {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+}> = ({ title, children }) => {
   return (
     <div className="border-b border-dark-700">
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-dark-800/50 transition-colors"
-      >
+      <div className="px-4 pt-2.5 pb-1">
         <span className="text-[11px] font-semibold text-gray-300 tracking-wide">{title}</span>
-        <Icon name={expanded ? "chevron-up" : "chevron-down"} className="text-gray-500 text-[10px]" />
-      </button>
-      {expanded && (
-        <div className="px-4 pb-3">
-          {children}
-        </div>
-      )}
+      </div>
+      <div className="px-4 pb-3">
+        {children}
+      </div>
     </div>
   );
 };
@@ -461,7 +454,7 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
         <div className="flex flex-wrap gap-1.5 mb-2">
           <button
             onClick={() => selectModel(null)}
-            className={`h-10 w-10 shrink-0 rounded-lg border flex items-center justify-center transition-colors text-[10px] ${
+            className={`h-14 w-14 shrink-0 rounded-lg border flex items-center justify-center transition-colors text-xs ${
               settings.selectedModelId === null
                 ? "border-banana-500 bg-banana-500/10 text-banana-500"
                 : "border-dark-600 bg-dark-800 text-gray-500 hover:border-gray-400"
@@ -474,7 +467,7 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
             <div key={m.id} className="relative shrink-0">
               <button
                 onClick={() => selectModel(m.id)}
-                className={`relative h-10 w-10 rounded-lg overflow-hidden border transition-colors ${
+                className={`relative h-14 w-14 rounded-lg overflow-hidden border transition-colors ${
                   settings.selectedModelId === m.id
                     ? "border-banana-500"
                     : "border-dark-600 hover:border-gray-400"
@@ -560,29 +553,6 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
         </div>
       </Section>
 
-      {/* Product Scale */}
-      <Section title="产品显眼度">
-        <div className="flex gap-2">
-          {([
-            [ProductScale.Small, "低调"],
-            [ProductScale.Standard, "平衡"],
-            [ProductScale.Large, "突出"],
-          ] as const).map(([scale, label]) => (
-            <button
-              key={scale}
-              onClick={() => onUpdateSettings({ ...settings, productScale: scale })}
-              className={`flex-1 h-8 rounded-lg border text-[10px] font-semibold transition-colors ${
-                settings.productScale === scale
-                  ? "bg-banana-500 text-dark-900 border-banana-500"
-                  : "bg-dark-700 text-gray-300 border-dark-600 hover:border-gray-500"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </Section>
-
       {/* Style Template */}
       <Section title="风格模板">
         <select
@@ -643,22 +613,6 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
             另存为模板
           </button>
         )}
-      </Section>
-
-      {/* Generation Count */}
-      <Section title="生成数量">
-        <div className="flex items-center gap-2">
-          <input
-            type="range"
-            min={1}
-            max={10}
-            value={settings.batchCount}
-            onChange={(e) => onUpdateSettings({ ...settings, batchCount: Number(e.target.value) })}
-            className="flex-1 accent-banana-500"
-          />
-          <span className="text-[12px] text-gray-300 w-6 text-center font-medium">{settings.batchCount}</span>
-        </div>
-        <p className="mt-1 text-[10px] text-gray-500">每次生成 {settings.batchCount} 张图片</p>
       </Section>
 
       {/* Continuous Edit */}
