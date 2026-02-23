@@ -3,7 +3,7 @@ import path from "node:path";
 import express from "express";
 import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";
-import { getDb } from "../db.mjs";
+import { getDb, getDataDir } from "../db.mjs";
 import { requireAuth, isSuperAdmin } from "./auth.mjs";
 import { saveBlob, getBlob, deleteBlob, getThumbnail } from "../services/blobStore.mjs";
 import { getAllUsersUsageStats, getUserUsageStats } from "../services/usageTracker.mjs";
@@ -847,6 +847,59 @@ router.post("/api/data/providers/:id/models", async (req, res) => {
   } catch (e) {
     res.status(502).json({ ok: false, message: e.message });
   }
+});
+
+// ---------- Admin: batch thumbnail generation ----------
+
+router.post("/api/data/admin/generate-thumbnails", async (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+
+  const db = getDb();
+  const blobs = db
+    .prepare("SELECT id, file_path, content_type FROM blobs")
+    .all();
+
+  let generated = 0;
+  let existed = 0;
+  let missing = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const blob of blobs) {
+    // Skip non-raster images
+    if (!/^image\/(png|jpe?g|webp|gif)$/i.test(blob.content_type)) {
+      skipped++;
+      continue;
+    }
+
+    const absPath = path.resolve(getDataDir(), blob.file_path);
+    if (!fs.existsSync(absPath)) {
+      missing++;
+      continue;
+    }
+
+    // Check if thumbnail already exists
+    const base = path.basename(absPath, path.extname(absPath));
+    const thumbPath = path.join(path.dirname(absPath), `${base}_thumb.webp`);
+    if (fs.existsSync(thumbPath)) {
+      existed++;
+      continue;
+    }
+
+    try {
+      await getThumbnail(blob.id);
+      generated++;
+    } catch {
+      failed++;
+    }
+  }
+
+  console.info(
+    `[ADMIN] Thumbnail batch: ${generated} new, ${existed} existed, ${missing} missing, ${skipped} skipped, ${failed} failed (total ${blobs.length})`
+  );
+  res.json({ ok: true, total: blobs.length, generated, existed, missing, skipped, failed });
 });
 
 // ---------- Sync ----------
