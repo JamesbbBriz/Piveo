@@ -31,6 +31,7 @@ import { PropertyPanel } from './components/PropertyPanel';
 import { PromptBar } from './components/PromptBar';
 import { extractImagesFromSession } from './services/projectUtils';
 import { ImageGallery } from './components/ImageGallery';
+import { RefinePanel } from './components/RefinePanel';
 import { ToastProvider } from './components/Toast';
 import type { GeneratedImage } from './types';
 import {
@@ -285,6 +286,7 @@ const AppInner: React.FC = () => {
   const [authError, setAuthError] = useState<string | null>(null);
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [selectedGalleryImageId, setSelectedGalleryImageId] = useState<string | null>(null);
+  const [refineTarget, setRefineTarget] = useState<{ imageUrl: string; prompt?: string } | null>(null);
 
   // ——— Refs ———
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -981,7 +983,6 @@ const AppInner: React.FC = () => {
           const options = loadDownloadOptions();
           void downloadImageWithFormat(image.imageUrl, {
             basename: `topseller-${image.id}`,
-            format: options.format,
             quality: options.quality,
           });
         }
@@ -1066,6 +1067,11 @@ const AppInner: React.FC = () => {
       case 'batch-from-image':
         if (image.imageUrl) {
           handleBatchFromImage(image.imageUrl);
+        }
+        break;
+      case 'refine':
+        if (image.imageUrl) {
+          setRefineTarget({ imageUrl: image.imageUrl, prompt: image.prompt });
         }
         break;
     }
@@ -1440,6 +1446,37 @@ const AppInner: React.FC = () => {
     await executeGeneration(variationPrompt, imageUrl, updatedMessages, { action: `变体：${type}` });
   }, [currentSession, executeGeneration, isGenerating, projectDispatch]);
 
+  const handleRefineFinish = useCallback((finalImageUrl: string) => {
+    if (!currentSession) return;
+    const newMessage: Message = {
+      id: uuidv4(),
+      role: 'model',
+      parts: [{
+        type: 'image',
+        imageUrl: finalImageUrl,
+        meta: {
+          id: uuidv4(),
+          createdAt: Date.now(),
+          action: '精修',
+          model: apiConfig.defaultImageModel,
+        },
+      }],
+      timestamp: Date.now(),
+    };
+    projectDispatch({
+      type: UPDATE_SESSION,
+      payload: {
+        id: currentSession.id,
+        updater: (s: Session) => ({
+          ...s,
+          messages: [...s.messages, newMessage],
+          updatedAt: Date.now(),
+        }),
+      },
+    });
+    setRefineTarget(null);
+  }, [currentSession, apiConfig.defaultImageModel, projectDispatch]);
+
   const openMaskEditFromChat = useCallback((baseImageUrl: string) => {
     uiDispatch({ type: SET_MASK_EDIT_CONTEXT, payload: { source: "chat" } });
     setMaskEditBaseUrl(baseImageUrl);
@@ -1708,7 +1745,6 @@ const AppInner: React.FC = () => {
     const options = loadDownloadOptions();
     await downloadImageWithFormat(v.imageUrl, {
       basename: `topseller-batch-${v.id}`,
-      format: options.format,
       quality: options.quality,
     });
   }, []);
@@ -2473,8 +2509,6 @@ const AppInner: React.FC = () => {
       onDeleteModel={handleDeleteModel}
       templates={templates}
       onSaveTemplate={handleSaveTemplate}
-      apiConfig={apiConfig}
-      onUpdateApiConfig={handleUpdateApiConfig}
       selectedImage={selectedImage}
       onClearSelectedImage={() => uiDispatch({ type: SET_SELECTED_IMAGE, payload: null })}
       selectedGalleryImage={selectedGalleryImage}
@@ -2795,6 +2829,17 @@ const AppInner: React.FC = () => {
 
       {/* Modals — rendered inside Layout but overlay on top */}
       {previewImageUrl && <ImagePreviewModal imageUrl={previewImageUrl} onClose={() => uiDispatch({ type: SET_PREVIEW_IMAGE, payload: null })} />}
+      {refineTarget && (
+        <RefinePanel
+          imageUrl={refineTarget.imageUrl}
+          prompt={refineTarget.prompt}
+          model={apiConfig.defaultImageModel}
+          aspectRatio={currentSession.settings.aspectRatio}
+          systemPrompt={currentSession.settings.systemPrompt}
+          onClose={() => setRefineTarget(null)}
+          onFinish={handleRefineFinish}
+        />
+      )}
       <BatchSetModal
         isOpen={isBatchSetOpen}
         onClose={() => { setIsBatchSetOpen(false); setAddSlotsTargetJobId(null); }}

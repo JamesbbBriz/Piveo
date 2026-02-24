@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Icon } from './Icon';
 import { syncService } from '@/services/sync';
 
-type AdminTab = 'users' | 'teams' | 'projects' | 'providers';
+type AdminTab = 'users' | 'teams' | 'projects' | 'providers' | 'templates';
 
 interface AdminPanelProps {
   onClose: () => void;
@@ -14,6 +14,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
   const [teams, setTeams] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [providers, setProviders] = useState<any[]>([]);
+  const [defaultTemplates, setDefaultTemplates] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -39,6 +40,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
         case 'providers': {
           const data = await syncService.fetchProviders();
           setProviders(data);
+          break;
+        }
+        case 'templates': {
+          const data = await syncService.fetchAdminDefaultTemplates();
+          setDefaultTemplates(data);
           break;
         }
       }
@@ -73,6 +79,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
     { key: 'teams', label: '团队管理', icon: 'people-group' },
     { key: 'projects', label: '项目管理', icon: 'th-large' },
     { key: 'providers', label: '供应商管理', icon: 'server' },
+    { key: 'templates', label: '模板管理', icon: 'file-lines' },
   ];
 
   const filteredUsers = users.filter(
@@ -176,6 +183,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onClose }) => {
             )}
             {tab === 'providers' && (
               <ProvidersTable providers={providers} formatDate={formatDate} onRefresh={() => loadData('providers')} />
+            )}
+            {tab === 'templates' && (
+              <DefaultTemplatesTable templates={defaultTemplates} formatDate={formatDate} onRefresh={() => loadData('templates')} />
             )}
           </>
         )}
@@ -807,6 +817,282 @@ const ProvidersTable: React.FC<{
           ))}
         </tbody>
       </table>
+    </>
+  );
+};
+
+/* ── Default Templates Table ── */
+
+const DefaultTemplatesTable: React.FC<{
+  templates: any[];
+  formatDate: (ts: number | null) => string;
+  onRefresh: () => void;
+}> = ({ templates, formatDate, onRefresh }) => {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [editSortOrder, setEditSortOrder] = useState(0);
+  const [editFeatured, setEditFeatured] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newContent, setNewContent] = useState('');
+  const [newFeatured, setNewFeatured] = useState(false);
+
+  const startEdit = (t: any) => {
+    setEditingId(t.id);
+    setEditName(t.name);
+    setEditContent(t.content);
+    setEditSortOrder(t.sort_order ?? 0);
+    setEditFeatured(Boolean(t.is_featured));
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditName('');
+    setEditContent('');
+    setEditSortOrder(0);
+    setEditFeatured(false);
+  };
+
+  const handleSaveEdit = async () => {
+    setSaving(true);
+    try {
+      const updated = templates.map((t) =>
+        t.id === editingId
+          ? { ...t, name: editName, content: editContent, sort_order: editSortOrder, is_featured: editFeatured ? 1 : 0 }
+          : t
+      );
+      await syncService.saveAdminDefaultTemplates(updated);
+      cancelEdit();
+      onRefresh();
+    } catch (e) {
+      console.error('[Admin] 保存模板失败:', e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeleting(id);
+    try {
+      await syncService.deleteAdminDefaultTemplate(id);
+      onRefresh();
+    } catch (e) {
+      console.error('[Admin] 删除模板失败:', e);
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  const handleAdd = async () => {
+    if (!newName.trim()) return;
+    setSaving(true);
+    try {
+      await syncService.addAdminDefaultTemplate(newName.trim(), newContent, newFeatured);
+      setNewName('');
+      setNewContent('');
+      setNewFeatured(false);
+      setAdding(false);
+      onRefresh();
+    } catch (e) {
+      console.error('[Admin] 添加模板失败:', e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <p className="text-xs text-gray-600 mb-4">
+        管理所有用户默认可见的风格模板。新用户无个人模板时，将自动使用这些默认模板。
+      </p>
+
+      {!adding ? (
+        <button
+          onClick={() => setAdding(true)}
+          className="mb-4 px-3 py-1.5 rounded-md text-sm bg-banana-500/20 text-banana-400 hover:bg-banana-500/30 transition-colors flex items-center gap-1.5"
+        >
+          <Icon name="plus" className="text-xs" />
+          添加模板
+        </button>
+      ) : (
+        <div className="mb-4 p-4 rounded-lg border border-dark-600 bg-dark-800/50 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-gray-200">添加默认模板</h3>
+            <button type="button" onClick={() => setAdding(false)} className="text-gray-500 hover:text-gray-300 transition-colors">
+              <Icon name="xmark" className="text-xs" />
+            </button>
+          </div>
+          <div>
+            <label className="text-[11px] text-gray-500 mb-1 block">模板名称 *</label>
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="例如：超写实电商"
+              className="w-full px-2.5 py-1.5 rounded-md bg-dark-900 border border-dark-600 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-banana-500/50"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] text-gray-500 mb-1 block">模板内容</label>
+            <textarea
+              value={newContent}
+              onChange={(e) => setNewContent(e.target.value)}
+              rows={4}
+              placeholder="系统提示词内容..."
+              className="w-full px-2.5 py-1.5 rounded-md bg-dark-900 border border-dark-600 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-banana-500/50 resize-y"
+            />
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={newFeatured}
+              onChange={(e) => setNewFeatured(e.target.checked)}
+              className="h-4 w-4 accent-amber-500"
+            />
+            <span className="text-sm text-gray-300">精品模板</span>
+            <span className="text-[10px] text-gray-600">（用户不可查看提示词内容）</span>
+          </label>
+          <div className="flex gap-2">
+            <button
+              onClick={handleAdd}
+              disabled={saving || !newName.trim()}
+              className="px-3 py-1.5 rounded-md text-sm bg-banana-500/20 text-banana-400 hover:bg-banana-500/30 transition-colors disabled:opacity-50"
+            >
+              {saving ? '添加中...' : '添加'}
+            </button>
+            <button
+              onClick={() => setAdding(false)}
+              className="px-3 py-1.5 rounded-md text-sm bg-dark-700 text-gray-400 hover:bg-dark-600 transition-colors"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+
+      {templates.length === 0 ? (
+        <EmptyState text="暂无默认模板" />
+      ) : (
+        <table className="w-full">
+          <thead className="border-b border-dark-700">
+            <tr>
+              <TableHeader>排序</TableHeader>
+              <TableHeader>名称</TableHeader>
+              <TableHeader>精品</TableHeader>
+              <TableHeader>内容预览</TableHeader>
+              <TableHeader>更新时间</TableHeader>
+              <TableHeader>操作</TableHeader>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-dark-700/50">
+            {templates.map((t) => (
+              <React.Fragment key={t.id}>
+                <tr className="hover:bg-dark-800/50 transition-colors">
+                  <TableCell className="text-gray-500 w-16">{t.sort_order}</TableCell>
+                  <TableCell>
+                    <span className="font-medium text-gray-200">{t.name}</span>
+                  </TableCell>
+                  <TableCell>
+                    {t.is_featured ? (
+                      <span className="inline-flex items-center text-[10px] bg-amber-500/20 text-amber-400 rounded-full px-1.5 py-0.5">⭐ 精品</span>
+                    ) : (
+                      <span className="text-xs text-gray-600">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-gray-400 text-xs line-clamp-2 max-w-md">
+                      {t.content?.substring(0, 100)}{t.content?.length > 100 ? '...' : ''}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-gray-500">{formatDate(t.updated_at)}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => startEdit(t)}
+                        className="text-xs text-banana-400 hover:text-banana-300 transition-colors"
+                      >
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => handleDelete(t.id)}
+                        disabled={deleting === t.id}
+                        className="text-xs text-red-400/60 hover:text-red-400 transition-colors disabled:opacity-50"
+                      >
+                        {deleting === t.id ? '删除中...' : '删除'}
+                      </button>
+                    </div>
+                  </TableCell>
+                </tr>
+                {editingId === t.id && (
+                  <tr className="bg-dark-800/80">
+                    <td colSpan={6} className="px-4 py-3">
+                      <div className="space-y-3">
+                        <div className="flex gap-3">
+                          <div className="flex-1">
+                            <label className="text-[11px] text-gray-500 mb-1 block">名称</label>
+                            <input
+                              type="text"
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              className="w-full px-2.5 py-1.5 rounded-md bg-dark-900 border border-dark-600 text-sm text-gray-200 focus:outline-none focus:border-banana-500/50"
+                            />
+                          </div>
+                          <div className="w-24">
+                            <label className="text-[11px] text-gray-500 mb-1 block">排序</label>
+                            <input
+                              type="number"
+                              value={editSortOrder}
+                              onChange={(e) => setEditSortOrder(Number(e.target.value))}
+                              className="w-full px-2.5 py-1.5 rounded-md bg-dark-900 border border-dark-600 text-sm text-gray-200 focus:outline-none focus:border-banana-500/50"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500 mb-1 block">内容</label>
+                          <textarea
+                            value={editContent}
+                            onChange={(e) => setEditContent(e.target.value)}
+                            rows={6}
+                            className="w-full px-2.5 py-1.5 rounded-md bg-dark-900 border border-dark-600 text-sm text-gray-200 focus:outline-none focus:border-banana-500/50 resize-y"
+                          />
+                        </div>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={editFeatured}
+                            onChange={(e) => setEditFeatured(e.target.checked)}
+                            className="h-4 w-4 accent-amber-500"
+                          />
+                          <span className="text-sm text-gray-300">精品模板</span>
+                          <span className="text-[10px] text-gray-600">（用户不可查看提示词内容）</span>
+                        </label>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleSaveEdit}
+                            disabled={saving}
+                            className="px-3 py-1.5 rounded-md text-sm bg-banana-500/20 text-banana-400 hover:bg-banana-500/30 transition-colors disabled:opacity-50"
+                          >
+                            {saving ? '保存中...' : '保存'}
+                          </button>
+                          <button
+                            onClick={cancelEdit}
+                            className="px-3 py-1.5 rounded-md text-sm bg-dark-700 text-gray-400 hover:bg-dark-600 transition-colors"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            ))}
+          </tbody>
+        </table>
+      )}
     </>
   );
 };

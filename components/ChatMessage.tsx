@@ -13,6 +13,7 @@ interface ChatMessageProps {
   onMaskEdit?: (baseImageUrl: string) => void;
   onUseAsReference?: (imageUrl: string) => void;
   onBatchFromImage?: (imageUrl: string) => void;
+  onRefine?: (imageUrl: string) => void;
 }
 
 const ChatMessageInner: React.FC<ChatMessageProps> = ({
@@ -22,6 +23,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
   onMaskEdit,
   onUseAsReference,
   onBatchFromImage,
+  onRefine,
 }) => {
   const isUser = message.role === 'user';
   // 触控可达：点击图片时 toggle 操作按钮，同时保留桌面端 hover 效果
@@ -43,7 +45,6 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
     try {
       await downloadImageWithFormat(pendingDownload.url, {
         basename: pendingDownload.basename,
-        format: downloadOptions.format,
         quality: downloadOptions.quality,
       });
       setPendingDownload(null);
@@ -136,6 +137,15 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                             title="生成套图"
                           >
                             <Icon name="layer-group" />
+                          </button>
+                        )}
+                        {!isUser && onRefine && (
+                          <button
+                            onClick={() => onRefine(part.imageUrl!)}
+                            className="bg-cyan-500/80 text-dark-900 p-2 rounded-full hover:bg-cyan-400 transition-colors shadow-lg"
+                            title="精修"
+                          >
+                            <Icon name="wand-magic-sparkles" />
                           </button>
                         )}
                       </div>

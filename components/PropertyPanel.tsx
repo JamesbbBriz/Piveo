@@ -4,8 +4,6 @@ import { AspectRatio, GeneratedImage, ModelCharacter, ProductCatalogItem, Produc
 import { getSupportedAspectRatios, getSupportedSizeForAspect } from '../services/sizeUtils';
 import { generateModelCharacter } from '../services/gemini';
 import { Icon } from './Icon';
-import { ApiConfig } from '../services/apiConfig';
-import { getModelDisplayName } from './ModelSwitcherFooter';
 import { useToast } from './Toast';
 
 interface PropertyPanelProps {
@@ -17,8 +15,6 @@ interface PropertyPanelProps {
   onDeleteModel: (modelId: string) => void;
   templates: SystemTemplate[];
   onSaveTemplate: (template: SystemTemplate) => void;
-  apiConfig: ApiConfig;
-  onUpdateApiConfig: (cfg: ApiConfig) => void;
   selectedImage: string | null;
   onClearSelectedImage: () => void;
   // Image detail mode
@@ -110,6 +106,17 @@ const ImageDetailView: React.FC<{
           </button>
         </div>
       )}
+
+      {/* Refine button - always available */}
+      <div className="px-4 pb-2">
+        <button
+          onClick={() => onAction('refine')}
+          className="w-full h-9 rounded-lg border border-cyan-500 bg-cyan-500/20 text-xs text-cyan-300 font-semibold hover:bg-cyan-500/30 transition-colors flex items-center justify-center gap-2"
+        >
+          <Icon name="wand-magic-sparkles" className="text-[11px]" />
+          精修
+        </button>
+      </div>
 
       {/* Quick actions */}
       <div className="px-4 pb-3">
@@ -270,8 +277,6 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
   onDeleteModel,
   templates,
   onSaveTemplate,
-  apiConfig,
-  onUpdateApiConfig,
   selectedImage,
   onClearSelectedImage,
   selectedGalleryImage,
@@ -561,58 +566,76 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
             const idx = Number(e.target.value);
             if (idx >= 0 && idx < templates.length) {
               onUpdateSettings({ ...settings, systemPrompt: templates[idx].content });
+            } else {
+              // "自定义" selected — clear to empty for fresh input
+              onUpdateSettings({ ...settings, systemPrompt: '' });
             }
           }}
           className="w-full h-8 bg-dark-800 border border-dark-600 rounded-md px-2 text-[11px] text-gray-200 focus:outline-none focus:border-banana-500/50 cursor-pointer mb-2"
         >
           <option value={-1}>自定义</option>
           {templates.map((t, i) => (
-            <option key={t.id} value={i}>{t.name}</option>
+            <option key={t.id} value={i}>{t.isFeatured ? `⭐ ${t.name}` : t.name}</option>
           ))}
         </select>
-        <textarea
-          value={settings.systemPrompt || ''}
-          onChange={(e) => onUpdateSettings({ ...settings, systemPrompt: e.target.value })}
-          placeholder="在这里输入摄影师要求、风格描述…"
-          rows={5}
-          className="w-full bg-dark-800 border border-dark-600 rounded-md px-2.5 py-2 text-[11px] text-gray-200 focus:outline-none focus:border-banana-500/50 resize-y placeholder-gray-600 leading-relaxed"
-        />
-        {savingTemplate ? (
-          <div className="flex gap-1 mt-1.5">
-            <input
-              type="text"
-              value={newTemplateName}
-              onChange={(e) => setNewTemplateName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSaveAsTemplate();
-                if (e.key === 'Escape') { setSavingTemplate(false); setNewTemplateName(''); }
-              }}
-              placeholder="输入模板名称"
-              className="flex-1 h-7 px-2 bg-dark-800 border border-banana-500/40 rounded-md text-[11px] text-gray-200 focus:outline-none focus:border-banana-500 placeholder-gray-600"
-              autoFocus
-            />
-            <button
-              onClick={handleSaveAsTemplate}
-              className="h-7 px-2 rounded-md bg-banana-500/20 border border-banana-500/40 text-banana-400 text-[11px] hover:bg-banana-500/30 transition-colors"
-            >
-              保存
-            </button>
-            <button
-              onClick={() => { setSavingTemplate(false); setNewTemplateName(''); }}
-              className="h-7 px-2 rounded-md bg-dark-700 border border-dark-600 text-gray-400 text-[11px] hover:bg-dark-600 transition-colors"
-            >
-              取消
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => setSavingTemplate(true)}
-            disabled={!settings.systemPrompt?.trim()}
-            className="mt-1.5 w-full h-7 rounded-md border border-dark-600 bg-dark-800 text-[11px] text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors disabled:opacity-40"
-          >
-            另存为模板
-          </button>
-        )}
+        {(() => {
+          const selectedIdx = templates.findIndex((t) => t.content === settings.systemPrompt);
+          const isFeaturedSelected = selectedIdx >= 0 && templates[selectedIdx].isFeatured === true;
+          if (isFeaturedSelected) {
+            return (
+              <p className="text-[11px] text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded-md px-2.5 py-2 leading-relaxed">
+                精品模板 — 提示词由平台精调，不可编辑
+              </p>
+            );
+          }
+          return (
+            <>
+              <textarea
+                value={settings.systemPrompt || ''}
+                onChange={(e) => onUpdateSettings({ ...settings, systemPrompt: e.target.value })}
+                placeholder="在这里输入摄影师要求、风格描述…"
+                rows={5}
+                className="w-full bg-dark-800 border border-dark-600 rounded-md px-2.5 py-2 text-[11px] text-gray-200 focus:outline-none focus:border-banana-500/50 resize-y placeholder-gray-600 leading-relaxed"
+              />
+              {savingTemplate ? (
+                <div className="flex gap-1 mt-1.5">
+                  <input
+                    type="text"
+                    value={newTemplateName}
+                    onChange={(e) => setNewTemplateName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveAsTemplate();
+                      if (e.key === 'Escape') { setSavingTemplate(false); setNewTemplateName(''); }
+                    }}
+                    placeholder="输入模板名称"
+                    className="flex-1 h-7 px-2 bg-dark-800 border border-banana-500/40 rounded-md text-[11px] text-gray-200 focus:outline-none focus:border-banana-500 placeholder-gray-600"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleSaveAsTemplate}
+                    className="h-7 px-2 rounded-md bg-banana-500/20 border border-banana-500/40 text-banana-400 text-[11px] hover:bg-banana-500/30 transition-colors"
+                  >
+                    保存
+                  </button>
+                  <button
+                    onClick={() => { setSavingTemplate(false); setNewTemplateName(''); }}
+                    className="h-7 px-2 rounded-md bg-dark-700 border border-dark-600 text-gray-400 text-[11px] hover:bg-dark-600 transition-colors"
+                  >
+                    取消
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setSavingTemplate(true)}
+                  disabled={!settings.systemPrompt?.trim()}
+                  className="mt-1.5 w-full h-7 rounded-md border border-dark-600 bg-dark-800 text-[11px] text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors disabled:opacity-40"
+                >
+                  另存为模板
+                </button>
+              )}
+            </>
+          );
+        })()}
       </Section>
 
       {/* Continuous Edit */}
@@ -663,20 +686,6 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
         </Section>
       )}
 
-      {/* Separator */}
-      <div className="border-t border-dark-600 my-1" />
-
-      {/* Model Selection */}
-      <Section title="模型选择" defaultExpanded={false}>
-        <select
-          value={apiConfig.defaultImageModel}
-          onChange={(e) => onUpdateApiConfig({ ...apiConfig, defaultImageModel: e.target.value })}
-          className="w-full h-8 bg-dark-800 border border-dark-600 rounded-md px-2 text-[11px] text-gray-200 focus:outline-none focus:border-banana-500/50 cursor-pointer"
-        >
-          <option value={apiConfig.defaultImageModel}>{getModelDisplayName(apiConfig.defaultImageModel)}</option>
-        </select>
-        <p className="mt-1 text-[10px] text-gray-500">当前：{getModelDisplayName(apiConfig.defaultImageModel)}</p>
-      </Section>
     </div>
   );
 };
@@ -686,7 +695,6 @@ export const PropertyPanel = React.memo(PropertyPanelInner, (prev, next) =>
   prev.models === next.models &&
   prev.products === next.products &&
   prev.templates === next.templates &&
-  prev.apiConfig === next.apiConfig &&
   prev.selectedImage === next.selectedImage &&
   prev.selectedGalleryImage === next.selectedGalleryImage
 );

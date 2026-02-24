@@ -27,6 +27,7 @@ export interface SystemTemplate {
   id: string;
   name: string;
   content: string;
+  isFeatured?: boolean;
 }
 
 export interface ModelCharacter {
