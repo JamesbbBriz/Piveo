@@ -8,10 +8,16 @@ import { getDb } from "../db.mjs";
  *
  * Env var pattern per provider slot:
  *   UPSTREAM_API_BASE_URL        / UPSTREAM_AUTHORIZATION        → "primary"
+ *   UPSTREAM_API_BASE_URL_2      / UPSTREAM_AUTHORIZATION_2      → "slot2"
+ *   UPSTREAM_API_BASE_URL_3      / UPSTREAM_AUTHORIZATION_3      → "slot3"
+ *   ... (unlimited)
+ *
+ * Legacy aliases (still supported):
  *   UPSTREAM_API_BASE_URL_ALT    / UPSTREAM_AUTHORIZATION_ALT    → "alt"
  *
  * Display names:
- *   UPSTREAM_NAME (default "主线路"), UPSTREAM_NAME_ALT (default "备用线路")
+ *   UPSTREAM_NAME (default "线路1"), UPSTREAM_NAME_2, UPSTREAM_NAME_3 ...
+ *   UPSTREAM_NAME_ALT (default "备用线路")
  */
 
 const normalizeAuthorization = (raw) => {
@@ -34,6 +40,7 @@ let providers = new Map();
 function buildFromEnv() {
   const defs = [];
 
+  // Slot 1 (primary) — uses base env var names for backwards compatibility
   const primaryUrl = (process.env.UPSTREAM_API_BASE_URL || process.env.VITE_API_PROXY_TARGET || "").trim();
   const primaryKey = normalizeAuthorization(
     process.env.UPSTREAM_AUTHORIZATION || process.env.VITE_AUTHORIZATION ||
@@ -42,21 +49,40 @@ function buildFromEnv() {
   if (primaryUrl && primaryKey) {
     defs.push({
       id: "primary",
-      name: (process.env.UPSTREAM_NAME || "主线路").trim(),
+      name: (process.env.UPSTREAM_NAME || "线路1").trim(),
       baseUrl: primaryUrl,
       apiKey: primaryKey,
+      type: (process.env.UPSTREAM_PROVIDER_TYPE || "openai").trim(),
     });
   }
 
-  const altUrl = (process.env.UPSTREAM_API_BASE_URL_ALT || "").trim();
-  const altKey = normalizeAuthorization(process.env.UPSTREAM_AUTHORIZATION_ALT || "");
-  if (altUrl && altKey) {
+  // Numbered slots: _2, _3, _4, ... (scan until gap)
+  for (let i = 2; ; i++) {
+    const url = (process.env[`UPSTREAM_API_BASE_URL_${i}`] || "").trim();
+    const key = normalizeAuthorization(process.env[`UPSTREAM_AUTHORIZATION_${i}`] || "");
+    if (!url || !key) break;
     defs.push({
-      id: "alt",
-      name: (process.env.UPSTREAM_NAME_ALT || "备用线路").trim(),
-      baseUrl: altUrl,
-      apiKey: altKey,
+      id: `slot${i}`,
+      name: (process.env[`UPSTREAM_NAME_${i}`] || `线路${i}`).trim(),
+      baseUrl: url,
+      apiKey: key,
+      type: (process.env[`UPSTREAM_PROVIDER_TYPE_${i}`] || "openai").trim(),
     });
+  }
+
+  // Legacy _ALT slot (kept for backwards compat, skipped if already covered by _2)
+  if (!defs.some((d) => d.baseUrl === (process.env.UPSTREAM_API_BASE_URL_ALT || "").trim())) {
+    const altUrl = (process.env.UPSTREAM_API_BASE_URL_ALT || "").trim();
+    const altKey = normalizeAuthorization(process.env.UPSTREAM_AUTHORIZATION_ALT || "");
+    if (altUrl && altKey) {
+      defs.push({
+        id: "alt",
+        name: (process.env.UPSTREAM_NAME_ALT || "备用线路").trim(),
+        baseUrl: altUrl,
+        apiKey: altKey,
+        type: (process.env.UPSTREAM_PROVIDER_TYPE_ALT || "openai").trim(),
+      });
+    }
   }
 
   return defs;

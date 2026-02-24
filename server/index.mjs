@@ -11,6 +11,7 @@ import authRoutes, { requireAuth, seedUser, isSuperAdmin } from "./routes/auth.m
 import dataRoutes from "./routes/data.mjs";
 import { checkQuota, recordUsage } from "./services/usageTracker.mjs";
 import * as providerStore from "./services/providerStore.mjs";
+import { createGeminiNativeHandler } from "./middleware/geminiAdapter.mjs";
 
 const IS_PROD = process.env.NODE_ENV === "production";
 const JWT_SECRET = process.env.AUTH_JWT_SECRET || "dev-only-change-me";
@@ -152,11 +153,13 @@ const quotaGuard = (req, res, next) => {
 const getUpstreamConfig = () => {
   const active = providerStore.getActive();
   if (active) {
-    return { baseUrl: active.baseUrl, authorization: normalizeAuthorization(active.apiKey) };
+    return { baseUrl: active.baseUrl, authorization: normalizeAuthorization(active.apiKey), type: active.type || "openai" };
   }
   // Fallback to env vars
-  return { baseUrl: targetProxy, authorization: upstreamAuthorization };
+  return { baseUrl: targetProxy, authorization: upstreamAuthorization, type: "openai" };
 };
+
+const geminiNativeHandler = createGeminiNativeHandler(getUpstreamConfig, { recordUsage, isSuperAdmin });
 
 app.use(
   "/api",
@@ -178,6 +181,7 @@ app.use(
   },
   upstreamGuard,
   quotaGuard,
+  geminiNativeHandler,
   createProxyMiddleware({
     target: targetProxy,
     router: () => getUpstreamConfig().baseUrl,
