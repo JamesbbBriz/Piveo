@@ -20,26 +20,46 @@ function getUploadsDir() {
   return path.join(getDataDir(), "uploads");
 }
 
+const WEBP_QUALITY = 99;
+const CONVERTIBLE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/gif",
+]);
+
 /**
  * Save a base64-encoded blob to disk and record it in the database.
+ * Raster images (PNG/JPEG/GIF/WebP) are converted to WebP q99 before saving.
+ * SVG and other types are stored as-is.
  * @param {string} userId
  * @param {string} base64Data - Raw base64 string (no data URI prefix)
  * @param {string} contentType - MIME type (e.g. "image/png")
- * @returns {{ id: string, filePath: string, sizeBytes: number }}
+ * @returns {Promise<{ id: string, filePath: string, sizeBytes: number }>}
  */
-export function saveBlob(userId, base64Data, contentType = "image/png") {
+export async function saveBlob(userId, base64Data, contentType = "image/png") {
   const db = getDb();
   const id = uuidv4();
-  const ext = EXT_MAP[contentType] || ".bin";
   const userDir = path.join(getUploadsDir(), userId);
   fs.mkdirSync(userDir, { recursive: true });
 
-  const fileName = `${id}${ext}`;
-  const filePath = path.join(userDir, fileName);
   const buffer = Buffer.from(base64Data, "base64");
-  fs.writeFileSync(filePath, buffer);
+  let finalBuffer = buffer;
+  let finalContentType = contentType;
+  let finalExt = EXT_MAP[contentType] || ".bin";
 
-  const sizeBytes = buffer.length;
+  if (CONVERTIBLE_TYPES.has(contentType)) {
+    finalBuffer = await sharp(buffer).webp({ quality: WEBP_QUALITY }).toBuffer();
+    finalContentType = "image/webp";
+    finalExt = ".webp";
+  }
+
+  const fileName = `${id}${finalExt}`;
+  const filePath = path.join(userDir, fileName);
+  fs.writeFileSync(filePath, finalBuffer);
+
+  const sizeBytes = finalBuffer.length;
   const now = Date.now();
 
   // Store relative path from data dir for portability
@@ -48,7 +68,7 @@ export function saveBlob(userId, base64Data, contentType = "image/png") {
   db.prepare(
     `INSERT INTO blobs (id, user_id, content_type, file_path, size_bytes, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(id, userId, contentType, relPath, sizeBytes, now);
+  ).run(id, userId, finalContentType, relPath, sizeBytes, now);
 
   return { id, filePath: relPath, sizeBytes };
 }

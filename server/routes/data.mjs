@@ -111,7 +111,7 @@ router.get("/api/data/usage/me", (req, res) => {
 
 // ---------- Blobs ----------
 
-router.post("/api/data/blobs", (req, res) => {
+router.post("/api/data/blobs", async (req, res) => {
   const userId = getUserId(req.authUser);
   if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
 
@@ -119,7 +119,7 @@ router.post("/api/data/blobs", (req, res) => {
   if (!data) return res.status(400).json({ ok: false, message: "缺少 data 字段。" });
 
   try {
-    const blob = saveBlob(userId, data, contentType || "image/png");
+    const blob = await saveBlob(userId, data, contentType || "image/png");
     res.json({ ok: true, id: blob.id, url: `/api/data/blobs/${blob.id}` });
   } catch (e) {
     console.error("[DATA] blob save error:", e.message);
@@ -847,6 +847,98 @@ router.post("/api/data/providers/:id/models", async (req, res) => {
   } catch (e) {
     res.status(502).json({ ok: false, message: e.message });
   }
+});
+
+// ---------- Default Templates (admin-managed system defaults) ----------
+
+router.get("/api/data/default-templates", (req, res) => {
+  const db = getDb();
+  const templates = db
+    .prepare("SELECT id, name, content, sort_order, is_featured FROM default_templates ORDER BY sort_order ASC, created_at ASC")
+    .all();
+  res.json({ ok: true, templates });
+});
+
+router.get("/api/data/admin/default-templates", (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+  const db = getDb();
+  const templates = db
+    .prepare("SELECT * FROM default_templates ORDER BY sort_order ASC, created_at ASC")
+    .all();
+  res.json({ ok: true, templates });
+});
+
+router.put("/api/data/admin/default-templates", (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+
+  const { templates } = req.body;
+  if (!Array.isArray(templates)) {
+    return res.status(400).json({ ok: false, message: "templates 必须为数组。" });
+  }
+
+  const db = getDb();
+  const now = Date.now();
+
+  db.transaction(() => {
+    db.prepare("DELETE FROM default_templates").run();
+    const insert = db.prepare(
+      "INSERT INTO default_templates (id, name, content, sort_order, is_featured, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    );
+    for (let i = 0; i < templates.length; i++) {
+      const t = templates[i];
+      insert.run(
+        t.id || uuidv4(),
+        t.name || "",
+        t.content || "",
+        typeof t.sort_order === "number" ? t.sort_order : i,
+        t.is_featured ? 1 : 0,
+        t.created_at || now,
+        now
+      );
+    }
+  })();
+
+  res.json({ ok: true });
+});
+
+router.post("/api/data/admin/default-templates", (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+
+  const { name, content, sort_order, is_featured } = req.body;
+  if (!name) return res.status(400).json({ ok: false, message: "缺少模板名称。" });
+
+  const db = getDb();
+  const id = uuidv4();
+  const now = Date.now();
+
+  // Default sort_order to max + 1
+  const maxOrder = db.prepare("SELECT MAX(sort_order) as m FROM default_templates").get().m ?? -1;
+  const featured = is_featured ? 1 : 0;
+
+  db.prepare(
+    "INSERT INTO default_templates (id, name, content, sort_order, is_featured, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).run(id, name, content || "", typeof sort_order === "number" ? sort_order : maxOrder + 1, featured, now, now);
+
+  res.json({ ok: true, template: { id, name, content: content || "", sort_order: typeof sort_order === "number" ? sort_order : maxOrder + 1, is_featured: featured, created_at: now, updated_at: now } });
+});
+
+router.delete("/api/data/admin/default-templates/:id", (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+
+  const db = getDb();
+  const existing = db.prepare("SELECT id FROM default_templates WHERE id = ?").get(req.params.id);
+  if (!existing) return res.status(404).json({ ok: false, message: "模板不存在。" });
+
+  db.prepare("DELETE FROM default_templates WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
 });
 
 // ---------- Admin: batch thumbnail generation ----------

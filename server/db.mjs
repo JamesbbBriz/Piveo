@@ -10,7 +10,7 @@ const DATA_DIR = path.resolve(
   process.env.DATA_DIR || path.join(__dirname, "..", "data")
 );
 
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 6;
 
 let db = null;
 
@@ -47,6 +47,8 @@ export function initDatabase() {
   if (currentVersion < 2) applySchemaV2(db);
   if (currentVersion < 3) applySchemaV3(db);
   if (currentVersion < 4) applySchemaV4(db);
+  if (currentVersion < 5) applySchemaV5(db);
+  if (currentVersion < 6) applySchemaV6(db);
 
   if (currentVersion < CURRENT_SCHEMA_VERSION) {
     db.prepare(
@@ -235,6 +237,25 @@ function applySchemaV4(db) {
       models_cache TEXT,
       models_fetched_at INTEGER
     );
+  `);
+}
+
+function applySchemaV5(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS default_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      content TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+}
+
+function applySchemaV6(db) {
+  db.exec(`
+    ALTER TABLE default_templates ADD COLUMN is_featured INTEGER NOT NULL DEFAULT 0;
   `);
 }
 
