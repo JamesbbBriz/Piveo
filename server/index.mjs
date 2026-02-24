@@ -48,9 +48,6 @@ if (IS_PROD && JWT_SECRET === "dev-only-change-me") {
 if (IS_PROD && !process.env.AUTH_PASSWORD) {
   throw new Error("生产环境必须配置 AUTH_PASSWORD。");
 }
-if (IS_PROD && !upstreamAuthorization) {
-  throw new Error("生产环境必须配置 UPSTREAM_AUTHORIZATION。");
-}
 if (!AUTH_USERNAME || !AUTH_PASSWORD) {
   throw new Error("必须配置 AUTH_USER 与 AUTH_PASSWORD（或 AUTH_USER_2 等），禁止使用硬编码默认凭据。");
 }
@@ -59,6 +56,11 @@ if (!AUTH_USERNAME || !AUTH_PASSWORD) {
 initDatabase();
 await seedUser();
 providerStore.init();
+
+// Check upstream authorization AFTER providerStore.init() so we can consider all providers
+if (IS_PROD && !upstreamAuthorization && providerStore.getAll().length === 0) {
+  throw new Error("生产环境必须配置至少一个上游供应商（UPSTREAM_API_BASE_URL + UPSTREAM_AUTHORIZATION）。");
+}
 
 // ---------- Express app ----------
 const app = express();
@@ -149,8 +151,14 @@ const quotaGuard = (req, res, next) => {
 // ---------- Upstream proxy (/api) ----------
 // Data routes are mounted under /api/data and handled by dataRoutes above.
 // All other /api/* requests are proxied to the upstream gateway.
-/** Resolve active upstream config: providerStore first, env var fallback. */
-const getUpstreamConfig = () => {
+/** Resolve upstream config: if model given, route to matching provider; otherwise use active. */
+const getUpstreamConfig = (model) => {
+  if (model) {
+    const matched = providerStore.findProviderForModel(model);
+    if (matched) {
+      return { baseUrl: matched.baseUrl, authorization: normalizeAuthorization(matched.apiKey), type: matched.type || "openai" };
+    }
+  }
   const active = providerStore.getActive();
   if (active) {
     return { baseUrl: active.baseUrl, authorization: normalizeAuthorization(active.apiKey), type: active.type || "openai" };
@@ -172,6 +180,7 @@ app.use(
   },
   requireAuth,
   (req, res, next) => {
+    // authCheck: verify active provider has authorization (don't use model routing here)
     const { authorization } = getUpstreamConfig();
     if (!authorization) {
       res.status(500).json({ ok: false, message: "当前线路未配置上游鉴权。" });
@@ -181,10 +190,15 @@ app.use(
   },
   upstreamGuard,
   quotaGuard,
+  // Extract X-Route-Model header for smart routing
+  (req, _res, next) => {
+    req._routeModel = String(req.headers["x-route-model"] || "").trim() || undefined;
+    next();
+  },
   geminiNativeHandler,
   createProxyMiddleware({
     target: targetProxy,
-    router: () => getUpstreamConfig().baseUrl,
+    router: (req) => getUpstreamConfig(req._routeModel).baseUrl,
     changeOrigin: true,
     secure: true,
     proxyTimeout: Number(process.env.UPSTREAM_PROXY_TIMEOUT_MS || 90000),
@@ -193,19 +207,19 @@ app.use(
     on: {
       proxyReq: (proxyReq, req) => {
         const requestId = String(req.requestId || "");
-        const { baseUrl, authorization } = getUpstreamConfig();
+        const { baseUrl, authorization } = getUpstreamConfig(req._routeModel);
         proxyReq.setHeader("Authorization", authorization);
         proxyReq.setHeader("X-Auth-User", String(req.authUser || ""));
         if (requestId) {
           proxyReq.setHeader("X-Request-Id", requestId);
         }
         if (req.originalUrl.includes("/v1/images/generations") || req.originalUrl.includes("/v1/images/edits")) {
-          console.info(`[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} -> ${baseUrl}`);
+          console.info(`[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} -> ${baseUrl}${req._routeModel ? ` (model=${req._routeModel})` : ""}`);
         }
       },
       proxyRes: (proxyRes, req) => {
         const requestId = String(req.requestId || "");
-        const { baseUrl } = getUpstreamConfig();
+        const { baseUrl } = getUpstreamConfig(req._routeModel);
         if (req.originalUrl.includes("/v1/images/generations") || req.originalUrl.includes("/v1/images/edits")) {
           console.info(
             `[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} <- ${proxyRes.statusCode || 0}`
@@ -217,7 +231,7 @@ app.use(
                 username: String(req.authUser || ""),
                 endpoint: req.originalUrl.includes("/v1/images/generations")
                   ? "/v1/images/generations" : "/v1/images/edits",
-                model: null,
+                model: req._routeModel || null,
                 statusCode: proxyRes.statusCode || 0,
                 requestId,
               });

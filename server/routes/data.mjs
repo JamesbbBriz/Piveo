@@ -808,6 +808,12 @@ const maskApiKey = (key) => {
   return "****" + key.slice(-4);
 };
 
+// Must be registered before /api/data/providers/:id routes to avoid "allowed-models" matching as :id
+router.get("/api/data/providers/allowed-models", (req, res) => {
+  const models = providerStore.getAllAllowedModels();
+  res.json({ ok: true, models });
+});
+
 router.get("/api/data/providers", (req, res) => {
   if (!isSuperAdmin(req.authUser)) {
     return res.status(403).json({ ok: false, message: "无权限。" });
@@ -820,6 +826,7 @@ router.get("/api/data/providers", (req, res) => {
     isActive: p.isActive,
     modelsCache: p.modelsCache,
     modelsFetchedAt: p.modelsFetchedAt,
+    allowedModels: p.allowedModels,
   }));
   res.json({ ok: true, providers });
 });
@@ -846,6 +853,22 @@ router.post("/api/data/providers/:id/models", async (req, res) => {
     res.json({ ok: true, models });
   } catch (e) {
     res.status(502).json({ ok: false, message: e.message });
+  }
+});
+
+router.put("/api/data/providers/:id/allowed-models", (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+  const { models } = req.body || {};
+  if (!Array.isArray(models)) {
+    return res.status(400).json({ ok: false, message: "models 必须为数组。" });
+  }
+  try {
+    providerStore.updateAllowedModels(req.params.id, models);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ ok: false, message: e.message });
   }
 });
 

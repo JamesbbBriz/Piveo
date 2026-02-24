@@ -171,9 +171,29 @@ class SyncService {
 
   async saveModel(model: any, teamId?: string): Promise<void> {
     let blobId = model.blobId ?? null;
-    if (model.imageUrl?.startsWith("data:") && !blobId) {
-      const result = await this.uploadDataUrl(model.imageUrl);
-      if (result) blobId = result.id;
+    if (model.imageUrl && !blobId) {
+      if (model.imageUrl.startsWith("data:")) {
+        const result = await this.uploadDataUrl(model.imageUrl);
+        if (result) blobId = result.id;
+      } else if (/^https?:\/\//i.test(model.imageUrl)) {
+        // HTTP URL (e.g. temporary signed URL from API) — download and re-upload to blob storage
+        try {
+          const resp = await fetch(model.imageUrl);
+          if (resp.ok) {
+            const blob = await resp.blob();
+            const reader = new FileReader();
+            const dataUrl: string = await new Promise((resolve, reject) => {
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+            const result = await this.uploadDataUrl(dataUrl);
+            if (result) blobId = result.id;
+          }
+        } catch (e) {
+          console.warn("[Sync] 模特图 HTTP URL 下载失败:", e);
+        }
+      }
     }
     this.queueSync(`model:${model.id}`, () =>
       this.fetchJson(`/api/data/models/${model.id}`, {
@@ -342,6 +362,18 @@ class SyncService {
       method: "POST",
     });
     return res.models ?? [];
+  }
+
+  async updateProviderAllowedModels(id: string, models: string[]): Promise<void> {
+    await this.fetchJson(`/api/data/providers/${id}/allowed-models`, {
+      method: "PUT",
+      body: JSON.stringify({ models }),
+    });
+  }
+
+  async fetchAllAllowedModels(): Promise<string[] | null> {
+    const res = await this.fetchJson<{ models: string[] | null }>("/api/data/providers/allowed-models");
+    return res.models ?? null;
   }
 
   // ——— Teams ———

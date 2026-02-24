@@ -114,6 +114,7 @@ export function init() {
       isActive: Boolean(row?.is_active),
       modelsCache: row?.models_cache ? JSON.parse(row.models_cache) : null,
       modelsFetchedAt: row?.models_fetched_at ?? null,
+      allowedModels: row?.allowed_models ? JSON.parse(row.allowed_models) : null,
     });
   }
 
@@ -168,6 +169,53 @@ export function updateModelsCache(id, models) {
 
   target.modelsCache = models;
   target.modelsFetchedAt = now;
+}
+
+/** Update allowed models for a provider. */
+export function updateAllowedModels(id, models) {
+  const target = providers.get(id);
+  if (!target) throw new Error("供应商不存在。");
+
+  const db = getDb();
+  db.prepare(
+    "UPDATE providers SET allowed_models = ? WHERE id = ?"
+  ).run(JSON.stringify(models), id);
+
+  target.allowedModels = models;
+}
+
+/** Find a provider whose allowedModels includes the given model. Prefers active. Case-insensitive. */
+export function findProviderForModel(modelId) {
+  if (!modelId) return null;
+  const needle = modelId.toLowerCase();
+  let fallback = null;
+  for (const p of providers.values()) {
+    if (!Array.isArray(p.allowedModels)) continue;
+    if (!p.allowedModels.some((m) => m.toLowerCase() === needle)) continue;
+    if (p.isActive) return p;
+    if (!fallback) fallback = p;
+  }
+  return fallback;
+}
+
+/** Return the union of all providers' allowedModels, or null if none configured. Lowercase-deduped. */
+export function getAllAllowedModels() {
+  const seen = new Set();
+  const result = [];
+  let anyConfigured = false;
+  for (const p of providers.values()) {
+    if (Array.isArray(p.allowedModels)) {
+      anyConfigured = true;
+      for (const m of p.allowedModels) {
+        const lower = m.toLowerCase();
+        if (!seen.has(lower)) {
+          seen.add(lower);
+          result.push(m);
+        }
+      }
+    }
+  }
+  return anyConfigured ? result : null;
 }
 
 /** Fetch model list from upstream /v1/models, cache and return. */

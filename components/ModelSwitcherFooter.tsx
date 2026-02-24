@@ -15,14 +15,21 @@ interface ModelSwitcherFooterProps {
   compact?: boolean;
 }
 
-/** Frontend-only display name: 2.5-series → Nano🍌, 3-pro-2k → Nano🍌 PRO 2K */
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  "gemini-3-pro-image-preview-2k": "Nano🍌 PRO 2K",
+  "gemini-3-pro-image-preview": "Nano🍌 PRO",
+  "gemini-3-pro-image": "Nano🍌 PRO",
+  "gemini-2.5-flash-image-preview": "Nano🍌",
+  "gemini-2.5-flash-image": "Nano🍌",
+  "gpt-image-1.5": "GPT Image 1.5",
+  "gpt-image-1": "GPT Image 1",
+};
+
+/** Frontend-only display name lookup (exact match, case-insensitive). */
 export const getModelDisplayName = (modelId: string): string => {
-  if (/gemini-3.*pro.*image/i.test(modelId)) return "Nano🍌 PRO 2K";
-  if (/2\.5.*image/i.test(modelId)) return "Nano🍌";
-  // fallback: strip common prefixes
-  return modelId
-    .replace(/^(gemini-|gpt-image-)/i, "")
-    .replace(/-preview.*$/, "");
+  const mapped = MODEL_DISPLAY_NAMES[modelId.toLowerCase()];
+  if (mapped) return mapped;
+  return modelId.replace(/^(gemini-|gpt-image-)/i, "").replace(/-preview.*$/, "");
 };
 
 const toPositiveInt = (raw: unknown, fallback: number): number => {
@@ -79,9 +86,16 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
     try {
       const ids = await listModels({ api: apiConfig, signal: AbortSignal.timeout(QUICK_TIMEOUT_MS) });
       if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
-      const imageModels = ids.filter((m) => /image/i.test(m) && !/^sora-/i.test(m))
-        .filter((m) => m !== "gemini-3-pro-image-preview");
-      const next = Array.from(new Set([apiConfig.defaultImageModel, ...(imageModels.length ? imageModels : ids)])).filter(Boolean);
+      const imageModels = ids.filter((m) => /image/i.test(m) && !/^sora-/i.test(m));
+      const seen = new Set<string>();
+      const next = [apiConfig.defaultImageModel, ...(imageModels.length ? imageModels : ids)]
+        .filter(Boolean)
+        .filter((m) => {
+          const lower = m.toLowerCase();
+          if (seen.has(lower)) return false;
+          seen.add(lower);
+          return true;
+        });
       setModels(next);
       modelsFailureCountRef.current = 0;
       modelsCooldownUntilRef.current = 0;
@@ -101,6 +115,17 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
   useEffect(() => {
     void loadModels({ force: true });
   }, [apiConfig.authorization, apiConfig.baseUrl, loadModels]);
+
+  // Refresh models when user switches back to this tab (cross-user sync)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void loadModels({ force: true });
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [loadModels]);
 
   useEffect(() => {
     if (pendingModel && pendingModel === apiConfig.defaultImageModel) {

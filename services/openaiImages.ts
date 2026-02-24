@@ -65,7 +65,7 @@ export interface 创建图片请求 {
  */
 export enum Model {
   Gemini25FlashImagePreview = "gemini-2.5-flash-image-preview",
-  Gemini3ProImagePreview2K = "gemini-3-pro-image-preview-2K",
+  Gemini3ProImagePreview2K = "gemini-3-pro-image-preview-2k",
   GptImage15 = "gpt-image-1.5",
 }
 
@@ -395,12 +395,35 @@ export const listModels = async (opts?: ClientRequestOptions): Promise<string[]>
   const cfg = getClientConfig(opts?.api);
   const cacheKey = normalizeBaseUrl(cfg.baseUrl || "/api");
   const now = Date.now();
+  const storageCache = readModelListStorageCache();
+
+  // Try server-side allowed-models FIRST — admin config always takes priority over cache
+  try {
+    const allowedResp = await fetch("/api/data/providers/allowed-models", {
+      credentials: "include",
+      signal: withTimeout(opts?.signal),
+    });
+    if (allowedResp.ok) {
+      const allowedJson = await allowedResp.json();
+      if (Array.isArray(allowedJson?.models) && allowedJson.models.length > 0) {
+        const ids = allowedJson.models as string[];
+        const entry: ModelListCacheEntry = { ids, expiresAt: now + modelFallbackCacheTtlMs };
+        modelListMemoryCache.set(cacheKey, entry);
+        storageCache[cacheKey] = entry;
+        writeModelListStorageCache(storageCache);
+        return ids;
+      }
+    }
+  } catch {
+    // Fall through to cache / upstream /v1/models
+  }
+
+  // No admin-configured allowed-models — use cache if available
   const mem = modelListMemoryCache.get(cacheKey);
   if (mem && mem.expiresAt > now && mem.ids.length > 0) {
     return mem.ids;
   }
 
-  const storageCache = readModelListStorageCache();
   const storageHit = storageCache[cacheKey];
   if (storageHit && storageHit.expiresAt > now && Array.isArray(storageHit.ids) && storageHit.ids.length > 0) {
     modelListMemoryCache.set(cacheKey, storageHit);
@@ -481,6 +504,7 @@ const geminiImageViaChat = async (
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            "X-Route-Model": model || "",
             ...buildAuthHeaders(cfg),
           },
           credentials: "include",
@@ -652,6 +676,7 @@ export const imagesGenerations = async (
             headers: {
               "Content-Type": "application/json",
               "X-Request-Id": requestId,
+              "X-Route-Model": model || "",
               ...buildAuthHeaders(cfg),
             },
             credentials: "include",
@@ -869,6 +894,7 @@ export const imagesEdits = async (
           method: "POST",
           headers: {
             "X-Request-Id": requestId,
+            "X-Route-Model": String(req.model || ""),
             ...buildAuthHeaders(cfg),
           },
           credentials: "include",

@@ -186,7 +186,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       const ids = await listModels({ api: apiConfig, signal: AbortSignal.timeout(QUICK_TIMEOUT_MS) });
       if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
       const imageModels = ids.filter((m) => /image/i.test(m) && !/^sora-/i.test(m));
-      const next = Array.from(new Set([apiConfig.defaultImageModel, ...(imageModels.length ? imageModels : ids)])).filter(Boolean);
+      const seen = new Set<string>();
+      const next = [apiConfig.defaultImageModel, ...(imageModels.length ? imageModels : ids)]
+        .filter(Boolean)
+        .filter((m) => {
+          const lower = m.toLowerCase();
+          if (seen.has(lower)) return false;
+          seen.add(lower);
+          return true;
+        });
       setModels(next);
       modelsFailureCountRef.current = 0;
       modelsCooldownUntilRef.current = 0;
@@ -205,6 +213,18 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   useEffect(() => {
     if (!open) return;
     void loadModelList({ force: true });
+  }, [open, loadModelList]);
+
+  // Refresh models when user switches back to this tab (cross-user sync)
+  useEffect(() => {
+    if (!open) return;
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void loadModelList({ force: true });
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [open, loadModelList]);
 
   // Clear pending when model syncs

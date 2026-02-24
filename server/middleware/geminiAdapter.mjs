@@ -418,7 +418,7 @@ function handleModels(_req, res) {
     data: [
       { id: "gemini-2.5-flash-image-preview", object: "model" },
       { id: "gemini-3-pro-image-preview", object: "model" },
-      { id: "gemini-3-pro-image-preview-2K", object: "model" },
+      { id: "gemini-3-pro-image-preview-2k", object: "model" },
     ],
   });
 }
@@ -435,10 +435,12 @@ function handleModels(_req, res) {
  */
 export function createGeminiNativeHandler(getUpstreamConfig, { recordUsage, isSuperAdmin } = {}) {
   return async (req, res, next) => {
-    const config = getUpstreamConfig();
+    // First check with X-Route-Model header for quick type check
+    const routeModel = req._routeModel;
+    const headerConfig = getUpstreamConfig(routeModel);
 
     // Not gemini-native — pass through to proxy middleware
-    if (config.type !== "gemini-native") {
+    if (headerConfig.type !== "gemini-native") {
       return next();
     }
 
@@ -458,6 +460,15 @@ export function createGeminiNativeHandler(getUpstreamConfig, { recordUsage, isSu
           code: "invalid_json",
         },
       });
+    }
+
+    // Re-resolve config using body.model for more precise routing
+    const bodyModel = body.model || routeModel;
+    const config = getUpstreamConfig(bodyModel);
+
+    // After body parse, if the final config is not gemini-native, fall through
+    if (config.type !== "gemini-native") {
+      return next();
     }
 
     try {

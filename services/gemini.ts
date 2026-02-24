@@ -41,7 +41,7 @@ export const generateModelCharacter = async (
       model: "gemini-2.5-flash-image" as any,
       n: 1,
       size: "1024x1024",
-      response_format: ResponseFormat.Url,
+      response_format: ResponseFormat.B64json,
     },
     { signal: opts?.signal, queueSource: "model-gen" }
   );

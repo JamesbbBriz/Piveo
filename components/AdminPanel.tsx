@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Icon } from './Icon';
+import { useToast } from './Toast';
 import { syncService } from '@/services/sync';
 
 type AdminTab = 'users' | 'teams' | 'projects' | 'providers' | 'templates';
@@ -686,9 +687,21 @@ const ProvidersTable: React.FC<{
   formatDate: (ts: number | null) => string;
   onRefresh: () => void;
 }> = ({ providers, onRefresh }) => {
+  const { addToast } = useToast();
   const [activating, setActivating] = useState<string | null>(null);
   const [fetchingModels, setFetchingModels] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [allowedModelsMap, setAllowedModelsMap] = useState<Record<string, string[]>>({});
+  const [savingModels, setSavingModels] = useState<string | null>(null);
+
+  // Initialize allowedModelsMap from provider data
+  useEffect(() => {
+    const map: Record<string, string[]> = {};
+    for (const p of providers) {
+      map[p.id] = Array.isArray(p.allowedModels) ? p.allowedModels : [];
+    }
+    setAllowedModelsMap(map);
+  }, [providers]);
 
   const handleActivate = async (id: string) => {
     if (!confirm('确定要激活此供应商？切换后所有用户的请求将路由到新线路。')) return;
@@ -716,6 +729,54 @@ const ProvidersTable: React.FC<{
     }
   };
 
+  const handleToggleModel = async (providerId: string, modelId: string) => {
+    const current = allowedModelsMap[providerId] || [];
+    const next = current.includes(modelId)
+      ? current.filter((m) => m !== modelId)
+      : [...current, modelId];
+    setAllowedModelsMap((prev) => ({ ...prev, [providerId]: next }));
+    setSavingModels(providerId);
+    try {
+      await syncService.updateProviderAllowedModels(providerId, next);
+    } catch (e: any) {
+      console.error('[Admin] 保存允许模型失败:', e);
+      addToast({ type: 'error', message: `模型配置保存失败：${e?.message || '未知错误'}` });
+      // Revert on failure
+      setAllowedModelsMap((prev) => ({ ...prev, [providerId]: current }));
+    } finally {
+      setSavingModels(null);
+    }
+  };
+
+  const handleSelectAll = async (providerId: string, models: string[]) => {
+    setAllowedModelsMap((prev) => ({ ...prev, [providerId]: [...models] }));
+    setSavingModels(providerId);
+    try {
+      await syncService.updateProviderAllowedModels(providerId, models);
+    } catch (e: any) {
+      console.error('[Admin] 保存允许模型失败:', e);
+      addToast({ type: 'error', message: `全选保存失败：${e?.message || '未知错误'}` });
+      onRefresh();
+    } finally {
+      setSavingModels(null);
+    }
+  };
+
+  const handleDeselectAll = async (providerId: string) => {
+    const prev = allowedModelsMap[providerId] || [];
+    setAllowedModelsMap((p) => ({ ...p, [providerId]: [] }));
+    setSavingModels(providerId);
+    try {
+      await syncService.updateProviderAllowedModels(providerId, []);
+    } catch (e: any) {
+      console.error('[Admin] 保存允许模型失败:', e);
+      addToast({ type: 'error', message: `清空选择失败：${e?.message || '未知错误'}` });
+      setAllowedModelsMap((p) => ({ ...p, [providerId]: prev }));
+    } finally {
+      setSavingModels(null);
+    }
+  };
+
   if (providers.length === 0) {
     return (
       <div className="text-center py-16 space-y-3">
@@ -730,7 +791,7 @@ const ProvidersTable: React.FC<{
   return (
     <>
       <p className="text-xs text-gray-600 mb-4">
-        供应商配置来自环境变量，如需修改 URL 或 API Key 请更新 .env.local 后重启服务。
+        供应商配置来自环境变量，如需修改 URL 或 API Key 请更新 .env.local 后重启服务。勾选模型后，用户将看到所有供应商已启用模型的并集，请求会自动路由到对应供应商。
       </p>
       <table className="w-full">
         <thead className="border-b border-dark-700">
@@ -744,77 +805,121 @@ const ProvidersTable: React.FC<{
           </tr>
         </thead>
         <tbody className="divide-y divide-dark-700/50">
-          {providers.map((p) => (
-            <React.Fragment key={p.id}>
-              <tr className={`hover:bg-dark-800/50 transition-colors ${p.isActive ? 'bg-banana-500/5' : ''}`}>
-                <TableCell>
-                  <span className="font-medium text-gray-200">{p.name}</span>
-                </TableCell>
-                <TableCell>
-                  <span className="text-xs text-gray-400 font-mono truncate max-w-[200px] inline-block">{p.baseUrl}</span>
-                </TableCell>
-                <TableCell>
-                  <span className="text-xs text-gray-500 font-mono">{p.apiKey}</span>
-                </TableCell>
-                <TableCell>
-                  <button
-                    onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
-                    className="text-xs text-gray-300 hover:text-banana-400 transition-colors"
-                  >
-                    {p.modelsCache ? p.modelsCache.length : '—'}
-                  </button>
-                </TableCell>
-                <TableCell>
-                  {p.isActive ? (
-                    <span className="inline-flex items-center gap-1 text-xs bg-banana-500/20 text-banana-400 rounded-full px-2 py-0.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-banana-400" />
-                      使用中
-                    </span>
-                  ) : (
-                    <span className="text-xs text-gray-600">未激活</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {!p.isActive && (
-                      <button
-                        onClick={() => handleActivate(p.id)}
-                        disabled={activating === p.id}
-                        className="text-xs text-green-400/70 hover:text-green-400 transition-colors disabled:opacity-50"
-                      >
-                        {activating === p.id ? '切换中...' : '激活'}
-                      </button>
-                    )}
+          {providers.map((p) => {
+            const allowed = allowedModelsMap[p.id] || [];
+            const totalCached = p.modelsCache?.length || 0;
+            const enabledCount = allowed.length;
+
+            return (
+              <React.Fragment key={p.id}>
+                <tr className={`hover:bg-dark-800/50 transition-colors ${p.isActive ? 'bg-banana-500/5' : ''}`}>
+                  <TableCell>
+                    <span className="font-medium text-gray-200">{p.name}</span>
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-xs text-gray-400 font-mono truncate max-w-[200px] inline-block">{p.baseUrl}</span>
+                  </TableCell>
+                  <TableCell>
+                    <span className="text-xs text-gray-500 font-mono">{p.apiKey}</span>
+                  </TableCell>
+                  <TableCell>
                     <button
-                      onClick={() => handleFetchModels(p.id)}
-                      disabled={fetchingModels === p.id}
-                      className="text-xs text-blue-400/70 hover:text-blue-400 transition-colors disabled:opacity-50"
+                      onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
+                      className="text-xs text-gray-300 hover:text-banana-400 transition-colors"
+                      title="点击展开模型列表"
                     >
-                      {fetchingModels === p.id ? (
-                        <><Icon name="spinner" className="animate-spin text-[10px] mr-0.5" />刷新中</>
-                      ) : '刷新模型'}
-                    </button>
-                  </div>
-                </TableCell>
-              </tr>
-              {expandedId === p.id && p.modelsCache && p.modelsCache.length > 0 && (
-                <tr className="bg-dark-800/30">
-                  <td colSpan={6} className="px-4 py-2">
-                    <div className="flex flex-wrap gap-1">
-                      {p.modelsCache.map((m: string) => (
-                        <span
-                          key={m}
-                          className="inline-block text-[10px] bg-dark-700 text-gray-400 rounded px-1.5 py-0.5 font-mono"
-                        >
-                          {m}
+                      {totalCached > 0 ? (
+                        <span>
+                          <span className={enabledCount > 0 ? 'text-banana-400' : ''}>{enabledCount}</span>
+                          <span className="text-gray-600">/{totalCached}</span>
                         </span>
-                      ))}
+                      ) : '—'}
+                      {savingModels === p.id && (
+                        <Icon name="spinner" className="animate-spin text-[10px] ml-1 inline-block" />
+                      )}
+                    </button>
+                  </TableCell>
+                  <TableCell>
+                    {p.isActive ? (
+                      <span className="inline-flex items-center gap-1 text-xs bg-banana-500/20 text-banana-400 rounded-full px-2 py-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-banana-400" />
+                        使用中
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-600">未激活</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {!p.isActive && (
+                        <button
+                          onClick={() => handleActivate(p.id)}
+                          disabled={activating === p.id}
+                          className="text-xs text-green-400/70 hover:text-green-400 transition-colors disabled:opacity-50"
+                        >
+                          {activating === p.id ? '切换中...' : '激活'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleFetchModels(p.id)}
+                        disabled={fetchingModels === p.id}
+                        className="text-xs text-blue-400/70 hover:text-blue-400 transition-colors disabled:opacity-50"
+                      >
+                        {fetchingModels === p.id ? (
+                          <><Icon name="spinner" className="animate-spin text-[10px] mr-0.5" />刷新中</>
+                        ) : '刷新模型'}
+                      </button>
                     </div>
-                  </td>
+                  </TableCell>
                 </tr>
-              )}
-            </React.Fragment>
-          ))}
+                {expandedId === p.id && p.modelsCache && p.modelsCache.length > 0 && (
+                  <tr className="bg-dark-800/30">
+                    <td colSpan={6} className="px-4 py-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-[11px] text-gray-500">可用模型</span>
+                        <button
+                          onClick={() => handleSelectAll(p.id, p.modelsCache)}
+                          className="text-[10px] text-banana-400/70 hover:text-banana-400 transition-colors"
+                        >
+                          全选
+                        </button>
+                        <span className="text-gray-700">|</span>
+                        <button
+                          onClick={() => handleDeselectAll(p.id)}
+                          className="text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+                        >
+                          全不选
+                        </button>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {p.modelsCache.map((m: string) => {
+                          const isEnabled = allowed.includes(m);
+                          return (
+                            <button
+                              key={m}
+                              onClick={() => handleToggleModel(p.id, m)}
+                              className={`inline-flex items-center gap-1 text-[10px] rounded px-2 py-1 font-mono transition-colors ${
+                                isEnabled
+                                  ? 'bg-banana-500/20 text-banana-400 border border-banana-500/30'
+                                  : 'bg-dark-700 text-gray-500 border border-dark-600 hover:border-dark-500'
+                              }`}
+                            >
+                              <span className={`w-2.5 h-2.5 rounded-sm border flex items-center justify-center ${
+                                isEnabled ? 'bg-banana-500 border-banana-500' : 'border-gray-600'
+                              }`}>
+                                {isEnabled && <Icon name="check" className="text-[7px] text-dark-900" />}
+                              </span>
+                              {m}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
         </tbody>
       </table>
     </>
