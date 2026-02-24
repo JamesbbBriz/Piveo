@@ -21,11 +21,14 @@ let storageUserId: string | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
 
 /** Set user ID to namespace the IndexedDB database. Must be called before storage operations. */
-export const setStorageUserId = (userId: string): void => {
+export const setStorageUserId = async (userId: string): Promise<void> => {
   if (storageUserId === userId) return;
-  // Close existing DB connection if switching users
+  // Close existing DB connection and await it before switching users
   if (dbPromise) {
-    dbPromise.then((db) => db.close()).catch(() => {});
+    try {
+      const db = await dbPromise;
+      db.close();
+    } catch { /* ignore */ }
     resetDbPromise();
   }
   storageUserId = userId;

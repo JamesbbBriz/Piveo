@@ -10,7 +10,6 @@
 
 import type { BatchJob } from "@/types";
 
-const FAILED_OPS_KEY = "nanobanana_failed_sync_ops";
 const FAILED_OPS_MAX = 100;
 
 interface FailedOp {
@@ -43,9 +42,27 @@ class SyncService {
     }
   }
 
+  /** Clear all internal state — call before switching users */
+  reset(): void {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.syncQueue.clear();
+    this.offlineQueue = [];
+    this.blobCache.clear();
+    this.userId = null;
+  }
+
   init(userId: string): void {
+    this.reset();
     this.userId = userId;
     this.drainFailedOps();
+  }
+
+  /** Per-user localStorage key for failed sync ops */
+  private get failedOpsKey(): string {
+    return `nanobanana_failed_sync_ops_${this.userId || "anon"}`;
   }
 
   // ——— Pull ———
@@ -276,6 +293,37 @@ class SyncService {
   async fetchAllProjects(): Promise<any[]> {
     const res = await this.fetchJson<{ projects: any[] }>("/api/data/projects?all=true");
     return res.projects ?? [];
+  }
+
+  // ——— Default Templates (admin-managed system defaults) ———
+
+  async fetchDefaultTemplates(): Promise<any[]> {
+    const res = await this.fetchJson<{ templates: any[] }>("/api/data/default-templates");
+    return res.templates ?? [];
+  }
+
+  async fetchAdminDefaultTemplates(): Promise<any[]> {
+    const res = await this.fetchJson<{ templates: any[] }>("/api/data/admin/default-templates");
+    return res.templates ?? [];
+  }
+
+  async saveAdminDefaultTemplates(templates: any[]): Promise<void> {
+    await this.fetchJson("/api/data/admin/default-templates", {
+      method: "PUT",
+      body: JSON.stringify({ templates }),
+    });
+  }
+
+  async addAdminDefaultTemplate(name: string, content: string, isFeatured?: boolean): Promise<any> {
+    const res = await this.fetchJson<{ template: any }>("/api/data/admin/default-templates", {
+      method: "POST",
+      body: JSON.stringify({ name, content, is_featured: isFeatured ? 1 : 0 }),
+    });
+    return res.template;
+  }
+
+  async deleteAdminDefaultTemplate(id: string): Promise<void> {
+    await this.fetchJson(`/api/data/admin/default-templates/${id}`, { method: "DELETE" });
   }
 
   // ——— Providers (super admin) ———
@@ -527,14 +575,14 @@ class SyncService {
 
   private persistFailedOp(key: string): void {
     try {
-      const raw = localStorage.getItem(FAILED_OPS_KEY);
+      const raw = localStorage.getItem(this.failedOpsKey);
       const ops: FailedOp[] = raw ? JSON.parse(raw) : [];
       // Deduplicate by key
       const filtered = ops.filter((op) => op.key !== key);
       filtered.push({ key, url: "", method: "", body: "", ts: Date.now() });
       // Cap at max
       const capped = filtered.slice(-FAILED_OPS_MAX);
-      localStorage.setItem(FAILED_OPS_KEY, JSON.stringify(capped));
+      localStorage.setItem(this.failedOpsKey, JSON.stringify(capped));
     } catch {
       // ignore localStorage errors
     }
@@ -542,12 +590,12 @@ class SyncService {
 
   private drainFailedOps(): void {
     try {
-      const raw = localStorage.getItem(FAILED_OPS_KEY);
+      const raw = localStorage.getItem(this.failedOpsKey);
       if (!raw) return;
       const ops: FailedOp[] = JSON.parse(raw);
       if (ops.length === 0) return;
       // Clear immediately to avoid duplicate drains
-      localStorage.removeItem(FAILED_OPS_KEY);
+      localStorage.removeItem(this.failedOpsKey);
       console.log(`[Sync] 重试 ${ops.length} 个之前失败的同步操作`);
       // We only have the key — the actual data needs to come from the next save cycle.
       // This is a signal that data may be out of sync. The next full pullAll + save cycle

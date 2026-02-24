@@ -19,7 +19,6 @@ import {
   saveTemplates,
   saveModels,
   saveProducts,
-  backupSessionsSync,
   setStorageUserId,
 } from '@/services/storage';
 import { syncService } from '@/services/sync';
@@ -40,7 +39,7 @@ import {
   SET_IS_SUPER_ADMIN,
 } from './actions';
 import type { Session, SessionSettings, BatchJob } from '@/types';
-import { DEFAULT_ASPECT_RATIO } from '@/constants';
+import { DEFAULT_ASPECT_RATIO, DEFAULT_SYSTEM_TEMPLATES } from '@/constants';
 import { getSupportedAspectRatios, getSupportedSizeForAspect } from '@/services/sizeUtils';
 import { AspectRatio, ProductScale } from '@/types';
 
@@ -274,8 +273,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let cancelled = false;
 
     const bootstrap = async () => {
-      // Namespace storage per user and initialize
-      setStorageUserId(ui.authUser!);
+      // Reset tracking refs to prevent cross-user pollution
+      prevSessionsRef.current = [];
+      latestSessionsRef.current = [];
+      prevBatchJobsRef.current = [];
+      latestBatchJobsRef.current = [];
+      pendingSessionsRef.current = null;
+      pendingBatchJobsRef.current = null;
+      if (saveSessionsTimerRef.current) {
+        clearTimeout(saveSessionsTimerRef.current);
+        saveSessionsTimerRef.current = null;
+      }
+      if (saveBatchJobsTimerRef.current) {
+        clearTimeout(saveBatchJobsTimerRef.current);
+        saveBatchJobsTimerRef.current = null;
+      }
+      setHasHydratedStorage(false);
+
+      // Namespace storage per user and initialize (await DB close before opening new)
+      await setStorageUserId(ui.authUser!);
       await initPersistentStorage();
       syncService.init(ui.authUser!);
 
@@ -292,9 +308,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (cancelled) return;
 
+      // Fetch admin-managed default templates (fallback to hardcoded constants)
+      let serverDefaultTemplates: any[] = [];
+      try {
+        serverDefaultTemplates = await syncService.fetchDefaultTemplates();
+      } catch {
+        // Fallback to hardcoded defaults if endpoint fails
+      }
+      const effectiveDefaults = serverDefaultTemplates.length > 0
+        ? serverDefaultTemplates.map((t: any) => ({ id: t.id, name: t.name, content: t.content, isFeatured: Boolean(t.is_featured) }))
+        : DEFAULT_SYSTEM_TEMPLATES;
+
       const defaultTemplate = (() => {
         if (serverData && serverData.templates.length > 0) {
           return serverData.templates[0].content ?? "";
+        }
+        if (effectiveDefaults.length > 0) {
+          return effectiveDefaults[0].content ?? "";
         }
         return "";
       })();
@@ -303,13 +333,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // ——— Server-first path: dispatch server data ———
         console.log("[Bootstrap] 使用服务端数据");
 
-        // Templates
+        // Templates: merge admin defaults (first) + user personal templates
         const mappedTemplates = serverData.templates.length > 0
           ? mapServerTemplates(serverData.templates)
           : [];
-        if (mappedTemplates.length > 0) {
-          libraryDispatch({ type: SET_TEMPLATES, payload: mappedTemplates });
-        }
+        const defaultIds = new Set(effectiveDefaults.map((d: any) => d.id));
+        const userOnlyTemplates = mappedTemplates.filter((t: any) => !defaultIds.has(t.id));
+        const mergedTemplates = [...effectiveDefaults, ...userOnlyTemplates];
+        libraryDispatch({ type: SET_TEMPLATES, payload: mergedTemplates });
 
         // Models
         const mappedModels = serverData.models.length > 0
@@ -333,7 +364,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }
 
         // Sessions (projects → sessions)
-        const resolvedDefaultTemplate = mappedTemplates.length > 0 ? mappedTemplates[0].content : defaultTemplate;
+        const resolvedDefaultTemplate = mergedTemplates.length > 0 ? mergedTemplates[0].content : defaultTemplate;
         if (serverData.projects.length > 0) {
           const mappedSessions = mapServerProjectsToSessions(serverData.projects, resolvedDefaultTemplate);
           const normalized = normalizeSessions(mappedSessions, resolvedDefaultTemplate);
@@ -423,10 +454,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (serverData.templates.length === 0) {
           const localTemplates = await loadTemplates();
           if (localTemplates.length > 0) {
-            libraryDispatch({ type: SET_TEMPLATES, payload: localTemplates });
+            // Merge admin defaults + local templates, push local to server
+            const localDefaultIds = new Set(effectiveDefaults.map((d: any) => d.id));
+            const localUserOnly = localTemplates.filter((t: any) => !localDefaultIds.has(t.id));
+            libraryDispatch({ type: SET_TEMPLATES, payload: [...effectiveDefaults, ...localUserOnly] });
             console.log("[Sync] 服务端无模板数据，推送本地模板到服务端");
-            syncService.saveTemplates(localTemplates);
+            syncService.saveTemplates(localUserOnly);
           }
+          // effectiveDefaults already merged via mergedTemplates above
         }
       } else {
         // ——— Fallback path: load from IndexedDB ———
@@ -441,17 +476,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ]);
         if (cancelled) return;
 
-        libraryDispatch({ type: SET_TEMPLATES, payload: loadedTemplates });
+        // Merge admin defaults + local templates (dedup by id)
+        const localDefaultIds = new Set(effectiveDefaults.map((d: any) => d.id));
+        const localUserOnly = loadedTemplates.filter((t: any) => !localDefaultIds.has(t.id));
+        const resolvedTemplates = [...effectiveDefaults, ...localUserOnly];
+        libraryDispatch({ type: SET_TEMPLATES, payload: resolvedTemplates });
         libraryDispatch({ type: SET_MODELS, payload: loadedModels });
         libraryDispatch({ type: SET_PRODUCTS, payload: loadedProducts });
 
         if (loadedSessions.length > 0) {
-          const fallbackDefaultTemplate = loadedTemplates.length > 0 ? loadedTemplates[0].content : "";
+          const fallbackDefaultTemplate = resolvedTemplates.length > 0 ? resolvedTemplates[0].content : "";
           const normalized = normalizeSessions(loadedSessions, fallbackDefaultTemplate);
           projectDispatch({ type: SET_SESSIONS, payload: normalized });
           projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: normalized[0].id });
         } else {
-          const fallbackDefaultTemplate = loadedTemplates.length > 0 ? loadedTemplates[0].content : '';
+          const fallbackDefaultTemplate = resolvedTemplates.length > 0 ? resolvedTemplates[0].content : '';
           const prefs = loadDefaultPreferences();
           const ar = prefs.aspectRatio ?? DEFAULT_ASPECT_RATIO;
           const newSession: Session = {
@@ -574,12 +613,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         clearTimeout(saveSessionsTimerRef.current);
         saveSessionsTimerRef.current = null;
       }
-      const sessionsToFlush = pendingSessionsRef.current || latestSessionsRef.current;
       if (pendingSessionsRef.current) {
         void saveSessions(pendingSessionsRef.current);
         pendingSessionsRef.current = null;
       }
-      backupSessionsSync(sessionsToFlush);
       if (saveBatchJobsTimerRef.current) {
         clearTimeout(saveBatchJobsTimerRef.current);
         saveBatchJobsTimerRef.current = null;
