@@ -65,7 +65,6 @@ export interface 创建图片请求 {
  */
 export enum Model {
   Gemini25FlashImagePreview = "gemini-2.5-flash-image-preview",
-  Gemini3ProImagePreview = "gemini-3-pro-image-preview",
   Gemini3ProImagePreview2K = "gemini-3-pro-image-preview-2K",
   GptImage15 = "gpt-image-1.5",
 }
@@ -323,7 +322,6 @@ const chooseFallbackModel = (current: string, available: string[]): string | nul
     "gpt-image-1.5",
     "gpt-image-1",
     "gemini-2.5-flash-image-preview",
-    "gemini-3-pro-image-preview",
   ];
 
   for (const preferred of preferredOrder) {
@@ -492,6 +490,7 @@ const geminiImageViaChat = async (
               ...(req.systemPrompt ? [{ role: "system", content: req.systemPrompt }] : []),
               { role: "user", content },
             ],
+            ...(String(size) !== Size.The1024X1024 && { size: String(size) }),
             ...(sizeToAspectRatio(String(size)) && {
               extra_body: {
                 google: { image_config: { aspect_ratio: sizeToAspectRatio(String(size)) } },

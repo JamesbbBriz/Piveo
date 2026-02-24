@@ -15,10 +15,9 @@ interface ModelSwitcherFooterProps {
   compact?: boolean;
 }
 
-/** Frontend-only display name: 2.5-series → Nano🍌, 3-pro → Nano🍌 PRO, 3-pro-2k → Nano🍌 PRO 2K */
+/** Frontend-only display name: 2.5-series → Nano🍌, 3-pro-2k → Nano🍌 PRO 2K */
 export const getModelDisplayName = (modelId: string): string => {
-  if (/gemini-3.*pro.*image.*2k/i.test(modelId)) return "Nano🍌 PRO 2K";
-  if (/gemini-3.*pro.*image/i.test(modelId)) return "Nano🍌 PRO";
+  if (/gemini-3.*pro.*image/i.test(modelId)) return "Nano🍌 PRO 2K";
   if (/2\.5.*image/i.test(modelId)) return "Nano🍌";
   // fallback: strip common prefixes
   return modelId
@@ -80,7 +79,8 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
     try {
       const ids = await listModels({ api: apiConfig, signal: AbortSignal.timeout(QUICK_TIMEOUT_MS) });
       if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
-      const imageModels = ids.filter((m) => /image/i.test(m) && !/^sora-/i.test(m));
+      const imageModels = ids.filter((m) => /image/i.test(m) && !/^sora-/i.test(m))
+        .filter((m) => m !== "gemini-3-pro-image-preview");
       const next = Array.from(new Set([apiConfig.defaultImageModel, ...(imageModels.length ? imageModels : ids)])).filter(Boolean);
       setModels(next);
       modelsFailureCountRef.current = 0;

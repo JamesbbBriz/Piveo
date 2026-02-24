@@ -43,14 +43,9 @@ const SUPPORTED_ASPECT_RATIO_ORDER: AspectRatio[] = [
 
 export const getSupportedAspectRatios = (): AspectRatio[] => SUPPORTED_ASPECT_RATIO_ORDER;
 
-export const getSupportedSizeForAspect = (aspect: AspectRatio | string, model?: string): string => {
-  // 判断是否为 Gemini 3 Pro 模型
-  const isGemini3Pro = model && /gemini-3-pro-image/i.test(model);
-
-  // 根据模型选择对应的分辨率映射
-  const sizeMap = isGemini3Pro ? GEMINI_PRO_IMAGE_2K_SIZE_BY_ASPECT : GEMINI_FLASH_IMAGE_SIZE_BY_ASPECT;
-
-  return sizeMap[String(aspect)] || sizeMap["1:1"];
+export const getSupportedSizeForAspect = (aspect: AspectRatio | string, _model?: string): string => {
+  // All models default to 2K resolution
+  return GEMINI_PRO_IMAGE_2K_SIZE_BY_ASPECT[String(aspect)] || GEMINI_PRO_IMAGE_2K_SIZE_BY_ASPECT["1:1"];
 };
 
 export const isSupportedAspectRatio = (aspect: unknown): aspect is AspectRatio => {
