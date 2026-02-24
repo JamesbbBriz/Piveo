@@ -93,6 +93,7 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
         role: 'model',
         imageUrl: result.imageUrl,
         text: result.text,
+        _rawContent: result._rawContent,
       };
       setMessages((prev) => [...prev, modelMsg]);
     } catch (err: unknown) {

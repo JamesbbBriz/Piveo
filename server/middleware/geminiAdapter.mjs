@@ -130,6 +130,8 @@ function convertMessages(messages) {
           } else {
             parts.push({ text: part.text });
           }
+        } else if (part.type === "_thought_signature" && part.thought_signature) {
+          parts.push({ thought: true, thoughtSignature: part.thought_signature });
         } else if (part.type === "image_url" && part.image_url?.url) {
           const parsed = parseDataUrl(part.image_url.url);
           if (parsed) {
@@ -164,16 +166,16 @@ function buildChatCompletionsBody(body) {
   const contents = convertMessages(body.messages || []);
 
   const generationConfig = {
-    responseModalities: ["Text", "Image"],
+    responseModalities: ["TEXT", "IMAGE"],
   };
 
   // Aspect ratio: prefer extra_body.google.image_config.aspect_ratio, fallback to size
   const explicitAr = body.extra_body?.google?.image_config?.aspect_ratio;
   if (explicitAr) {
-    generationConfig.aspectRatio = explicitAr;
+    generationConfig.imageConfig = { aspectRatio: explicitAr };
   } else if (body.size) {
     const ar = sizeToAspectRatio(body.size);
-    if (ar) generationConfig.aspectRatio = ar;
+    if (ar) generationConfig.imageConfig = { aspectRatio: ar };
   }
 
   return { contents, generationConfig };
@@ -210,12 +212,12 @@ function buildImageGenerationsBody(body) {
   const contents = [{ role: "user", parts }];
 
   const generationConfig = {
-    responseModalities: ["Text", "Image"],
+    responseModalities: ["TEXT", "IMAGE"],
   };
 
   if (body.size) {
     const ar = sizeToAspectRatio(body.size);
-    if (ar) generationConfig.aspectRatio = ar;
+    if (ar) generationConfig.imageConfig = { aspectRatio: ar };
   }
 
   return { contents, generationConfig };
@@ -236,12 +238,24 @@ function extractParts(geminiResp) {
 
 /**
  * Convert Gemini response to OpenAI chat/completions format.
+ * Preserves thought signatures for multi-turn continuity.
  */
 function toChatCompletionResponse(geminiResp) {
-  const parts = extractParts(geminiResp);
+  const candidate = geminiResp?.candidates?.[0];
+  const allParts = candidate?.content?.parts || [];
 
   const contentParts = [];
-  for (const p of parts) {
+  for (const p of allParts) {
+    if (p.thought) {
+      // Include thought signature for multi-turn continuity (not displayed)
+      if (p.thoughtSignature) {
+        contentParts.push({
+          type: "_thought_signature",
+          thought_signature: p.thoughtSignature,
+        });
+      }
+      continue;
+    }
     if (p.text !== undefined) {
       contentParts.push({ type: "text", text: p.text });
     } else if (p.inlineData) {
@@ -319,7 +333,7 @@ async function callGemini(config, model, geminiBody) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(geminiBody),
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(model.includes("pro") ? 180_000 : 90_000),
   });
 
   const responseBody = await resp.json();
@@ -358,7 +372,8 @@ async function callGemini(config, model, geminiBody) {
 // ---------------------------------------------------------------------------
 
 async function handleChatCompletions(req, res, config, body) {
-  const model = body.model || "gemini-2.5-flash-image-preview";
+  let model = body.model || "gemini-2.5-flash-image";
+  model = model.replace(/-2k$/i, "");
   const geminiBody = buildChatCompletionsBody(body);
 
   console.info(`${LOG} ${req.requestId || "-"} chat/completions model=${model}`);
@@ -370,7 +385,8 @@ async function handleChatCompletions(req, res, config, body) {
 }
 
 async function handleImageGenerations(req, res, config, body) {
-  const model = body.model || "gemini-2.5-flash-image-preview";
+  let model = body.model || "gemini-2.5-flash-image";
+  model = model.replace(/-2k$/i, "");
   const n = Math.max(1, Number(body.n) || 1);
 
   console.info(
@@ -416,7 +432,7 @@ function handleModels(_req, res) {
   return res.json({
     object: "list",
     data: [
-      { id: "gemini-2.5-flash-image-preview", object: "model" },
+      { id: "gemini-2.5-flash-image", object: "model" },
       { id: "gemini-3-pro-image-preview", object: "model" },
       { id: "gemini-3-pro-image-preview-2k", object: "model" },
     ],

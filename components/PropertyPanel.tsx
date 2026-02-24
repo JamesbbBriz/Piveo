@@ -47,18 +47,8 @@ const ImageDetailView: React.FC<{
   onBack: () => void;
   onAction: (action: string) => void;
 }> = ({ image, onBack, onAction }) => {
-  const [promptCopied, setPromptCopied] = useState(false);
-
   const createdDate = new Date(image.createdAt);
   const dateStr = `${String(createdDate.getMonth() + 1).padStart(2, '0')}-${String(createdDate.getDate()).padStart(2, '0')} ${String(createdDate.getHours()).padStart(2, '0')}:${String(createdDate.getMinutes()).padStart(2, '0')}`;
-
-  const handleCopyPrompt = () => {
-    if (!image.prompt) return;
-    navigator.clipboard.writeText(image.prompt).then(() => {
-      setPromptCopied(true);
-      setTimeout(() => setPromptCopied(false), 2000);
-    }).catch(() => {});
-  };
 
   return (
     <div className="flex flex-col h-full overflow-y-auto custom-scrollbar bg-dark-900">
@@ -94,19 +84,6 @@ const ImageDetailView: React.FC<{
         )}
       </div>
 
-      {/* Primary action: batch from image */}
-      {image.source !== 'batch' && (
-        <div className="px-4 pb-2">
-          <button
-            onClick={() => onAction('batch-from-image')}
-            className="w-full h-9 rounded-lg border border-banana-500 bg-banana-500/20 text-xs text-banana-300 font-semibold hover:bg-banana-500/30 transition-colors flex items-center justify-center gap-2"
-          >
-            <Icon name="layer-group" className="text-[11px]" />
-            一键出套图
-          </button>
-        </div>
-      )}
-
       {/* Refine button - always available */}
       <div className="px-4 pb-2">
         <button
@@ -118,9 +95,20 @@ const ImageDetailView: React.FC<{
         </button>
       </div>
 
+      {/* Batch from image - always available */}
+      <div className="px-4 pb-2">
+        <button
+          onClick={() => onAction('batch-from-image')}
+          className="w-full h-9 rounded-lg border border-banana-500 bg-banana-500/20 text-xs text-banana-300 font-semibold hover:bg-banana-500/30 transition-colors flex items-center justify-center gap-2"
+        >
+          <Icon name="layer-group" className="text-[11px]" />
+          一键出套图
+        </button>
+      </div>
+
       {/* Quick actions */}
       <div className="px-4 pb-3">
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className="grid grid-cols-4 gap-1.5">
           <button
             onClick={() => onAction('download')}
             className="h-8 rounded-md border border-dark-600 bg-dark-800 text-[11px] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors flex items-center justify-center gap-1.5"
@@ -148,20 +136,6 @@ const ImageDetailView: React.FC<{
           >
             <Icon name="crosshairs" className="text-[10px] text-gray-500" />
             参考图
-          </button>
-          <button
-            onClick={() => onAction('preview')}
-            className="h-8 rounded-md border border-dark-600 bg-dark-800 text-[11px] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors flex items-center justify-center gap-1.5"
-          >
-            <Icon name="eye" className="text-[10px] text-gray-500" />
-            大图
-          </button>
-          <button
-            onClick={handleCopyPrompt}
-            className="h-8 rounded-md border border-dark-600 bg-dark-800 text-[11px] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors flex items-center justify-center gap-1.5"
-          >
-            <Icon name="copy" className="text-[10px] text-gray-500" />
-            {promptCopied ? '已复制' : '复制词'}
           </button>
         </div>
       </div>

@@ -4,6 +4,7 @@ export interface RefineMessage {
   role: 'user' | 'model';
   text?: string;
   imageUrl?: string;  // data URL
+  _rawContent?: unknown[];  // Full content array from model response for multi-turn
 }
 
 interface RefineSettings {
@@ -15,6 +16,7 @@ interface RefineSettings {
 interface RefineResult {
   imageUrl: string;
   text?: string;
+  _rawContent?: unknown[];
 }
 
 /**
@@ -54,8 +56,10 @@ export async function sendRefineMessage(
         openaiMessages.push({ role: 'user', content: msg.text || '' });
       }
     } else {
-      // model role → assistant
-      if (msg.imageUrl) {
+      // model role → assistant: prefer raw content (preserves thought signatures)
+      if (msg._rawContent) {
+        openaiMessages.push({ role: 'assistant', content: msg._rawContent as any });
+      } else if (msg.imageUrl) {
         openaiMessages.push({
           role: 'assistant',
           content: [
@@ -134,5 +138,5 @@ export async function sendRefineMessage(
     throw new Error(text || 'Model did not return an image');
   }
 
-  return { imageUrl, text: text || undefined };
+  return { imageUrl, text: text || undefined, _rawContent: Array.isArray(content) ? content : undefined };
 }
