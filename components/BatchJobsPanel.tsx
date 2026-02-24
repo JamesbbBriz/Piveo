@@ -140,7 +140,6 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
     saveDownloadOptions(downloadOptions);
     await downloadImageWithFormat(pendingDownload.version.imageUrl, {
       basename: `topseller-batch-${pendingDownload.version.id}`,
-      format: downloadOptions.format,
       quality: downloadOptions.quality,
     });
     setPendingDownload(null);

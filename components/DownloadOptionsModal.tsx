@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Icon } from "./Icon";
-import { DownloadFormat, DownloadOptions, fetchImageBlob, blobToFormat } from "../services/imageDownload";
+import { DownloadOptions, fetchImageBlob, blobToFormat } from "../services/imageDownload";
 
 interface DownloadOptionsModalProps {
   isOpen: boolean;
@@ -12,11 +12,6 @@ interface DownloadOptionsModalProps {
   confirmLabel?: string;
   imageUrl?: string;
 }
-
-const formatLabel = (format: DownloadFormat): string => {
-  if (format === "jpg") return "JPG";
-  return "WEBP";
-};
 
 const formatSize = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`;
@@ -58,7 +53,7 @@ export const DownloadOptionsModal: React.FC<DownloadOptionsModalProps> = ({
     return () => { cancelled = true; };
   }, [isOpen, imageUrl]);
 
-  // Compute estimated size when format/quality/sourceBlob changes
+  // Compute estimated size when quality/sourceBlob changes
   useEffect(() => {
     if (!sourceBlob) {
       setEstimatedSize(null);
@@ -69,7 +64,7 @@ export const DownloadOptionsModal: React.FC<DownloadOptionsModalProps> = ({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       let cancelled = false;
-      blobToFormat(sourceBlob, options.format, options.quality)
+      blobToFormat(sourceBlob, "webp", options.quality)
         .then((out) => {
           if (!cancelled) {
             setEstimatedSize(out.size);
@@ -88,7 +83,7 @@ export const DownloadOptionsModal: React.FC<DownloadOptionsModalProps> = ({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [sourceBlob, options.format, options.quality]);
+  }, [sourceBlob, options.quality]);
 
   if (!isOpen) return null;
 
@@ -103,45 +98,19 @@ export const DownloadOptionsModal: React.FC<DownloadOptionsModalProps> = ({
         </div>
         <div className="p-4 space-y-4">
           <div>
-            <div className="text-xs text-gray-400 mb-2">格式</div>
-            <div className="flex gap-2">
-              {(["jpg", "webp"] as DownloadFormat[]).map((format) => (
-                <button
-                  key={format}
-                  onClick={() =>
-                    onChange({
-                      format,
-                      quality: format === "webp" ? 100 : options.quality,
-                    })
-                  }
-                  className={`flex-1 h-9 rounded-md border text-xs font-semibold transition-colors ${
-                    options.format === format
-                      ? "border-banana-500 bg-banana-500/10 text-banana-400"
-                      : "border-dark-600 bg-dark-900 text-gray-300 hover:border-gray-500"
-                  }`}
-                >
-                  {formatLabel(format)}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
             <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
-              <span>质量</span>
+              <span>WEBP 质量</span>
               <span className="text-gray-200 font-semibold">{options.quality}</span>
             </div>
             <input
               type="range"
               min={70}
-              max={100}
+              max={99}
               value={options.quality}
               onChange={(e) => onChange({ ...options, quality: Number(e.target.value) })}
               className="w-full accent-banana-500"
             />
-            {options.format === "webp" && (
-              <div className="mt-1 text-[11px] text-gray-500">WEBP 建议 100 以保留细节。</div>
-            )}
+            <div className="mt-1 text-[11px] text-gray-500">建议 99 以保留最佳细节，降低可减小文件体积。</div>
           </div>
 
           {imageUrl && (

@@ -27,7 +27,6 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ imageUrl, 
     try {
       await downloadImageWithFormat(imageUrl, {
         basename: `topseller-preview-${Date.now()}`,
-        format: downloadOptions.format,
         quality: downloadOptions.quality,
       });
       setDownloadOpen(false);

@@ -1,58 +1,39 @@
 import { dataUrlToBlob } from "./imageData";
 
-export type DownloadFormat = "png" | "jpg" | "webp";
+export type DownloadFormat = "webp";
 export interface DownloadOptions {
   format: DownloadFormat;
-  quality: number; // 70-100
+  quality: number; // 70-99
 }
 
-const DOWNLOAD_FORMAT_KEY = "topseller_download_format_v1";
 const DOWNLOAD_QUALITY_KEY = "topseller_download_quality_v1";
-
-const normalizeFormat = (raw: string): DownloadFormat | null => {
-  const v = String(raw || "").trim().toLowerCase();
-  if (v === "jpg" || v === "jpeg") return "jpg";
-  if (v === "webp") return "webp";
-  if (v === "png") return "png";
-  return null;
-};
 
 const normalizeQuality = (raw: unknown, fallback: number): number => {
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
   const v = Math.round(n);
-  return Math.min(100, Math.max(70, v));
-};
-
-const loadPreferredFormat = (): DownloadFormat => {
-  try {
-    const raw = localStorage.getItem(DOWNLOAD_FORMAT_KEY);
-    return normalizeFormat(raw || "") || "jpg";
-  } catch {
-    return "jpg";
-  }
+  return Math.min(99, Math.max(70, v));
 };
 
 const loadPreferredQuality = (): number => {
   try {
     const raw = localStorage.getItem(DOWNLOAD_QUALITY_KEY);
-    return normalizeQuality(raw ?? "", 100);
+    return normalizeQuality(raw ?? "", 99);
   } catch {
-    return 100;
+    return 99;
   }
 };
 
 const savePreferredOptions = (options: DownloadOptions) => {
   try {
-    localStorage.setItem(DOWNLOAD_FORMAT_KEY, options.format);
-    localStorage.setItem(DOWNLOAD_QUALITY_KEY, String(normalizeQuality(options.quality, 100)));
+    localStorage.setItem(DOWNLOAD_QUALITY_KEY, String(normalizeQuality(options.quality, 99)));
   } catch {
     // ignore
   }
 };
 
 export const loadDownloadOptions = (): DownloadOptions => ({
-  format: loadPreferredFormat(),
+  format: "webp",
   quality: loadPreferredQuality(),
 });
 
@@ -79,14 +60,7 @@ const readImageDimensions = (blob: Blob): Promise<{ width: number; height: numbe
     img.src = url;
   });
 
-export const blobToFormat = async (blob: Blob, format: DownloadFormat, quality?: number): Promise<Blob> => {
-  const targetType =
-    format === "jpg" ? "image/jpeg" : format === "webp" ? "image/webp" : "image/png";
-  const sourceType = String(blob.type || "").split(";")[0].trim().toLowerCase();
-  if (sourceType === targetType && format === "png") {
-    return blob;
-  }
-
+export const blobToFormat = async (blob: Blob, _format: DownloadFormat, quality?: number): Promise<Blob> => {
   const { width, height, img, url } = await readImageDimensions(blob);
   const canvas = document.createElement("canvas");
   try {
@@ -94,15 +68,10 @@ export const blobToFormat = async (blob: Blob, format: DownloadFormat, quality?:
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("无法创建画布上下文");
-    if (format === "jpg") {
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, width, height);
-    }
     ctx.drawImage(img, 0, 0, width, height);
-    const encodeQuality =
-      format === "png" ? undefined : normalizeQuality(quality, 100) / 100;
+    const encodeQuality = normalizeQuality(quality, 99) / 100;
     const out = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, targetType, encodeQuality)
+      canvas.toBlob(resolve, "image/webp", encodeQuality)
     );
     if (!out) throw new Error("图片格式转换失败");
     return out;
@@ -139,13 +108,12 @@ const triggerDownload = (blob: Blob, filename: string) => {
 
 export const downloadImageWithFormat = async (
   imageUrl: string,
-  opts?: { basename?: string; format?: DownloadFormat; quality?: number }
+  opts?: { basename?: string; quality?: number }
 ) => {
   const preferred = loadDownloadOptions();
-  const format = opts?.format || preferred.format;
-  const quality = format === "webp" ? normalizeQuality(opts?.quality ?? preferred.quality, 100) : normalizeQuality(opts?.quality ?? preferred.quality, 100);
+  const quality = normalizeQuality(opts?.quality ?? preferred.quality, 99);
   const base = (opts?.basename || `topseller-${Date.now()}`).replace(/\.[^.]+$/, "");
   const srcBlob = await fetchImageBlob(imageUrl);
-  const outBlob = await blobToFormat(srcBlob, format, quality);
-  triggerDownload(outBlob, `${base}.${format}`);
+  const outBlob = await blobToFormat(srcBlob, "webp", quality);
+  triggerDownload(outBlob, `${base}.webp`);
 };

@@ -146,7 +146,6 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
     try {
       await downloadImageWithFormat(a.url, {
         basename: `topseller-${a.id}`,
-        format: downloadOptions.format,
         quality: downloadOptions.quality,
       });
     } catch (e) {
