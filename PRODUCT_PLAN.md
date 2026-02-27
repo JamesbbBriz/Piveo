@@ -862,7 +862,7 @@ function isAuthenticated(): boolean {
   - [ ] Cloudflare R2 配置生产 bucket
   - [ ] 配置自定义域名 CDN
 - [ ] 回归测试：
-  - [ ] 创建套图任务 → 同步到云端
+  - [ ] 创建矩阵任务 → 同步到云端
   - [ ] 跨设备登录 → 数据一致
   - [ ] 离线使用 → 上线后同步
 
