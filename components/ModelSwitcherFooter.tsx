@@ -25,6 +25,9 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
   "gpt-image-1": "GPT Image 1",
 };
 
+// These models are always shown regardless of server-returned list or allowed-models config.
+const PINNED_MODELS = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"];
+
 /** Frontend-only display name lookup (exact match, case-insensitive). */
 export const getModelDisplayName = (modelId: string): string => {
   const mapped = MODEL_DISPLAY_NAMES[modelId.toLowerCase()];
@@ -88,7 +91,7 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
       if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
       const imageModels = ids.filter((m) => /image/i.test(m) && !/^sora-/i.test(m));
       const seen = new Set<string>();
-      const next = [apiConfig.defaultImageModel, ...(imageModels.length ? imageModels : ids)]
+      const next = [apiConfig.defaultImageModel, ...PINNED_MODELS, ...(imageModels.length ? imageModels : ids)]
         .filter(Boolean)
         .filter((m) => {
           const lower = m.toLowerCase();
@@ -101,7 +104,7 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
       modelsCooldownUntilRef.current = 0;
     } catch {
       if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
-      setModels((prev) => (prev.length ? prev : [apiConfig.defaultImageModel]));
+      setModels((prev) => (prev.length ? prev : [apiConfig.defaultImageModel, ...PINNED_MODELS]));
       modelsFailureCountRef.current += 1;
       const idx = Math.min(modelsFailureCountRef.current - 1, FAILURE_BACKOFFS_MS.length - 1);
       modelsCooldownUntilRef.current = Date.now() + FAILURE_BACKOFFS_MS[idx];
