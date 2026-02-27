@@ -1,0 +1,50 @@
+{
+  "note": "Asset generation skipped per user request. Prompts saved for manual generation.",
+  "assets": [
+    {
+      "name": "Hero Banner - 独立站首页",
+      "type": "hero_banner",
+      "aspect_ratio": "16:9",
+      "filename": "hero_banner_homepage.png",
+      "description": "展示产品从白底图到品牌大片的转化过程，左边是普通白底产品图，右边是生成的品牌生活方式图，中间有一个发光的转化箭头",
+      "prompt": "Split-screen product photography transformation: left side shows a plain white background product photo of a minimalist leather handbag, right side shows the same handbag in a luxurious lifestyle setting with soft golden lighting, marble table, and eucalyptus leaves. A glowing gradient transition connects both sides. Modern, clean design with dark background. Professional marketing banner style, 16:9 aspect ratio.",
+      "usage": "独立站首页 Hero、落地页头图"
+    },
+    {
+      "name": "Before/After 对比图 - 社媒传播",
+      "type": "social_square",
+      "aspect_ratio": "1:1",
+      "filename": "before_after_social.png",
+      "description": "经典的 Before/After 对比，左边白底工厂图，右边品牌大片，病毒传播核心素材",
+      "prompt": "Before and After comparison image: Left panel labeled 'BEFORE' shows a basic white background product photo of skincare bottles, looking flat and generic. Right panel labeled 'AFTER' shows the same products in a spa-like luxury setting with soft lighting, fresh flowers, water droplets, and warm tones. Clean dividing line in the middle. Square format for Instagram/social media.",
+      "usage": "Instagram/小红书/TikTok 封面"
+    },
+    {
+      "name": "多平台适配展示图",
+      "type": "social_square",
+      "aspect_ratio": "1:1",
+      "filename": "multi_platform_showcase.png",
+      "description": "展示一张产品图如何自动适配多个平台的不同尺寸和构图",
+      "prompt": "Product photography showcase displaying one original product photo (wireless headphones) being automatically adapted into 5 different platform formats: Instagram square (1:1), TikTok vertical (9:16), Pinterest tall (2:3), Shopify hero (16:9), and Xiaohongshu (3:4). Each format shows different composition and styling while maintaining the same brand aesthetic. Dark background with subtle grid lines connecting the formats. Modern tech UI style.",
+      "usage": "功能介绍、独立站产品页"
+    },
+    {
+      "name": "Brand Kit 概念图",
+      "type": "social_portrait",
+      "aspect_ratio": "4:5",
+      "filename": "brand_kit_concept.png",
+      "description": "展示 Brand Kit 如何提取品牌 DNA 并应用到所有生成中",
+      "prompt": "Conceptual illustration of a Brand DNA system: center shows a glowing brand profile card with color palette (warm terracotta and sage green), mood keywords (minimal, organic, warm), and style attributes (soft lighting, natural textures). Radiating outward are 6 generated product images that all share the same visual DNA despite showing different products (candle, soap, tote bag, ceramic cup, linen scarf, skincare bottle). Each image has consistent warm lighting, natural backgrounds, and organic props. Clean, modern UI design with dark background.",
+      "usage": "小红书笔记、Instagram carousel"
+    },
+    {
+      "name": "成本对比信息图",
+      "type": "social_portrait",
+      "aspect_ratio": "4:5",
+      "filename": "cost_comparison_infographic.png",
+      "description": "对比传统摄影 vs TopSeller Studio 的成本，数据驱动",
+      "prompt": "Clean infographic comparing traditional product photography costs vs AI-powered TopSeller Studio. Left column (red/warm): Professional shoot ¥3,000+/session, Freelance designer ¥2,000/month, 3-5 day turnaround, inconsistent across shoots. Right column (green/cool): TopSeller Studio ¥99/month unlimited, instant generation, brand consistency guaranteed, all platforms covered. Large savings callout: 'Save 90%+ on visual content production'. Minimalist design, dark background, Chinese text.",
+      "usage": "小红书/微信/独立站定价页"
+    }
+  ]
+}

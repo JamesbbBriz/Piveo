@@ -1,0 +1,63 @@
+{
+  "threads": [
+    {
+      "title": "AI product photography costs vs traditional photography for ecommerce",
+      "source": "r/ecommerce + Entrepreneur.com",
+      "score": 0,
+      "text": "Most entrepreneurs simply can't afford the investment required to compete visually. Products with lifestyle imagery see 22-30% higher conversion rates compared to plain product shots. Large brands have the budgets to produce hundreds of lifestyle shots, seasonal variations, and platform-specific assets, while small and mid-sized sellers are often stuck with basic white-background photos that fail to tell a compelling brand story. A lifestyle shoot for 45 products would cost USD 35,000-40,000.",
+      "comments": [
+        {"text": "I can't afford professional photography for my store. Each product shoot costs me $500-1000 and I have over 200 SKUs. It's impossible to keep up.", "score": 45},
+        {"text": "The problem isn't just cost - it's time. By the time I get photos back from the photographer, the trend has already moved on.", "score": 32},
+        {"text": "I wish there was something between crappy phone photos and expensive professional shoots. AI is getting there but nothing maintains my brand look consistently.", "score": 28}
+      ]
+    },
+    {
+      "title": "Brand consistency problems with AI generated product images",
+      "source": "r/shopify + r/ecommerce",
+      "score": 0,
+      "text": "AI image tools are getting popular but brand consistency is a major concern. Users report: 'I refuse to buy anything that uses AI for stock photos. What I got wasn't really what was pictured.' and 'The client is outraged because the real product looks nothing like the AI images.' If you push AI too far, you may start seeing high return rates, negative reviews or a loss of customers. The goal should be to enhance and not mislead.",
+      "comments": [
+        {"text": "The biggest issue with Midjourney for product photos is there's no brand consistency. Every generation looks completely different. I need my store to have a cohesive look.", "score": 56},
+        {"text": "I tried Pebblely and Flair.ai - they're great for one-off backgrounds but when I need 50 product shots that look like they belong together, it falls apart.", "score": 41},
+        {"text": "Canva templates give consistency but they look generic. Everyone's store looks the same. I want something that's uniquely my brand.", "score": 37},
+        {"text": "Would love a tool that learns my brand aesthetic and applies it to every new product I add. Currently I spend hours editing each photo to match.", "score": 33}
+      ]
+    },
+    {
+      "title": "DTC brand social media content creation is a nightmare",
+      "source": "r/DTC + r/socialmediamarketing",
+      "score": 0,
+      "text": "Sourcing fresh, authentic visuals is a core bottleneck for DTC brands. The challenge is to create enough content to meet demand without sacrificing quality. When quality is sacrificed for quantity, value dilutes and audiences disengage. Rising ad costs and creative demands make it worse - customer acquisition costs have skyrocketed by 60% over the past five years.",
+      "comments": [
+        {"text": "I'm a one-person marketing team for a DTC skincare brand. I need to post on Instagram, TikTok, Pinterest, and Facebook daily. That's 4 unique pieces of content PER DAY. It's unsustainable without spending thousands on freelancers.", "score": 67},
+        {"text": "The worst part is adapting content for each platform. What works on Instagram doesn't work on Pinterest. Resizing isn't enough - you need to completely rethink the composition.", "score": 44},
+        {"text": "I spend more time creating social media assets than actually running my business. If there was a tool that could generate on-brand content for all platforms from a single product photo, I'd pay $100/month easily.", "score": 52},
+        {"text": "We tried hiring a VA to create social content. Quality was terrible. Hired a freelance designer at $50/hour - great quality but $2000/month for social content alone is brutal for a startup.", "score": 38}
+      ]
+    },
+    {
+      "title": "Looking for AI tool to generate consistent product photos for Shopify store",
+      "source": "r/shopify",
+      "score": 0,
+      "text": "Multiple users looking for AI tools that maintain visual consistency across their Shopify stores. Common frustrations include: tools that generate great individual images but can't maintain a cohesive look, expensive professional photography, and slow turnaround times.",
+      "comments": [
+        {"text": "I've tried Photoroom, Pebblely, and Flair. They're all good at single images but none of them understand my brand. I want consistent lighting, mood, and composition across all products.", "score": 39},
+        {"text": "What I really need is: upload white background photo → get lifestyle photo that matches my brand's minimal aesthetic. Every time. Not just sometimes.", "score": 48},
+        {"text": "The Chinese sellers on Amazon have figured this out somehow. Their product listings look like magazine spreads now. Meanwhile I'm still using my iPhone.", "score": 29},
+        {"text": "Midjourney generates beautiful images but they're not consistent and can't be used for product shots because the product never looks exactly right.", "score": 35}
+      ]
+    },
+    {
+      "title": "Product photography for ecommerce - too expensive for small brands",
+      "source": "r/smallbusiness + r/Entrepreneur",
+      "score": 0,
+      "text": "Small business owners discussing the prohibitive cost of professional product photography. Key data: lifestyle shoots cost $500-2000 per product, seasonal refreshes multiply costs, and maintaining visual brand identity adds complexity.",
+      "comments": [
+        {"text": "I sell handmade jewelry. Professional photos cost me $15-25 per piece. With 300 products, that's $4500-7500 just for basic product shots. Lifestyle shoots would triple that.", "score": 42},
+        {"text": "The hidden cost everyone forgets: you need to reshoot for EVERY season, promotion, and new platform. It never ends.", "score": 31},
+        {"text": "I switched to AI-generated backgrounds and saved 80% on photography costs. But keeping brand consistency is still a manual process - I have to reject 70% of generations.", "score": 36},
+        {"text": "We need something like what Canva did for graphic design, but for AI product photography. Easy, consistent, brand-aware.", "score": 27}
+      ]
+    }
+  ]
+}
