@@ -399,6 +399,13 @@ class SyncService {
     });
   }
 
+  async backfillUsage(userId: string, count: number, model?: string): Promise<{ inserted: number }> {
+    return this.fetchJson(`/api/data/users/${userId}/usage-backfill`, {
+      method: "POST",
+      body: JSON.stringify({ count, model: model || null }),
+    });
+  }
+
   async fetchMyUsage(): Promise<{ monthlyPercent: number; dailyPercent: number }> {
     const res = await this.fetchJson<{ usage: { monthlyPercent: number; dailyPercent: number } }>("/api/data/usage/me");
     return res.usage;

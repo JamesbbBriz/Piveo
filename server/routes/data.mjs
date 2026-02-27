@@ -88,6 +88,42 @@ router.put("/api/data/users/:id/quota", (req, res) => {
   res.json({ ok: true });
 });
 
+// Admin: backfill usage records for a user
+router.post("/api/data/users/:id/usage-backfill", (req, res) => {
+  if (!isSuperAdmin(req.authUser)) {
+    return res.status(403).json({ ok: false, message: "无权限。" });
+  }
+
+  const { count, model, endpoint } = req.body;
+  const n = Math.max(0, Math.min(Number(count) || 0, 10000));
+  if (n === 0) return res.status(400).json({ ok: false, message: "count 必须为正整数（上限 10000）。" });
+
+  const db = getDb();
+  const user = db.prepare("SELECT id, username FROM users WHERE id = ?").get(req.params.id);
+  if (!user) return res.status(404).json({ ok: false, message: "用户不存在。" });
+
+  const now = Date.now();
+  const insert = db.prepare(
+    `INSERT INTO usage_records (user_id, username, endpoint, model, status_code, request_id, created_at)
+     VALUES (?, ?, ?, ?, 200, ?, ?)`
+  );
+
+  db.transaction(() => {
+    for (let i = 0; i < n; i++) {
+      insert.run(
+        user.id,
+        user.username,
+        endpoint || "/v1/images/generations",
+        model || null,
+        `backfill-${now}-${i}`,
+        now
+      );
+    }
+  })();
+
+  res.json({ ok: true, inserted: n });
+});
+
 router.get("/api/data/usage/me", (req, res) => {
   const userId = getUserId(req.authUser);
   if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });

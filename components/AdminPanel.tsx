@@ -382,6 +382,66 @@ const QuotaEditor: React.FC<{
   );
 };
 
+/* ── Usage Backfill Inline Editor ── */
+
+const BackfillEditor: React.FC<{
+  userId: string;
+  username: string;
+  onDone: () => void;
+  onCancel: () => void;
+}> = ({ userId, username, onDone, onCancel }) => {
+  const [count, setCount] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const toast = useToast();
+
+  const handleBackfill = async () => {
+    if (count <= 0) return;
+    setSaving(true);
+    try {
+      const res = await syncService.backfillUsage(userId, count);
+      toast.success(`已为 ${username} 补录 ${res.inserted} 条用量记录`);
+      onDone();
+    } catch (e) {
+      console.error('[Admin] 补录失败:', e);
+      toast.error('补录失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <tr className="bg-dark-800/80">
+      <td colSpan={10} className="px-4 py-3">
+        <div className="flex items-center gap-4">
+          <span className="text-xs text-gray-500">补录数量:</span>
+          <input
+            type="number"
+            min={1}
+            max={10000}
+            value={count}
+            onChange={(e) => setCount(Number(e.target.value))}
+            className="w-24 px-2 py-1 rounded bg-dark-900 border border-dark-600 text-sm text-gray-200 focus:outline-none focus:border-banana-500/50"
+          />
+          <span className="text-[10px] text-gray-600">status=200, 上限 10000</span>
+          <button
+            onClick={handleBackfill}
+            disabled={saving || count <= 0}
+            className="px-2.5 py-1 rounded text-xs bg-banana-500/20 text-banana-400 hover:bg-banana-500/30 transition-colors disabled:opacity-50"
+          >
+            {saving ? '补录中...' : '确认补录'}
+          </button>
+          <button
+            onClick={onCancel}
+            className="px-2.5 py-1 rounded text-xs bg-dark-700 text-gray-400 hover:bg-dark-600 transition-colors"
+          >
+            取消
+          </button>
+        </div>
+      </td>
+    </tr>
+  );
+};
+
 /* ── Users Table ── */
 
 const UsersTable: React.FC<{
@@ -390,6 +450,7 @@ const UsersTable: React.FC<{
   onRefresh: () => void;
 }> = ({ users, formatDate, onRefresh }) => {
   const [editingQuotaId, setEditingQuotaId] = useState<string | null>(null);
+  const [backfillId, setBackfillId] = useState<string | null>(null);
 
   const formatLimit = (v: number) => (v === -1 ? '不限' : String(v));
 
@@ -430,12 +491,20 @@ const UsersTable: React.FC<{
                   <TableCell>{u.projectCount}</TableCell>
                   <TableCell className="text-gray-500">{formatDate(u.createdAt)}</TableCell>
                   <TableCell>
-                    <button
-                      onClick={() => setEditingQuotaId(editingQuotaId === u.id ? null : u.id)}
-                      className="text-xs text-banana-400 hover:text-banana-300 transition-colors"
-                    >
-                      配额
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setEditingQuotaId(editingQuotaId === u.id ? null : u.id); setBackfillId(null); }}
+                        className="text-xs text-banana-400 hover:text-banana-300 transition-colors"
+                      >
+                        配额
+                      </button>
+                      <button
+                        onClick={() => { setBackfillId(backfillId === u.id ? null : u.id); setEditingQuotaId(null); }}
+                        className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                      >
+                        补录
+                      </button>
+                    </div>
                   </TableCell>
                 </tr>
                 {editingQuotaId === u.id && (
@@ -448,6 +517,17 @@ const UsersTable: React.FC<{
                       onRefresh();
                     }}
                     onCancel={() => setEditingQuotaId(null)}
+                  />
+                )}
+                {backfillId === u.id && (
+                  <BackfillEditor
+                    userId={u.id}
+                    username={u.username}
+                    onDone={() => {
+                      setBackfillId(null);
+                      onRefresh();
+                    }}
+                    onCancel={() => setBackfillId(null)}
                   />
                 )}
               </React.Fragment>
