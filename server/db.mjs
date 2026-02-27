@@ -10,7 +10,7 @@ const DATA_DIR = path.resolve(
   process.env.DATA_DIR || path.join(__dirname, "..", "data")
 );
 
-const CURRENT_SCHEMA_VERSION = 7;
+const CURRENT_SCHEMA_VERSION = 9;
 
 let db = null;
 
@@ -50,6 +50,8 @@ export function initDatabase() {
   if (currentVersion < 5) applySchemaV5(db);
   if (currentVersion < 6) applySchemaV6(db);
   if (currentVersion < 7) applySchemaV7(db);
+  if (currentVersion < 8) applySchemaV8(db);
+  if (currentVersion < 9) applySchemaV9(db);
 
   if (currentVersion < CURRENT_SCHEMA_VERSION) {
     db.prepare(
@@ -263,6 +265,55 @@ function applySchemaV6(db) {
 function applySchemaV7(db) {
   db.exec(`
     ALTER TABLE providers ADD COLUMN allowed_models TEXT;
+  `);
+}
+
+function applySchemaV8(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS brand_kits (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+      name TEXT NOT NULL DEFAULT '默认品牌',
+      description TEXT,
+      style_keywords TEXT,
+      color_palette_json TEXT,
+      mood_keywords TEXT,
+      is_active INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS brand_kit_images (
+      id TEXT PRIMARY KEY,
+      brand_kit_id TEXT NOT NULL REFERENCES brand_kits(id) ON DELETE CASCADE,
+      blob_id TEXT REFERENCES blobs(id),
+      image_type TEXT NOT NULL DEFAULT 'reference',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_brand_kits_user ON brand_kits(user_id);
+    CREATE INDEX IF NOT EXISTS idx_brand_kit_images_kit ON brand_kit_images(brand_kit_id);
+  `);
+}
+
+function applySchemaV9(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS brand_taste_ratings (
+      id TEXT PRIMARY KEY,
+      brand_kit_id TEXT NOT NULL REFERENCES brand_kits(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      blob_id TEXT REFERENCES blobs(id),
+      image_url TEXT,
+      prompt TEXT,
+      model TEXT,
+      rating TEXT NOT NULL CHECK (rating IN ('on-brand', 'off-brand')),
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_taste_ratings_kit ON brand_taste_ratings(brand_kit_id);
+
+    ALTER TABLE brand_kits ADD COLUMN taste_profile_json TEXT;
   `);
 }
 

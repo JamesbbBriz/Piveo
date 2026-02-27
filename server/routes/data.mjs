@@ -601,6 +601,276 @@ router.delete("/api/data/products/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Brand Kits ----------
+
+router.get("/api/data/brand-kits", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const kits = db
+    .prepare(
+      `SELECT * FROM brand_kits
+       WHERE user_id = ?
+          OR team_id IN (SELECT team_id FROM team_members WHERE user_id = ?)
+       ORDER BY updated_at DESC`
+    )
+    .all(userId, userId);
+
+  const imgStmt = db.prepare(
+    `SELECT bki.*, b.id AS _blob_id FROM brand_kit_images bki
+     LEFT JOIN blobs b ON bki.blob_id = b.id
+     WHERE bki.brand_kit_id = ?
+     ORDER BY bki.sort_order ASC`
+  );
+  for (const kit of kits) {
+    kit.images = imgStmt.all(kit.id);
+  }
+
+  res.json({ ok: true, brandKits: kits });
+});
+
+router.get("/api/data/brand-kits/:id", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const kit = db.prepare("SELECT * FROM brand_kits WHERE id = ?").get(req.params.id);
+  if (!kit) return res.status(404).json({ ok: false, message: "品牌套件不存在。" });
+
+  if (kit.user_id !== userId) {
+    if (!kit.team_id || !assertTeamAccess(userId, kit.team_id)) {
+      return res.status(403).json({ ok: false, message: "无权限查看。" });
+    }
+  }
+
+  kit.images = db
+    .prepare("SELECT * FROM brand_kit_images WHERE brand_kit_id = ? ORDER BY sort_order ASC")
+    .all(kit.id);
+
+  res.json({ ok: true, brandKit: kit });
+});
+
+router.put("/api/data/brand-kits/:id", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const { name, description, style_keywords, color_palette_json, mood_keywords, is_active, team_id } = req.body;
+  const now = Date.now();
+  const db = getDb();
+
+  const existing = db.prepare("SELECT user_id, team_id FROM brand_kits WHERE id = ?").get(req.params.id);
+
+  if (existing) {
+    if (existing.user_id !== userId) {
+      if (!existing.team_id || !assertTeamAccess(userId, existing.team_id)) {
+        return res.status(403).json({ ok: false, message: "无权限修改。" });
+      }
+    }
+    db.prepare(
+      `UPDATE brand_kits SET name = ?, description = ?, style_keywords = ?,
+       color_palette_json = ?, mood_keywords = ?, is_active = ?, team_id = ?, updated_at = ?
+       WHERE id = ?`
+    ).run(
+      name ?? "默认品牌", description ?? null, style_keywords ?? null,
+      color_palette_json ?? null, mood_keywords ?? null,
+      typeof is_active === "number" ? is_active : 0,
+      team_id ?? null, now, req.params.id
+    );
+  } else {
+    if (team_id && !assertTeamAccess(userId, team_id)) {
+      return res.status(403).json({ ok: false, message: "无权限。" });
+    }
+    db.prepare(
+      `INSERT INTO brand_kits (id, user_id, team_id, name, description, style_keywords,
+       color_palette_json, mood_keywords, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      req.params.id, userId, team_id ?? null,
+      name ?? "默认品牌", description ?? null, style_keywords ?? null,
+      color_palette_json ?? null, mood_keywords ?? null,
+      typeof is_active === "number" ? is_active : 0,
+      now, now
+    );
+  }
+
+  res.json({ ok: true });
+});
+
+router.delete("/api/data/brand-kits/:id", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const kit = db.prepare("SELECT user_id, team_id FROM brand_kits WHERE id = ?").get(req.params.id);
+  if (!kit) return res.status(404).json({ ok: false, message: "品牌套件不存在。" });
+
+  if (kit.user_id !== userId) {
+    if (!kit.team_id || !assertTeamAccess(userId, kit.team_id, "admin")) {
+      return res.status(403).json({ ok: false, message: "无权限删除。" });
+    }
+  }
+
+  db.prepare("DELETE FROM brand_kits WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+router.post("/api/data/brand-kits/:id/activate", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const kit = db.prepare("SELECT user_id, team_id FROM brand_kits WHERE id = ?").get(req.params.id);
+  if (!kit) return res.status(404).json({ ok: false, message: "品牌套件不存在。" });
+
+  if (kit.user_id !== userId) {
+    if (!kit.team_id || !assertTeamAccess(userId, kit.team_id)) {
+      return res.status(403).json({ ok: false, message: "无权限。" });
+    }
+  }
+
+  db.transaction(() => {
+    db.prepare("UPDATE brand_kits SET is_active = 0 WHERE user_id = ?").run(userId);
+    db.prepare("UPDATE brand_kits SET is_active = 1, updated_at = ? WHERE id = ?").run(Date.now(), req.params.id);
+  })();
+
+  res.json({ ok: true });
+});
+
+router.put("/api/data/brand-kits/:id/images", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const kit = db.prepare("SELECT user_id, team_id FROM brand_kits WHERE id = ?").get(req.params.id);
+  if (!kit) return res.status(404).json({ ok: false, message: "品牌套件不存在。" });
+
+  if (kit.user_id !== userId) {
+    if (!kit.team_id || !assertTeamAccess(userId, kit.team_id)) {
+      return res.status(403).json({ ok: false, message: "无权限。" });
+    }
+  }
+
+  const { images } = req.body;
+  if (!Array.isArray(images)) {
+    return res.status(400).json({ ok: false, message: "images 必须为数组。" });
+  }
+
+  const now = Date.now();
+  db.transaction(() => {
+    db.prepare("DELETE FROM brand_kit_images WHERE brand_kit_id = ?").run(req.params.id);
+    const insert = db.prepare(
+      "INSERT INTO brand_kit_images (id, brand_kit_id, blob_id, image_type, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+    );
+    for (const img of images) {
+      insert.run(img.id || uuidv4(), req.params.id, img.blob_id ?? null, img.image_type ?? "reference", img.sort_order ?? 0, now);
+    }
+    db.prepare("UPDATE brand_kits SET updated_at = ? WHERE id = ?").run(now, req.params.id);
+  })();
+
+  res.json({ ok: true });
+});
+
+// ---------- Brand Taste Ratings ----------
+
+router.get("/api/data/brand-kits/:id/ratings", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const kit = db.prepare("SELECT user_id, team_id FROM brand_kits WHERE id = ?").get(req.params.id);
+  if (!kit) return res.status(404).json({ ok: false, message: "品牌套件不存在。" });
+
+  if (kit.user_id !== userId) {
+    if (!kit.team_id || !assertTeamAccess(userId, kit.team_id)) {
+      return res.status(403).json({ ok: false, message: "无权限查看。" });
+    }
+  }
+
+  const ratings = db
+    .prepare("SELECT * FROM brand_taste_ratings WHERE brand_kit_id = ? ORDER BY created_at DESC")
+    .all(req.params.id);
+
+  res.json({ ok: true, ratings });
+});
+
+router.put("/api/data/brand-kits/:id/ratings/:ratingId", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const kit = db.prepare("SELECT user_id, team_id FROM brand_kits WHERE id = ?").get(req.params.id);
+  if (!kit) return res.status(404).json({ ok: false, message: "品牌套件不存在。" });
+
+  if (kit.user_id !== userId) {
+    if (!kit.team_id || !assertTeamAccess(userId, kit.team_id)) {
+      return res.status(403).json({ ok: false, message: "无权限。" });
+    }
+  }
+
+  const { blob_id, image_url, prompt, model, rating } = req.body;
+  if (!rating || !["on-brand", "off-brand"].includes(rating)) {
+    return res.status(400).json({ ok: false, message: "rating 必须为 on-brand 或 off-brand。" });
+  }
+
+  const existing = db.prepare("SELECT id FROM brand_taste_ratings WHERE id = ?").get(req.params.ratingId);
+  const now = Date.now();
+
+  if (existing) {
+    db.prepare(
+      "UPDATE brand_taste_ratings SET blob_id = ?, image_url = ?, prompt = ?, model = ?, rating = ? WHERE id = ?"
+    ).run(blob_id ?? null, image_url ?? null, prompt ?? null, model ?? null, rating, req.params.ratingId);
+  } else {
+    db.prepare(
+      `INSERT INTO brand_taste_ratings (id, brand_kit_id, user_id, blob_id, image_url, prompt, model, rating, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(req.params.ratingId, req.params.id, userId, blob_id ?? null, image_url ?? null, prompt ?? null, model ?? null, rating, now);
+  }
+
+  res.json({ ok: true });
+});
+
+router.delete("/api/data/brand-kits/:id/ratings/:ratingId", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const kit = db.prepare("SELECT user_id, team_id FROM brand_kits WHERE id = ?").get(req.params.id);
+  if (!kit) return res.status(404).json({ ok: false, message: "品牌套件不存在。" });
+
+  if (kit.user_id !== userId) {
+    if (!kit.team_id || !assertTeamAccess(userId, kit.team_id)) {
+      return res.status(403).json({ ok: false, message: "无权限。" });
+    }
+  }
+
+  db.prepare("DELETE FROM brand_taste_ratings WHERE id = ? AND brand_kit_id = ?").run(req.params.ratingId, req.params.id);
+  res.json({ ok: true });
+});
+
+router.put("/api/data/brand-kits/:id/taste-profile", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const kit = db.prepare("SELECT user_id, team_id FROM brand_kits WHERE id = ?").get(req.params.id);
+  if (!kit) return res.status(404).json({ ok: false, message: "品牌套件不存在。" });
+
+  if (kit.user_id !== userId) {
+    if (!kit.team_id || !assertTeamAccess(userId, kit.team_id)) {
+      return res.status(403).json({ ok: false, message: "无权限。" });
+    }
+  }
+
+  const { taste_profile_json } = req.body;
+  const now = Date.now();
+
+  db.prepare("UPDATE brand_kits SET taste_profile_json = ?, updated_at = ? WHERE id = ?")
+    .run(taste_profile_json ?? null, now, req.params.id);
+
+  res.json({ ok: true });
+});
+
 // ---------- Batch Jobs ----------
 
 router.get("/api/data/batch-jobs", (req, res) => {
@@ -625,11 +895,11 @@ router.get("/api/data/batch-jobs/:id", (req, res) => {
 
   const db = getDb();
   const job = db.prepare("SELECT * FROM batch_jobs WHERE id = ?").get(req.params.id);
-  if (!job) return res.status(404).json({ ok: false, message: "套图任务不存在。" });
+  if (!job) return res.status(404).json({ ok: false, message: "矩阵任务不存在。" });
 
   if (job.user_id !== userId) {
     if (!job.team_id || !assertTeamAccess(userId, job.team_id)) {
-      return res.status(403).json({ ok: false, message: "无权限查看此套图任务。" });
+      return res.status(403).json({ ok: false, message: "无权限查看此矩阵任务。" });
     }
   }
 
@@ -654,7 +924,7 @@ router.put("/api/data/batch-jobs/:id", (req, res) => {
   if (existing) {
     if (existing.user_id !== userId) {
       if (!existing.team_id || !assertTeamAccess(userId, existing.team_id)) {
-        return res.status(403).json({ ok: false, message: "无权限修改此套图任务。" });
+        return res.status(403).json({ ok: false, message: "无权限修改此矩阵任务。" });
       }
     }
     db.prepare(
@@ -670,7 +940,7 @@ router.put("/api/data/batch-jobs/:id", (req, res) => {
     );
   } else {
     if (team_id && !assertTeamAccess(userId, team_id)) {
-      return res.status(403).json({ ok: false, message: "无权限在此团队创建套图任务。" });
+      return res.status(403).json({ ok: false, message: "无权限在此团队创建矩阵任务。" });
     }
     db.prepare(
       `INSERT INTO batch_jobs (id, user_id, team_id, project_id, product_id, title, status,
@@ -695,11 +965,11 @@ router.delete("/api/data/batch-jobs/:id", (req, res) => {
 
   const db = getDb();
   const job = db.prepare("SELECT user_id, team_id FROM batch_jobs WHERE id = ?").get(req.params.id);
-  if (!job) return res.status(404).json({ ok: false, message: "套图任务不存在。" });
+  if (!job) return res.status(404).json({ ok: false, message: "矩阵任务不存在。" });
 
   if (job.user_id !== userId) {
     if (!job.team_id || !assertTeamAccess(userId, job.team_id, "admin")) {
-      return res.status(403).json({ ok: false, message: "无权限删除此套图任务。" });
+      return res.status(403).json({ ok: false, message: "无权限删除此矩阵任务。" });
     }
   }
 
