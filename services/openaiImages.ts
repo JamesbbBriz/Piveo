@@ -633,11 +633,6 @@ export const imagesGenerations = async (
       );
     }
 
-    // gemini-3-pro-image-preview 系列（含 -2K 变体）只走 chat/completions
-    if (/^gemini-3-pro-image-preview/i.test(model)) {
-      return await geminiImageViaChat({ ...req, model: model as Model }, cfg, model, signal, opts);
-    }
-
     const body: Record<string, any> = {
       prompt: req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt,
       model,
