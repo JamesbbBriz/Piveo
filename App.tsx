@@ -1151,32 +1151,6 @@ const AppInner: React.FC = () => {
           setSwapModelTarget({ imageUrl: image.imageUrl, prompt: image.prompt });
         }
         break;
-      case 'adapt-ins':
-      case 'adapt-tiktok':
-      case 'adapt-xhs': {
-        const PLATFORM_MAP: Record<string, { ratio: AspectRatio; hint: string }> = {
-          'adapt-ins':    { ratio: AspectRatio.Square,   hint: '适合 Instagram 的正方形构图，主体居中' },
-          'adapt-tiktok': { ratio: AspectRatio.Mobile,   hint: '适合 TikTok 的竖屏构图，视觉冲击力强' },
-          'adapt-xhs':    { ratio: AspectRatio.Portrait,  hint: '适合小红书的竖图，精致文艺' },
-        };
-        const platform = PLATFORM_MAP[action];
-        if (image.imageUrl && platform) {
-          const prompt = image.prompt
-            ? `${image.prompt}\n${platform.hint}`
-            : platform.hint;
-          const size = getSupportedSizeForAspect(platform.ratio);
-          uiDispatch({ type: SET_SELECTED_IMAGE, payload: image.imageUrl });
-          uiDispatch({ type: SET_INPUT_TEXT, payload: prompt });
-          if (currentSession) {
-            const updatedSettings = { ...currentSession.settings, aspectRatio: platform.ratio, batchSizes: [size] };
-            projectDispatch({
-              type: UPDATE_SESSION,
-              payload: { id: currentSession.id, updater: (s) => ({ ...s, settings: updatedSettings, updatedAt: Date.now() }) },
-            });
-          }
-        }
-        break;
-      }
       case 'compare': {
         if (image.imageUrl && image.parentImageId) {
           const parentImage = galleryImages.find((img) => img.id === image.parentImageId);

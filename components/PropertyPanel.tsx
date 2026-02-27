@@ -122,33 +122,6 @@ const ImageDetailView: React.FC<{
         </button>
       </div>
 
-      {/* Multi-platform adaptation */}
-      <div className="px-4 pb-2">
-        <div className="text-[11px] text-gray-500 mb-1.5">多平台适配</div>
-        <div className="grid grid-cols-3 gap-1.5">
-          <button
-            onClick={() => onAction('adapt-ins')}
-            className="h-8 rounded-md border border-dark-600 bg-dark-800 text-[10px] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors flex items-center justify-center gap-1"
-          >
-            <span className="text-pink-400 font-bold">IG</span>
-            <span>1:1</span>
-          </button>
-          <button
-            onClick={() => onAction('adapt-tiktok')}
-            className="h-8 rounded-md border border-dark-600 bg-dark-800 text-[10px] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors flex items-center justify-center gap-1"
-          >
-            <span className="text-cyan-400 font-bold">TT</span>
-            <span>9:16</span>
-          </button>
-          <button
-            onClick={() => onAction('adapt-xhs')}
-            className="h-8 rounded-md border border-dark-600 bg-dark-800 text-[10px] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors flex items-center justify-center gap-1"
-          >
-            <span className="text-red-400 font-bold">XHS</span>
-            <span>3:4</span>
-          </button>
-        </div>
-      </div>
 
       {/* Before/After compare */}
       {image.parentImageId && (
