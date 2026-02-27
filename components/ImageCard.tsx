@@ -62,7 +62,7 @@ export const ImageCard: React.FC<ImageCardProps> = ({
           ? 'border-blue-500 ring-2 ring-blue-500/30'
           : 'border-zinc-700 hover:border-zinc-500'
       } hover:scale-[1.02]`}
-      onClick={onClick}
+      onClick={isMultiSelect ? () => onCheck?.(!isChecked) : onClick}
     >
       {/* Multi-select checkbox */}
       {isMultiSelect && (
