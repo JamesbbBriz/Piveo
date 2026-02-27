@@ -163,8 +163,8 @@ export interface BatchJob {
   status: BatchJobStatus;
   basePrompt: string;
   referenceImageUrl?: string;
-  productImageUrl?: string;  // 套图专用产品图
-  modelImageUrl?: string;     // 套图专用固定模特图
+  productImageUrl?: string;  // 矩阵专用产品图
+  modelImageUrl?: string;     // 矩阵专用固定模特图
   createdAt: number;
   updatedAt: number;
   archivedAt?: number;
@@ -244,4 +244,53 @@ export interface TeamMember {
   displayName?: string;
   role: 'admin' | 'member';
   joinedAt: number;
+}
+
+// Brand Taste
+export type BrandTasteRating = 'on-brand' | 'off-brand';
+
+export interface ImageRating {
+  id: string;
+  brandKitId: string;
+  imageUrl: string;
+  blobId?: string;
+  prompt: string;
+  model: string;
+  rating: BrandTasteRating;
+  createdAt: number;
+}
+
+export interface BrandTasteProfile {
+  learnedPreferences: string[];
+  learnedAvoidances: string[];
+  compositionNotes: string;
+  colorNotes: string;
+  moodNotes: string;
+  distilledAt: number;
+  ratingCountAtDistill: number;
+}
+
+// Brand Kit
+export interface BrandKitImage {
+  id: string;
+  blobId?: string;
+  imageUrl: string;
+  imageType: 'reference' | 'logo' | 'mood_board';
+  sortOrder: number;
+  createdAt: number;
+}
+
+export interface BrandKit {
+  id: string;
+  name: string;
+  description?: string;
+  styleKeywords: string[];
+  colorPalette: string[];
+  moodKeywords: string[];
+  isActive: boolean;
+  images: BrandKitImage[];
+  tasteProfile?: BrandTasteProfile;
+  ratings?: ImageRating[];
+  createdAt: number;
+  updatedAt: number;
 }

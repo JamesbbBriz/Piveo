@@ -37,8 +37,9 @@ import {
   SET_AUTH_READY,
   SET_QUEUE_STATS,
   SET_IS_SUPER_ADMIN,
+  SET_BRAND_KITS,
 } from './actions';
-import type { Session, SessionSettings, BatchJob } from '@/types';
+import type { Session, SessionSettings, BatchJob, BrandKit } from '@/types';
 import { DEFAULT_ASPECT_RATIO, DEFAULT_SYSTEM_TEMPLATES } from '@/constants';
 import { getSupportedAspectRatios, getSupportedSizeForAspect } from '@/services/sizeUtils';
 import { AspectRatio, ProductScale } from '@/types';
@@ -152,6 +153,37 @@ function mapServerProducts(serverProducts: any[]) {
     description: p.description ?? undefined,
     createdAt: p.created_at ?? Date.now(),
   }));
+}
+
+function mapServerBrandKits(serverKits: any[]): BrandKit[] {
+  return serverKits.map((k: any) => {
+    let tasteProfile: BrandKit['tasteProfile'];
+    if (k.taste_profile_json) {
+      try { tasteProfile = JSON.parse(k.taste_profile_json); } catch { /* ignore */ }
+    }
+    return {
+      id: k.id,
+      name: k.name ?? "默认品牌",
+      description: k.description ?? undefined,
+      styleKeywords: k.style_keywords ? JSON.parse(k.style_keywords) : [],
+      colorPalette: k.color_palette_json ? JSON.parse(k.color_palette_json) : [],
+      moodKeywords: k.mood_keywords ? JSON.parse(k.mood_keywords) : [],
+      isActive: Boolean(k.is_active),
+      images: Array.isArray(k.images)
+        ? k.images.map((img: any) => ({
+            id: img.id,
+            blobId: img.blob_id ?? undefined,
+            imageUrl: img.blob_id ? `/api/data/blobs/${img.blob_id}` : "",
+            imageType: img.image_type ?? "reference",
+            sortOrder: img.sort_order ?? 0,
+            createdAt: img.created_at ?? Date.now(),
+          }))
+        : [],
+      tasteProfile,
+      createdAt: k.created_at ?? Date.now(),
+      updatedAt: k.updated_at ?? Date.now(),
+    };
+  });
 }
 
 function mapServerTeams(serverTeams: any[]) {
@@ -363,6 +395,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           teamDispatch({ type: SET_TEAMS, payload: mapServerTeams(serverData.teams) });
         }
 
+        // Brand Kits
+        if (serverData.brandKits && serverData.brandKits.length > 0) {
+          libraryDispatch({ type: SET_BRAND_KITS, payload: mapServerBrandKits(serverData.brandKits) });
+        }
+
         // Sessions (projects → sessions)
         const resolvedDefaultTemplate = mergedTemplates.length > 0 ? mergedTemplates[0].content : defaultTemplate;
         if (serverData.projects.length > 0) {
@@ -427,7 +464,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             batchDispatch({ type: SET_BATCH_JOBS, payload: localBatchJobs });
             batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: localBatchJobs[0]?.id || null });
             prevBatchJobsRef.current = localBatchJobs;
-            console.log("[Sync] 服务端无套图数据，推送本地套图到服务端");
+            console.log("[Sync] 服务端无矩阵数据，推送本地矩阵到服务端");
             for (const j of localBatchJobs) {
               syncService.saveBatchJob(j);
             }
@@ -649,6 +686,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!hasHydratedStorage) return;
     void saveProducts(library.products);
   }, [library.products, hasHydratedStorage]);
+
+  // Sync brand kits to server when changed
+  const prevBrandKitsRef = useRef<BrandKit[]>([] as BrandKit[]);
+  useEffect(() => {
+    if (!hasHydratedStorage) return;
+    const prev = prevBrandKitsRef.current;
+    const prevMap = new Map<string, BrandKit>(prev.map((k) => [k.id, k]));
+    for (const k of library.brandKits) {
+      const old = prevMap.get(k.id);
+      if (!old || old.updatedAt !== k.updatedAt) {
+        syncService.saveBrandKit(k);
+      }
+    }
+    const currentIds = new Set(library.brandKits.map((k) => k.id));
+    for (const k of prev) {
+      if (!currentIds.has(k.id)) {
+        syncService.deleteBrandKit(k.id);
+      }
+    }
+    prevBrandKitsRef.current = library.brandKits;
+  }, [library.brandKits, hasHydratedStorage]);
 
   // Persist advanced panel state
   useEffect(() => {

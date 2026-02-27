@@ -75,8 +75,9 @@ class SyncService {
     preferences: any;
     teams: any[];
     batchJobs: any[];
+    brandKits: any[];
   }> {
-    const [projects, models, products, templates, preferences, teams, batchJobs] = await Promise.all([
+    const [projects, models, products, templates, preferences, teams, batchJobs, brandKits] = await Promise.all([
       this.fetchJson<{ projects: any[] }>("/api/data/projects").then((r) => r.projects ?? []),
       this.fetchJson<{ models: any[] }>("/api/data/models").then((r) => r.models ?? []),
       this.fetchJson<{ products: any[] }>("/api/data/products").then((r) => r.products ?? []),
@@ -84,8 +85,9 @@ class SyncService {
       this.fetchJson<{ preferences: any }>("/api/data/preferences").then((r) => r.preferences ?? null),
       this.fetchJson<{ teams: any[] }>("/api/data/teams").then((r) => r.teams ?? []),
       this.fetchJson<{ batchJobs: any[] }>("/api/data/batch-jobs").then((r) => r.batchJobs ?? []),
+      this.fetchJson<{ brandKits: any[] }>("/api/data/brand-kits").then((r) => r.brandKits ?? []),
     ]);
-    return { projects, models, products, templates, preferences, teams, batchJobs };
+    return { projects, models, products, templates, preferences, teams, batchJobs, brandKits };
   }
 
   async pullSince(since: number): Promise<any> {
@@ -263,6 +265,108 @@ class SyncService {
         body: JSON.stringify(prefs),
       }).then(() => {}),
     );
+  }
+
+  // ——— Brand Kits ———
+
+  async fetchBrandKits(): Promise<any[]> {
+    const res = await this.fetchJson<{ brandKits: any[] }>("/api/data/brand-kits");
+    return res.brandKits ?? [];
+  }
+
+  async saveBrandKit(kit: any): Promise<void> {
+    this.queueSync(`brandkit:${kit.id}`, async () => {
+      // Upload reference images if they are data URLs
+      const processedImages: any[] = [];
+      if (Array.isArray(kit.images)) {
+        for (const img of kit.images) {
+          let blobId = img.blobId ?? null;
+          if (img.imageUrl?.startsWith("data:") && !blobId) {
+            const result = await this.uploadDataUrl(img.imageUrl);
+            if (result) blobId = result.id;
+          }
+          processedImages.push({
+            id: img.id,
+            blob_id: blobId,
+            image_type: img.imageType ?? "reference",
+            sort_order: img.sortOrder ?? 0,
+          });
+        }
+      }
+
+      await this.fetchJson(`/api/data/brand-kits/${kit.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: kit.name ?? "默认品牌",
+          description: kit.description ?? null,
+          style_keywords: JSON.stringify(kit.styleKeywords ?? []),
+          color_palette_json: JSON.stringify(kit.colorPalette ?? []),
+          mood_keywords: JSON.stringify(kit.moodKeywords ?? []),
+          is_active: kit.isActive ? 1 : 0,
+          team_id: kit.teamId ?? null,
+        }),
+      });
+
+      // Update images separately
+      if (processedImages.length > 0) {
+        await this.fetchJson(`/api/data/brand-kits/${kit.id}/images`, {
+          method: "PUT",
+          body: JSON.stringify({ images: processedImages }),
+        });
+      }
+    });
+  }
+
+  async deleteBrandKit(kitId: string): Promise<void> {
+    this.queueSync(`brandkit:${kitId}`, () =>
+      this.fetchJson(`/api/data/brand-kits/${kitId}`, { method: "DELETE" }).then(() => {}),
+    );
+  }
+
+  async activateBrandKit(kitId: string): Promise<void> {
+    await this.fetchJson(`/api/data/brand-kits/${kitId}/activate`, { method: "POST" });
+  }
+
+  // ——— Brand Taste Ratings ———
+
+  async fetchBrandKitRatings(kitId: string): Promise<any[]> {
+    const res = await this.fetchJson<{ ratings: any[] }>(`/api/data/brand-kits/${kitId}/ratings`);
+    return res.ratings ?? [];
+  }
+
+  async saveBrandTasteRating(kitId: string, rating: any): Promise<void> {
+    let blobId = rating.blobId ?? null;
+    let imageUrl = rating.imageUrl ?? null;
+    if (imageUrl?.startsWith("data:") && !blobId) {
+      const result = await this.uploadDataUrl(imageUrl);
+      if (result) {
+        blobId = result.id;
+        imageUrl = result.url;
+      }
+    }
+    await this.fetchJson(`/api/data/brand-kits/${kitId}/ratings/${rating.id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        blob_id: blobId,
+        image_url: imageUrl,
+        prompt: rating.prompt ?? null,
+        model: rating.model ?? null,
+        rating: rating.rating,
+      }),
+    });
+  }
+
+  async deleteBrandTasteRating(kitId: string, ratingId: string): Promise<void> {
+    await this.fetchJson(`/api/data/brand-kits/${kitId}/ratings/${ratingId}`, { method: "DELETE" });
+  }
+
+  async saveTasteProfile(kitId: string, profile: any): Promise<void> {
+    await this.fetchJson(`/api/data/brand-kits/${kitId}/taste-profile`, {
+      method: "PUT",
+      body: JSON.stringify({
+        taste_profile_json: profile ? JSON.stringify(profile) : null,
+      }),
+    });
   }
 
   // ——— Blobs ———
