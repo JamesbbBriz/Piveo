@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { AspectRatio, GeneratedImage, ModelCharacter, ProductCatalogItem, ProductImage, SessionSettings, SystemTemplate } from '../types';
+import { AspectRatio, BrandKit, BrandTasteRating, GeneratedImage, ImageRating, ModelCharacter, ProductCatalogItem, ProductImage, SessionSettings, SystemTemplate } from '../types';
 import { getSupportedAspectRatios, getSupportedSizeForAspect } from '../services/sizeUtils';
 import { generateModelCharacter } from '../services/gemini';
 import { Icon } from './Icon';
@@ -21,6 +21,9 @@ interface PropertyPanelProps {
   selectedGalleryImage?: GeneratedImage | null;
   onClearGalleryImage?: () => void;
   onGalleryImageAction?: (image: GeneratedImage, action: string) => void;
+  // Brand Kit
+  activeBrandKit?: BrandKit | null;
+  onGoToBrandKit?: () => void;
 }
 
 /* ── Section (always expanded, scroll to see all) ── */
@@ -46,7 +49,9 @@ const ImageDetailView: React.FC<{
   image: GeneratedImage;
   onBack: () => void;
   onAction: (action: string) => void;
-}> = ({ image, onBack, onAction }) => {
+  activeBrandKit?: BrandKit | null;
+  currentRating?: BrandTasteRating | null;
+}> = ({ image, onBack, onAction, activeBrandKit, currentRating }) => {
   const createdDate = new Date(image.createdAt);
   const dateStr = `${String(createdDate.getMonth() + 1).padStart(2, '0')}-${String(createdDate.getDate()).padStart(2, '0')} ${String(createdDate.getHours()).padStart(2, '0')}:${String(createdDate.getMinutes()).padStart(2, '0')}`;
 
@@ -91,7 +96,18 @@ const ImageDetailView: React.FC<{
           className="w-full h-9 rounded-lg border border-cyan-500 bg-cyan-500/20 text-xs text-cyan-300 font-semibold hover:bg-cyan-500/30 transition-colors flex items-center justify-center gap-2"
         >
           <Icon name="wand-magic-sparkles" className="text-[11px]" />
-          精修
+          迭代
+        </button>
+      </div>
+
+      {/* Swap model */}
+      <div className="px-4 pb-2">
+        <button
+          onClick={() => onAction('swap-model')}
+          className="w-full h-9 rounded-lg border border-purple-500 bg-purple-500/20 text-xs text-purple-300 font-semibold hover:bg-purple-500/30 transition-colors flex items-center justify-center gap-2"
+        >
+          <Icon name="user-pen" className="text-[11px]" />
+          换模特
         </button>
       </div>
 
@@ -102,9 +118,81 @@ const ImageDetailView: React.FC<{
           className="w-full h-9 rounded-lg border border-banana-500 bg-banana-500/20 text-xs text-banana-300 font-semibold hover:bg-banana-500/30 transition-colors flex items-center justify-center gap-2"
         >
           <Icon name="layer-group" className="text-[11px]" />
-          一键出套图
+          一键出矩阵
         </button>
       </div>
+
+      {/* Multi-platform adaptation */}
+      <div className="px-4 pb-2">
+        <div className="text-[11px] text-gray-500 mb-1.5">多平台适配</div>
+        <div className="grid grid-cols-3 gap-1.5">
+          <button
+            onClick={() => onAction('adapt-ins')}
+            className="h-8 rounded-md border border-dark-600 bg-dark-800 text-[10px] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors flex items-center justify-center gap-1"
+          >
+            <span className="text-pink-400 font-bold">IG</span>
+            <span>1:1</span>
+          </button>
+          <button
+            onClick={() => onAction('adapt-tiktok')}
+            className="h-8 rounded-md border border-dark-600 bg-dark-800 text-[10px] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors flex items-center justify-center gap-1"
+          >
+            <span className="text-cyan-400 font-bold">TT</span>
+            <span>9:16</span>
+          </button>
+          <button
+            onClick={() => onAction('adapt-xhs')}
+            className="h-8 rounded-md border border-dark-600 bg-dark-800 text-[10px] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors flex items-center justify-center gap-1"
+          >
+            <span className="text-red-400 font-bold">XHS</span>
+            <span>3:4</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Before/After compare */}
+      {image.parentImageId && (
+        <div className="px-4 pb-2">
+          <button
+            onClick={() => onAction('compare')}
+            className="w-full h-8 rounded-md border border-dark-600 bg-dark-800 text-[11px] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors flex items-center justify-center gap-1.5"
+          >
+            <Icon name="arrows-alt-h" className="text-[10px] text-gray-500" />
+            Before/After 对比
+          </button>
+        </div>
+      )}
+
+      {/* Brand taste rating */}
+      {activeBrandKit && image.imageUrl && (
+        <div className="px-4 pb-3">
+          <div className="text-[11px] text-gray-500 mb-1.5">品牌风格评价</div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => onAction('rate-on-brand')}
+              className={`flex-1 h-9 rounded-lg border text-[11px] font-semibold transition-colors flex items-center justify-center gap-1.5 ${
+                currentRating === 'on-brand'
+                  ? "border-green-500 bg-green-500/20 text-green-400"
+                  : "border-dark-600 bg-dark-800 text-gray-400 hover:border-green-500/50 hover:text-green-400"
+              }`}
+            >
+              <span className="text-sm">👍</span>
+              符合品牌
+            </button>
+            <button
+              onClick={() => onAction('rate-off-brand')}
+              className={`flex-1 h-9 rounded-lg border text-[11px] font-semibold transition-colors flex items-center justify-center gap-1.5 ${
+                currentRating === 'off-brand'
+                  ? "border-red-500 bg-red-500/20 text-red-400"
+                  : "border-dark-600 bg-dark-800 text-gray-400 hover:border-red-500/50 hover:text-red-400"
+              }`}
+            >
+              <span className="text-sm">👎</span>
+              不符合
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Quick actions */}
       <div className="px-4 pb-3">
@@ -171,7 +259,7 @@ const ImageDetailView: React.FC<{
               className="flex-1 h-8 rounded-md border border-dark-600 bg-dark-800 text-[11px] text-gray-300 hover:text-gray-100 hover:border-gray-500 transition-colors flex items-center justify-center gap-1.5"
             >
               <Icon name="layer-group" className="text-[10px] text-gray-500" />
-              查看套图
+              查看矩阵
             </button>
           </div>
         </div>
@@ -256,6 +344,8 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
   selectedGalleryImage,
   onClearGalleryImage,
   onGalleryImageAction,
+  activeBrandKit,
+  onGoToBrandKit,
 }) => {
   const [isGeneratingModel, setIsGeneratingModel] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
@@ -347,6 +437,11 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
     ? models.find((m) => m.id === settings.selectedModelId)
     : null;
 
+  // Compute current rating for selected gallery image
+  const currentImageRating = selectedGalleryImage && activeBrandKit?.ratings
+    ? activeBrandKit.ratings.find((r) => r.imageUrl === selectedGalleryImage.imageUrl)?.rating ?? null
+    : null;
+
   // Image detail mode: show image details instead of settings
   if (selectedGalleryImage && onClearGalleryImage && onGalleryImageAction) {
     return (
@@ -354,6 +449,8 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
         image={selectedGalleryImage}
         onBack={onClearGalleryImage}
         onAction={(action) => onGalleryImageAction(selectedGalleryImage, action)}
+        activeBrandKit={activeBrandKit}
+        currentRating={currentImageRating}
       />
     );
   }
@@ -532,6 +629,21 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
         </div>
       </Section>
 
+      {/* Brand Kit Indicator */}
+      <div className="border-b border-dark-700 px-4 py-2.5">
+        <button
+          onClick={onGoToBrandKit}
+          className={`w-full h-8 rounded-lg border text-[11px] font-medium transition-colors flex items-center justify-center gap-1.5 ${
+            activeBrandKit
+              ? "border-banana-500/50 bg-banana-500/10 text-banana-400"
+              : "border-dark-600 bg-dark-800 text-gray-500 hover:border-gray-500 hover:text-gray-400"
+          }`}
+        >
+          <Icon name="palette" className="text-[10px]" />
+          {activeBrandKit ? `品牌：${activeBrandKit.name}` : "设置品牌套件"}
+        </button>
+      </div>
+
       {/* Style Template */}
       <Section title="风格模板">
         <select
@@ -670,5 +782,6 @@ export const PropertyPanel = React.memo(PropertyPanelInner, (prev, next) =>
   prev.products === next.products &&
   prev.templates === next.templates &&
   prev.selectedImage === next.selectedImage &&
-  prev.selectedGalleryImage === next.selectedGalleryImage
+  prev.selectedGalleryImage === next.selectedGalleryImage &&
+  prev.activeBrandKit === next.activeBrandKit
 );

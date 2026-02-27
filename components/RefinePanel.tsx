@@ -38,9 +38,11 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
   const chatRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Initialize with the original image as the first model message
+  // Start with empty messages — the original image will be attached
+  // to the first user message so Gemini sees it as user-provided context
+  // (Gemini API requires conversations to start with role: "user")
   useEffect(() => {
-    setMessages([{ role: 'model', imageUrl }]);
+    setMessages([]);
   }, [imageUrl]);
 
   // Focus input on mount
@@ -73,7 +75,13 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
     const msgText = (text || inputText).trim();
     if (!msgText || isGenerating) return;
 
-    const userMsg: RefineMessage = { role: 'user', text: msgText };
+    // Attach original image to the first user message so the model can see it
+    const isFirstMessage = !messages.some((m) => m.role === 'user');
+    const userMsg: RefineMessage = {
+      role: 'user',
+      text: msgText,
+      imageUrl: isFirstMessage ? imageUrl : undefined,
+    };
     const updatedMessages = [...messages, userMsg];
     setMessages(updatedMessages);
     setInputText('');
@@ -101,14 +109,14 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
       const errorText = err instanceof Error ? err.message : String(err);
       const errorMsg: RefineMessage = {
         role: 'model',
-        text: `精修失败：${errorText}`,
+        text: `迭代失败：${errorText}`,
       };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setIsGenerating(false);
       abortRef.current = null;
     }
-  }, [inputText, isGenerating, messages, model, aspectRatio, systemPrompt]);
+  }, [inputText, isGenerating, messages, model, aspectRatio, systemPrompt, imageUrl]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -134,7 +142,7 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
         </button>
         <span className="text-sm font-bold text-gray-200 flex items-center gap-2">
           <Icon name="wand-magic-sparkles" className="text-cyan-400 text-xs" />
-          精修模式
+          迭代模式
         </span>
         {prompt && (
           <span className="text-[10px] text-gray-500 ml-3 truncate max-w-[200px]" title={prompt}>
@@ -156,7 +164,7 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
       <div className="flex-1 min-h-0 flex items-center justify-center p-4 bg-dark-950">
         <img
           src={currentImage}
-          alt="精修预览"
+          alt="迭代预览"
           className="max-w-full max-h-full object-contain rounded-lg"
         />
       </div>
@@ -179,10 +187,9 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
       )}
 
       {/* Chat history */}
-      {messages.length > 1 && (
+      {messages.length > 0 && (
         <div ref={chatRef} className="px-4 py-2 border-t border-dark-700 max-h-[200px] overflow-y-auto">
           {messages.map((msg, idx) => {
-            if (idx === 0 && msg.role === 'model') return null; // skip initial image
             return (
               <div
                 key={idx}
@@ -197,7 +204,7 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
                     {msg.imageUrl && (
                       <img
                         src={msg.imageUrl}
-                        alt="精修结果"
+                        alt="迭代结果"
                         className="w-10 h-10 rounded-md object-cover border border-dark-600 flex-shrink-0"
                       />
                     )}
@@ -214,7 +221,7 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
           {isGenerating && (
             <div className="flex justify-start mb-2">
               <div className="bg-dark-800 border border-dark-700 text-cyan-400 text-xs px-3 py-1.5 rounded-lg rounded-tl-none">
-                <Icon name="spinner" className="fa-spin" /> 精修中...
+                <Icon name="spinner" className="fa-spin" /> 迭代中...
               </div>
             </div>
           )}
@@ -244,7 +251,7 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="输入精修指令..."
+          placeholder="输入迭代指令..."
           rows={1}
           className="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-500/50 resize-none"
         />

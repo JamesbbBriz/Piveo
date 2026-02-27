@@ -12,6 +12,7 @@ interface MainContentProps {
   assetsElement?: React.ReactNode;
   modelsElement?: React.ReactNode;
   productsElement?: React.ReactNode;
+  brandKitElement?: React.ReactNode;
   teamElement?: React.ReactNode;
   adminElement?: React.ReactNode;
 }
@@ -24,7 +25,7 @@ const PlaceholderView: React.FC<{ icon: string; title: string; subtitle: string 
   </div>
 );
 
-export const MainContent: React.FC<MainContentProps> = ({ navView, children, galleryProps, projectListProps, settingsElement, assetsElement, modelsElement, productsElement, teamElement, adminElement }) => {
+export const MainContent: React.FC<MainContentProps> = ({ navView, children, galleryProps, projectListProps, settingsElement, assetsElement, modelsElement, productsElement, brandKitElement, teamElement, adminElement }) => {
   switch (navView) {
     case 'project':
       return <>{children}</>;
@@ -58,6 +59,12 @@ export const MainContent: React.FC<MainContentProps> = ({ navView, children, gal
         return <>{productsElement}</>;
       }
       return <PlaceholderView icon="cube" title="产品库" subtitle="即将推出" />;
+
+    case 'brandkit':
+      if (brandKitElement) {
+        return <>{brandKitElement}</>;
+      }
+      return <PlaceholderView icon="palette" title="品牌套件" subtitle="即将推出" />;
 
     case 'settings':
       if (settingsElement) {

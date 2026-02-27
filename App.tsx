@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { v4 as uuidv4 } from 'uuid';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import { Icon } from './components/Icon';
-import { AspectRatio, BatchJob, BatchJobStatus, BatchSceneType, BatchSlot, BatchVersion, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter, ProductCatalogItem } from './types';
+import { AspectRatio, BatchJob, BatchJobStatus, BatchSceneType, BatchSlot, BatchVersion, BrandKit, ImageResponseFormat, ProductScale, Message, Session, SessionSettings, SystemTemplate, ModelCharacter, ProductCatalogItem } from './types';
 import { clearAll } from './services/storage';
 import { generateResponse, enhancePrompt, type GenerateResponseResult } from './services/gemini';
 import { DEFAULT_ASPECT_RATIO } from './constants';
@@ -32,8 +32,12 @@ import { PromptBar } from './components/PromptBar';
 import { extractImagesFromSession } from './services/projectUtils';
 import { ImageGallery } from './components/ImageGallery';
 import { RefinePanel } from './components/RefinePanel';
+import { SwapModelModal } from './components/SwapModelModal';
+import { BrandKitPanel } from './components/BrandKitPanel';
+import { BeforeAfterView } from './components/BeforeAfterView';
+import { exportComparison } from './services/comparisonExport';
 import { ToastProvider } from './components/Toast';
-import type { GeneratedImage } from './types';
+import type { GeneratedImage, ImageRating } from './types';
 import {
   SET_SESSIONS,
   SET_CURRENT_SESSION_ID,
@@ -77,6 +81,14 @@ import {
   DELETE_TEAM,
   UPDATE_TEAM,
   SET_CURRENT_TEAM_ID,
+  ADD_BRAND_KIT,
+  UPDATE_BRAND_KIT,
+  DELETE_BRAND_KIT,
+  SET_ACTIVE_BRAND_KIT,
+  ADD_BRAND_TASTE_RATING,
+  REMOVE_BRAND_TASTE_RATING,
+  SET_BRAND_TASTE_RATINGS,
+  SET_BRAND_TASTE_PROFILE,
 } from './store/actions';
 
 const aspectRatioToSize = (aspectRatio: AspectRatio | string): string => {
@@ -265,7 +277,7 @@ const AppInner: React.FC = () => {
   // ——— Store hooks ———
   const { sessions, currentSessionId, dispatch: projectDispatch } = useProjects();
   const { batchJobs, selectedBatchJobId, isBatchGenerating, batchGenerationProgress, refiningSlotIds, dispatch: batchDispatch } = useBatch();
-  const { models, products, templates, dispatch: libraryDispatch } = useLibrary();
+  const { models, products, templates, brandKits, dispatch: libraryDispatch } = useLibrary();
   const { teams, currentTeamId, dispatch: teamDispatch } = useTeam();
   const {
     isGenerating, generationStage, generationProgress, isEnhancing,
@@ -287,6 +299,8 @@ const AppInner: React.FC = () => {
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [selectedGalleryImageId, setSelectedGalleryImageId] = useState<string | null>(null);
   const [refineTarget, setRefineTarget] = useState<{ imageUrl: string; prompt?: string } | null>(null);
+  const [swapModelTarget, setSwapModelTarget] = useState<{ imageUrl: string; prompt?: string } | null>(null);
+  const [compareState, setCompareState] = useState<{ beforeUrl: string; afterUrl: string } | null>(null);
 
   // ——— Refs ———
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -437,7 +451,7 @@ const AppInner: React.FC = () => {
             id: version.id,
             url: version.imageUrl,
             sessionId: `batch:${job.id}`,
-            sessionTitle: `套图 · ${job.title}`,
+            sessionTitle: `矩阵 · ${job.title}`,
             createdAt: version.createdAt,
             prompt: version.promptUsed,
             model: version.model,
@@ -565,6 +579,7 @@ const AppInner: React.FC = () => {
     uiDispatch({ type: SET_CURRENT_VIEW, payload: "chat" });
     uiDispatch({ type: SET_INPUT_TEXT, payload: '' });
     uiDispatch({ type: SET_SELECTED_IMAGE, payload: null });
+    setNavView('project');
   }, [templates, defaultPreferences, projectDispatch, uiDispatch]);
 
   const handleDeleteSession = useCallback((id: string, e: React.MouseEvent) => {
@@ -648,6 +663,35 @@ const AppInner: React.FC = () => {
     syncService.deleteProduct(productId);
   }, [libraryDispatch]);
 
+  // ——— Brand Kit callbacks ———
+  const activeBrandKit = useMemo(() => brandKits.find((k) => k.isActive) ?? null, [brandKits]);
+
+  const handleAddBrandKit = useCallback((kit: BrandKit) => {
+    libraryDispatch({ type: ADD_BRAND_KIT, payload: kit });
+  }, [libraryDispatch]);
+
+  const handleUpdateBrandKit = useCallback((id: string, updates: Partial<BrandKit>) => {
+    libraryDispatch({ type: UPDATE_BRAND_KIT, payload: { id, updates } });
+  }, [libraryDispatch]);
+
+  const handleDeleteBrandKit = useCallback((id: string) => {
+    libraryDispatch({ type: DELETE_BRAND_KIT, payload: id });
+    syncService.deleteBrandKit(id);
+  }, [libraryDispatch]);
+
+  const handleActivateBrandKit = useCallback((id: string | null) => {
+    libraryDispatch({ type: SET_ACTIVE_BRAND_KIT, payload: id });
+    if (id) syncService.activateBrandKit(id);
+  }, [libraryDispatch]);
+
+  const handleSetBrandTasteRatings = useCallback((kitId: string, ratings: ImageRating[]) => {
+    libraryDispatch({ type: SET_BRAND_TASTE_RATINGS, payload: { kitId, ratings } });
+  }, [libraryDispatch]);
+
+  const handleSetBrandTasteProfile = useCallback((kitId: string, profile: any) => {
+    libraryDispatch({ type: SET_BRAND_TASTE_PROFILE, payload: { kitId, profile } });
+  }, [libraryDispatch]);
+
   const handleUpdateApiConfig = useCallback((cfg: ApiConfig) => {
     uiDispatch({ type: SET_API_CONFIG, payload: cfg });
     saveStoredApiConfig(cfg);
@@ -691,7 +735,7 @@ const AppInner: React.FC = () => {
     const sceneDirective = getBatchSceneDirective(params.scene);
     return [
       params.basePrompt ? `整体要求：${params.basePrompt}` : "整体要求：围绕当前产品产出电商可用图片。",
-      `当前任务：这是套图第 ${params.index + 1} 张（共 ${params.total} 张），类型为「${params.sceneLabel}」。`,
+      `当前任务：这是矩阵第 ${params.index + 1} 张（共 ${params.total} 张），类型为「${params.sceneLabel}」。`,
       sceneDirective,
       params.note ? `单独要求：${params.note}` : "",
       "输出要求：构图完整、主体清晰、光线自然、可直接用于电商展示。",
@@ -727,7 +771,7 @@ const AppInner: React.FC = () => {
 
     let imageContext = "";
     if (params.referenceImage) {
-      imageContext = "图片1是当前套图参考图。请严格参照参考图的风格、构图、色调和整体氛围，生成同系列的套图变体。保持视觉一致性，仅按场景描述调整角度和环境。";
+      imageContext = "图片1是当前矩阵参考图。请严格参照参考图的风格、构图、色调和整体氛围，生成同系列的矩阵变体。保持视觉一致性，仅按场景描述调整角度和环境。";
     } else {
       const needsModel = params.slotType === "model" || params.slotType === "custom";
       if (params.productImage && needsModel && params.modelImage) {
@@ -737,8 +781,36 @@ const AppInner: React.FC = () => {
       }
     }
 
+    // Brand Kit DNA injection for batch
+    let batchBrandDna = "";
+    if (activeBrandKit) {
+      const bkParts: string[] = [];
+      if (activeBrandKit.styleKeywords.length > 0) bkParts.push(`品牌视觉风格：${activeBrandKit.styleKeywords.join("、")}`);
+      if (activeBrandKit.colorPalette.length > 0) bkParts.push(`品牌主色调：${activeBrandKit.colorPalette.join("、")}`);
+      if (activeBrandKit.moodKeywords.length > 0) bkParts.push(`品牌氛围：${activeBrandKit.moodKeywords.join("、")}`);
+
+      // Inject taste profile if distilled
+      const tp = activeBrandKit.tasteProfile;
+      if (tp) {
+        if (tp.learnedPreferences.length > 0) bkParts.push(`品牌偏好：${tp.learnedPreferences.join("、")}`);
+        if (tp.learnedAvoidances.length > 0) bkParts.push(`品牌禁忌（请避免）：${tp.learnedAvoidances.join("、")}`);
+        if (tp.compositionNotes) bkParts.push(`构图要求：${tp.compositionNotes}`);
+        if (tp.colorNotes) bkParts.push(`色彩要求：${tp.colorNotes}`);
+        if (tp.moodNotes) bkParts.push(`氛围要求：${tp.moodNotes}`);
+      }
+
+      if (bkParts.length > 0) batchBrandDna = `【品牌 DNA】${bkParts.join("。")}。请在保持品牌一致性的前提下创作。\n`;
+
+      // Add brand reference images
+      if (activeBrandKit.images) {
+        for (const img of activeBrandKit.images) {
+          if (img.imageUrl) images.push(img.imageUrl);
+        }
+      }
+    }
+
     const contextPrefix = imageContext ? `${imageContext}\n` : "";
-    const promptUsed = `${contextPrefix}${params.slotPrompt}`.trim();
+    const promptUsed = `${batchBrandDna}${contextPrefix}${params.slotPrompt}`.trim();
 
     const resp = await imagesGenerations(
       {
@@ -1074,9 +1146,74 @@ const AppInner: React.FC = () => {
           setRefineTarget({ imageUrl: image.imageUrl, prompt: image.prompt });
         }
         break;
+      case 'swap-model':
+        if (image.imageUrl) {
+          setSwapModelTarget({ imageUrl: image.imageUrl, prompt: image.prompt });
+        }
+        break;
+      case 'adapt-ins':
+      case 'adapt-tiktok':
+      case 'adapt-xhs': {
+        const PLATFORM_MAP: Record<string, { ratio: AspectRatio; hint: string }> = {
+          'adapt-ins':    { ratio: AspectRatio.Square,   hint: '适合 Instagram 的正方形构图，主体居中' },
+          'adapt-tiktok': { ratio: AspectRatio.Mobile,   hint: '适合 TikTok 的竖屏构图，视觉冲击力强' },
+          'adapt-xhs':    { ratio: AspectRatio.Portrait,  hint: '适合小红书的竖图，精致文艺' },
+        };
+        const platform = PLATFORM_MAP[action];
+        if (image.imageUrl && platform) {
+          const prompt = image.prompt
+            ? `${image.prompt}\n${platform.hint}`
+            : platform.hint;
+          const size = getSupportedSizeForAspect(platform.ratio);
+          uiDispatch({ type: SET_SELECTED_IMAGE, payload: image.imageUrl });
+          uiDispatch({ type: SET_INPUT_TEXT, payload: prompt });
+          if (currentSession) {
+            const updatedSettings = { ...currentSession.settings, aspectRatio: platform.ratio, batchSizes: [size] };
+            projectDispatch({
+              type: UPDATE_SESSION,
+              payload: { id: currentSession.id, updater: (s) => ({ ...s, settings: updatedSettings, updatedAt: Date.now() }) },
+            });
+          }
+        }
+        break;
+      }
+      case 'compare': {
+        if (image.imageUrl && image.parentImageId) {
+          const parentImage = galleryImages.find((img) => img.id === image.parentImageId);
+          if (parentImage?.imageUrl) {
+            setCompareState({ beforeUrl: parentImage.imageUrl, afterUrl: image.imageUrl });
+          }
+        }
+        break;
+      }
+      case 'rate-on-brand':
+      case 'rate-off-brand': {
+        if (!activeBrandKit || !image.imageUrl) break;
+        const ratingValue = action === 'rate-on-brand' ? 'on-brand' : 'off-brand';
+        // Check if already rated with same value — toggle off
+        const existingRating = activeBrandKit.ratings?.find((r) => r.imageUrl === image.imageUrl);
+        if (existingRating && existingRating.rating === ratingValue) {
+          // Remove rating
+          libraryDispatch({ type: REMOVE_BRAND_TASTE_RATING, payload: { kitId: activeBrandKit.id, ratingId: existingRating.id } });
+          syncService.deleteBrandTasteRating(activeBrandKit.id, existingRating.id);
+        } else {
+          const rating: ImageRating = {
+            id: existingRating?.id ?? uuidv4(),
+            brandKitId: activeBrandKit.id,
+            imageUrl: image.imageUrl,
+            prompt: image.prompt || '',
+            model: image.model || '',
+            rating: ratingValue as 'on-brand' | 'off-brand',
+            createdAt: existingRating?.createdAt ?? Date.now(),
+          };
+          libraryDispatch({ type: ADD_BRAND_TASTE_RATING, payload: { kitId: activeBrandKit.id, rating } });
+          syncService.saveBrandTasteRating(activeBrandKit.id, rating);
+        }
+        break;
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uiDispatch, currentSessionId, projectDispatch, selectedGalleryImageId, batchDispatch, updateBatchJobById]);
+  }, [uiDispatch, currentSessionId, projectDispatch, selectedGalleryImageId, batchDispatch, updateBatchJobById, activeBrandKit, libraryDispatch]);
 
   const cancelGeneration = () => {
     abortRef.current?.abort();
@@ -1171,6 +1308,7 @@ const AppInner: React.FC = () => {
             signal: controller.signal,
             queueSource: opts?.queueSource || "chat",
             referenceIntent: opts?.referenceIntent,
+            activeBrandKit,
           }
         );
         setBalanceRefreshTick((v) => v + 1);
@@ -1270,6 +1408,7 @@ const AppInner: React.FC = () => {
                   signal: controller.signal,
                   queueSource: opts?.queueSource || "chat",
                   referenceIntent: opts?.referenceIntent,
+                  activeBrandKit,
                 }
               );
               const extraUrl = extra.images[0];
@@ -1457,7 +1596,7 @@ const AppInner: React.FC = () => {
         meta: {
           id: uuidv4(),
           createdAt: Date.now(),
-          action: '精修',
+          action: '迭代',
           model: apiConfig.defaultImageModel,
         },
       }],
@@ -1475,6 +1614,37 @@ const AppInner: React.FC = () => {
       },
     });
     setRefineTarget(null);
+  }, [currentSession, apiConfig.defaultImageModel, projectDispatch]);
+
+  const handleSwapModelFinish = useCallback((finalImageUrl: string) => {
+    if (!currentSession) return;
+    const newMessage: Message = {
+      id: uuidv4(),
+      role: 'model',
+      parts: [{
+        type: 'image',
+        imageUrl: finalImageUrl,
+        meta: {
+          id: uuidv4(),
+          createdAt: Date.now(),
+          action: '换模特',
+          model: apiConfig.defaultImageModel,
+        },
+      }],
+      timestamp: Date.now(),
+    };
+    projectDispatch({
+      type: UPDATE_SESSION,
+      payload: {
+        id: currentSession.id,
+        updater: (s: Session) => ({
+          ...s,
+          messages: [...s.messages, newMessage],
+          updatedAt: Date.now(),
+        }),
+      },
+    });
+    setSwapModelTarget(null);
   }, [currentSession, apiConfig.defaultImageModel, projectDispatch]);
 
   const openMaskEditFromChat = useCallback((baseImageUrl: string) => {
@@ -1548,7 +1718,7 @@ const AppInner: React.FC = () => {
         id: uuidv4(),
         jobId: targetJobId,
         type: item.scene,
-        title: `套图 ${existingCount + i + 1}/${existingCount + items.length} · ${item.sceneLabel}`,
+        title: `矩阵 ${existingCount + i + 1}/${existingCount + items.length} · ${item.sceneLabel}`,
         targetCount: 1,
         promptTemplate: item.note.trim(),
         size,
@@ -1579,7 +1749,7 @@ const AppInner: React.FC = () => {
       id: uuidv4(),
       jobId,
       type: item.scene,
-      title: `套图 ${i + 1}/${items.length} · ${item.sceneLabel}`,
+      title: `矩阵 ${i + 1}/${items.length} · ${item.sceneLabel}`,
       targetCount: 1,
       promptTemplate: item.note.trim(),
       size,
@@ -1589,7 +1759,7 @@ const AppInner: React.FC = () => {
 
     const initialJob: BatchJob = {
       id: jobId,
-      title: basePrompt ? `套图任务：${basePrompt.slice(0, 20)}` : `套图任务 ${new Date(createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+      title: basePrompt ? `矩阵任务：${basePrompt.slice(0, 20)}` : `矩阵任务 ${new Date(createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
       status: "draft",
       basePrompt,
       referenceImageUrl: fixedReferenceImage || undefined,
@@ -2109,7 +2279,7 @@ const AppInner: React.FC = () => {
       const job = batchJobs.find((j) => j.id === jobId);
       const slot = job?.slots.find((s) => s.id === slotId);
       if (!job || !slot) {
-        throw new Error("套图槽位不存在或已被删除。");
+        throw new Error("矩阵槽位不存在或已被删除。");
       }
 
       batchAbortRef.current?.abort();
@@ -2514,6 +2684,8 @@ const AppInner: React.FC = () => {
       selectedGalleryImage={selectedGalleryImage}
       onClearGalleryImage={() => setSelectedGalleryImageId(null)}
       onGalleryImageAction={handleGalleryImageAction}
+      activeBrandKit={activeBrandKit}
+      onGoToBrandKit={() => setNavView('brandkit')}
     />
   ) : undefined;
 
@@ -2747,6 +2919,15 @@ const AppInner: React.FC = () => {
             onQuickStart: handleOnboardingQuickStart,
             onPromptSubmit: handleOnboardingPromptSubmit,
             templates: templates.map((t) => ({ name: t.name, content: t.content })),
+            products,
+            onProductSelect: (product) => {
+              const settings = currentSession?.settings;
+              if (settings) {
+                handleUpdateSettings({ ...settings, productImage: { id: product.id, imageUrl: product.imageUrl, createdAt: Date.now() } });
+              }
+            },
+            activeBrandKit,
+            onSetupBrandKit: () => setNavView('brandkit'),
           },
         }}
         projectListProps={{
@@ -2806,6 +2987,17 @@ const AppInner: React.FC = () => {
             onDeleteProduct={handleDeleteProduct}
           />
         }
+        brandKitElement={
+          <BrandKitPanel
+            brandKits={brandKits}
+            onAdd={handleAddBrandKit}
+            onUpdate={handleUpdateBrandKit}
+            onDelete={handleDeleteBrandKit}
+            onActivate={handleActivateBrandKit}
+            onSetRatings={handleSetBrandTasteRatings}
+            onSetTasteProfile={handleSetBrandTasteProfile}
+          />
+        }
         adminElement={
           isSuperAdmin ? (
             <AdminPanel onClose={() => setNavView('project')} />
@@ -2840,6 +3032,17 @@ const AppInner: React.FC = () => {
           onFinish={handleRefineFinish}
         />
       )}
+      {swapModelTarget && (
+        <SwapModelModal
+          sourceImageUrl={swapModelTarget.imageUrl}
+          sourcePrompt={swapModelTarget.prompt}
+          models={models}
+          settings={currentSession.settings}
+          onAddModel={handleAddModel}
+          onClose={() => setSwapModelTarget(null)}
+          onFinish={handleSwapModelFinish}
+        />
+      )}
       <BatchSetModal
         isOpen={isBatchSetOpen}
         onClose={() => { setIsBatchSetOpen(false); setAddSlotsTargetJobId(null); }}
@@ -2848,6 +3051,15 @@ const AppInner: React.FC = () => {
         }}
         referenceImageUrl={selectedImage || undefined}
       />
+      {/* Before/After comparison overlay */}
+      {compareState && (
+        <BeforeAfterView
+          beforeUrl={compareState.beforeUrl}
+          afterUrl={compareState.afterUrl}
+          onClose={() => setCompareState(null)}
+          onExport={() => exportComparison(compareState.beforeUrl, compareState.afterUrl)}
+        />
+      )}
       {/* ErrorDetailsModal replaced by inline expandable banner above */}
       {maskEditBaseUrl && (
         <MaskEditorModal

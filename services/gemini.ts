@@ -1,4 +1,4 @@
-import { ImageResponseFormat, Message, SessionSettings, ProductScale, ReferenceIntent } from "../types";
+import { ImageResponseFormat, Message, SessionSettings, ProductScale, ReferenceIntent, BrandKit } from "../types";
 import { imageObjToDataUrl, imagesGenerations, ResponseFormat } from "./openaiImages";
 import { getSupportedSizeForAspect } from "./sizeUtils";
 import { getEffectiveApiConfig } from "./apiConfig";
@@ -69,6 +69,8 @@ export interface GenerateResponseOptions {
   queueSource?: "chat" | "batch" | "mask-edit" | "model-gen";
   /** 参考图意图（仅当 referenceImage 存在时生效） */
   referenceIntent?: ReferenceIntent;
+  /** 活跃的品牌套件 — 注入品牌 DNA 到 prompt */
+  activeBrandKit?: BrandKit | null;
 }
 
 export interface GenerateResponseResult {
@@ -154,7 +156,7 @@ export const generateResponse = async (
   // 参考图意图决定产品图是否共存：
   // - intent=product 或 intent=all：参考图替代产品图（用户贴的就是产品）
   // - intent=style 或 intent=composition：参考图只做风格/构图参考，产品图保留
-  // 套图模式通过 forceIncludeProductImage 绕过聊天模式的排除逻辑。
+  // 矩阵模式通过 forceIncludeProductImage 绕过聊天模式的排除逻辑。
   const refIntent = options.referenceIntent ?? 'all';
   const refExcludesProduct = refIntent === 'product' || refIntent === 'all';
   const includeProductImage = Boolean(productImage) && (
@@ -223,6 +225,37 @@ export const generateResponse = async (
     }
     if (pi.description) parts.push(`产品特征：${pi.description}`);
     if (parts.length) productInfoInstruction = parts.join("。") + "。";
+  }
+
+  // --- BRAND KIT DNA ---
+  let brandDnaInstruction = "";
+  const bk = options.activeBrandKit;
+  if (bk) {
+    const parts: string[] = [];
+    if (bk.styleKeywords.length > 0) parts.push(`品牌视觉风格：${bk.styleKeywords.join("、")}`);
+    if (bk.colorPalette.length > 0) parts.push(`品牌主色调：${bk.colorPalette.join("、")}`);
+    if (bk.moodKeywords.length > 0) parts.push(`品牌氛围：${bk.moodKeywords.join("、")}`);
+
+    // Inject taste profile if distilled
+    const tp = bk.tasteProfile;
+    if (tp) {
+      if (tp.learnedPreferences.length > 0) parts.push(`品牌偏好：${tp.learnedPreferences.join("、")}`);
+      if (tp.learnedAvoidances.length > 0) parts.push(`品牌禁忌（请避免）：${tp.learnedAvoidances.join("、")}`);
+      if (tp.compositionNotes) parts.push(`构图要求：${tp.compositionNotes}`);
+      if (tp.colorNotes) parts.push(`色彩要求：${tp.colorNotes}`);
+      if (tp.moodNotes) parts.push(`氛围要求：${tp.moodNotes}`);
+    }
+
+    if (parts.length > 0) {
+      brandDnaInstruction = `【品牌 DNA】${parts.join("。")}。请在保持品牌一致性的前提下创作。`;
+    }
+
+    // Add brand reference images to imageInputsRaw
+    if (bk.images && bk.images.length > 0) {
+      for (const img of bk.images) {
+        if (img.imageUrl) imageInputsRaw.push(img.imageUrl);
+      }
+    }
   }
 
   let finalPrompt = currentMessageText || "生成图片。";
@@ -297,7 +330,8 @@ export const generateResponse = async (
     const sizeUsed = options.size ?? aspectRatioToSize(settings.aspectRatio, currentModel);
     const productContext = productInfoInstruction ? `\n${productInfoInstruction}` : "";
     const contextPrefix = imageContext ? `${imageContext}\n` : "";
-    const promptUsed = `${contextPrefix}${productContext}${finalPrompt} ${scaleInstruction}`.trim();
+    const brandPrefix = brandDnaInstruction ? `${brandDnaInstruction}\n` : "";
+    const promptUsed = `${brandPrefix}${contextPrefix}${productContext}${finalPrompt} ${scaleInstruction}`.trim();
 
     const resp = await imagesGenerations(
       {

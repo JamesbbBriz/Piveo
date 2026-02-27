@@ -140,6 +140,14 @@ export const NavRail: React.FC<NavRailProps> = ({
           onClick={() => onNavChange('products')}
         />
 
+        {/* Brand Kit */}
+        <RailBtn
+          icon="palette"
+          label="品牌套件"
+          active={navView === 'brandkit'}
+          onClick={() => onNavChange('brandkit')}
+        />
+
         <RailDivider />
 
         {/* History toggle */}
