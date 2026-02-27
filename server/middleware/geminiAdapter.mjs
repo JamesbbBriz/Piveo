@@ -386,6 +386,11 @@ async function handleChatCompletions(req, res, config, body) {
   return res.json(openaiResp);
 }
 
+/**
+ * Handle /v1/images/generations.
+ * Returns { fulfilled: number, rejected: number } so the caller can record
+ * usage per actual upstream call rather than per HTTP request.
+ */
 async function handleImageGenerations(req, res, config, body) {
   let model = body.model || "gemini-2.5-flash-image";
   model = model.replace(/-2k$/i, "");
@@ -400,7 +405,8 @@ async function handleImageGenerations(req, res, config, body) {
   if (n === 1) {
     const geminiResp = await callGemini(config, model, geminiBody);
     const openaiResp = toImageGenerationsResponse(geminiResp);
-    return res.json(openaiResp);
+    res.json(openaiResp);
+    return { fulfilled: 1, rejected: 0 };
   }
 
   // n > 1: make parallel requests
@@ -408,12 +414,16 @@ async function handleImageGenerations(req, res, config, body) {
     Array.from({ length: n }, () => callGemini(config, model, geminiBody))
   );
 
+  let fulfilled = 0;
+  let rejected = 0;
   const allData = [];
   for (const r of results) {
     if (r.status === "fulfilled") {
+      fulfilled++;
       const partial = toImageGenerationsResponse(r.value);
       allData.push(...partial.data);
     } else {
+      rejected++;
       console.error(`${LOG} one of n=${n} requests failed: ${r.reason?.message}`);
     }
   }
@@ -424,10 +434,11 @@ async function handleImageGenerations(req, res, config, body) {
     throw firstErr || new Error("All parallel requests failed");
   }
 
-  return res.json({
+  res.json({
     created: Math.floor(Date.now() / 1000),
     data: allData,
   });
+  return { fulfilled, rejected };
 }
 
 function handleModels(_req, res) {
@@ -492,11 +503,12 @@ export function createGeminiNativeHandler(getUpstreamConfig, { recordUsage, isSu
     try {
       // Route dispatch (path has /api stripped by Express mount)
       const p = req.path;
+      let upstreamCalls = null; // { fulfilled, rejected } for n>1 image gen
 
       if (p === "/v1/chat/completions") {
         await handleChatCompletions(req, res, config, body);
       } else if (p === "/v1/images/generations") {
-        await handleImageGenerations(req, res, config, body);
+        upstreamCalls = await handleImageGenerations(req, res, config, body);
       } else if (p === "/v1/models") {
         handleModels(req, res);
       } else {
@@ -518,14 +530,24 @@ export function createGeminiNativeHandler(getUpstreamConfig, { recordUsage, isSu
           req.path === "/v1/chat/completions")
       ) {
         try {
-          recordUsage({
+          const usageBase = {
             userId: req._quotaUserId,
             username: String(req.authUser || ""),
             endpoint: req.path,
             model: normalizeModelId(body.model) || null,
-            statusCode: res.statusCode || 200,
             requestId: req.requestId || "",
-          });
+          };
+
+          // Record one entry per actual upstream call
+          const successCount = upstreamCalls ? upstreamCalls.fulfilled : 1;
+          const failCount = upstreamCalls ? upstreamCalls.rejected : 0;
+
+          for (let i = 0; i < successCount; i++) {
+            recordUsage({ ...usageBase, statusCode: res.statusCode || 200 });
+          }
+          for (let i = 0; i < failCount; i++) {
+            recordUsage({ ...usageBase, statusCode: 502 });
+          }
         } catch (e) {
           console.error(`${LOG} usage record error: ${e.message}`);
         }
