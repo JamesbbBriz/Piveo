@@ -178,9 +178,9 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
       >
         <div className="px-4 py-3 border-b border-dark-700 flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-gray-100">一键出套图</h3>
+            <h3 className="text-sm font-semibold text-gray-100">一键出矩阵</h3>
             <p className="text-[11px] text-gray-400 mt-0.5">
-              先定义要出几张、每张是什么类型。生成后进入独立套图工作台，不污染聊天区。
+              先定义要出几张、每张是什么类型。生成后进入独立矩阵工作台，不污染聊天区。
             </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-200">
@@ -339,7 +339,7 @@ export const BatchSetModal: React.FC<BatchSetModalProps> = ({ isOpen, onClose, o
             disabled={totalCount <= 0}
             className="px-3 py-1.5 text-xs rounded-md border border-banana-500 bg-banana-500 text-dark-900 font-semibold hover:bg-banana-400 disabled:opacity-50"
           >
-            创建套图任务
+            创建矩阵任务
           </button>
         </div>
       </div>

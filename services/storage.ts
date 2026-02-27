@@ -446,7 +446,7 @@ export const migrateToProjectModel = async (): Promise<Project[]> => {
     // Create a new project for each batch job
     const batchProject: Project = {
       id: `batch-${job.id}`,
-      title: job.title || `套图任务`,
+      title: job.title || `矩阵任务`,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
       userId,

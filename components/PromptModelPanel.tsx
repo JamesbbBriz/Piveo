@@ -362,10 +362,10 @@ const PromptModelPanelInner: React.FC<PromptModelPanelProps> = ({
                 <button
                   onClick={onOpenBatchSet}
                   className="h-7 px-2.5 rounded-md border border-banana-500/40 bg-banana-500/10 text-[10px] text-banana-400 hover:bg-banana-500/20 transition-colors flex items-center gap-1"
-                  title="按规则批量生成套图"
+                  title="按规则批量生成矩阵"
                 >
                   <Icon name="layer-group" />
-                  一键出套图
+                  一键出矩阵
                 </button>
               )}
             </div>

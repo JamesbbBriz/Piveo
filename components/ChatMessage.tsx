@@ -134,7 +134,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                           <button
                             onClick={() => onBatchFromImage(part.imageUrl!)}
                             className="bg-dark-800 text-white p-2 rounded-full hover:bg-dark-600 transition-colors shadow-lg"
-                            title="生成套图"
+                            title="生成矩阵"
                           >
                             <Icon name="layer-group" />
                           </button>
@@ -143,7 +143,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                           <button
                             onClick={() => onRefine(part.imageUrl!)}
                             className="bg-cyan-500/80 text-dark-900 p-2 rounded-full hover:bg-cyan-400 transition-colors shadow-lg"
-                            title="精修"
+                            title="迭代"
                           >
                             <Icon name="wand-magic-sparkles" />
                           </button>

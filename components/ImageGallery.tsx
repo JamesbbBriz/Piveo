@@ -196,7 +196,7 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
               onClick={onGoToBatch}
               className="px-3 py-1 rounded-md text-[11px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-transparent transition-colors"
             >
-              套图
+              矩阵
             </button>
           )}
         </div>

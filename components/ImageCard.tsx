@@ -49,10 +49,10 @@ export const ImageCard: React.FC<ImageCardProps> = ({
       : image.prompt
     : '(无提示词)';
 
-  const sourceLabel = image.source === 'batch' ? '套图'
+  const sourceLabel = image.source === 'batch' ? '矩阵'
     : image.source === 'mask-edit' ? '局部编辑'
     : image.source === 'variation' ? '变体'
-    : image.source === 'refine' ? '优化'
+    : image.source === 'refine' ? '迭代'
     : '单张';
 
   return (

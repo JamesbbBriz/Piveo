@@ -139,7 +139,7 @@ const SidebarInner: React.FC<SidebarProps> = ({
       {/* Batch */}
       <RailBtn
         icon="layer-group"
-        label="套图工作台"
+        label="矩阵工作台"
         active={currentView === "batch"}
         badge={batchJobCount}
         onClick={() => { onViewChange("batch"); closeMobile(); }}

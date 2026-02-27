@@ -258,7 +258,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
                   );
                 })}
                 {filteredJobs.length === 0 && (
-                  <div className="text-xs text-gray-500 py-6 text-center">没有匹配的套图任务</div>
+                  <div className="text-xs text-gray-500 py-6 text-center">没有匹配的矩阵任务</div>
                 )}
               </div>
             </div>
@@ -299,7 +299,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
             <button
               onClick={onCreateJob}
               className="px-2.5 py-1.5 text-xs rounded-md border border-dark-600 bg-dark-900 text-gray-300 hover:text-gray-100 hover:bg-dark-700 transition-colors"
-              title="新建套图任务"
+              title="新建矩阵任务"
             >
               <Icon name="plus" />
             </button>
@@ -398,7 +398,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
           </div>
           <div className="flex-1">
             <div className="text-xs text-banana-300 font-medium">
-              正在生成套图，请稍候...
+              正在生成矩阵，请稍候...
             </div>
             <div className="text-[11px] text-banana-400/70 mt-0.5">
               生成完成后可在工作台查看结果
@@ -415,7 +415,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
 
       {/* Main content area */}
       {!selectedJob ? (
-        <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">暂无套图任务</div>
+        <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">暂无矩阵任务</div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain custom-scrollbar p-4 space-y-3">
           {selectedJob.slots.map((slot, idx) => {
