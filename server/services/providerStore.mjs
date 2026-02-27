@@ -184,14 +184,20 @@ export function updateAllowedModels(id, models) {
   target.allowedModels = models;
 }
 
-/** Find a provider whose allowedModels includes the given model. Prefers active. Case-insensitive. */
+/** Strip known suffixes (-2k, etc.) and lowercase for matching. */
+export function normalizeModelId(id) {
+  if (!id) return "";
+  return id.toLowerCase().replace(/-2k$/i, "");
+}
+
+/** Find a provider whose allowedModels includes the given model. Prefers active. Case-insensitive, suffix-normalized. */
 export function findProviderForModel(modelId) {
   if (!modelId) return null;
-  const needle = modelId.toLowerCase();
+  const needle = normalizeModelId(modelId);
   let fallback = null;
   for (const p of providers.values()) {
     if (!Array.isArray(p.allowedModels)) continue;
-    if (!p.allowedModels.some((m) => m.toLowerCase() === needle)) continue;
+    if (!p.allowedModels.some((m) => normalizeModelId(m) === needle)) continue;
     if (p.isActive) return p;
     if (!fallback) fallback = p;
   }

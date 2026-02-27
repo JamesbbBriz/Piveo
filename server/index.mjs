@@ -11,6 +11,7 @@ import authRoutes, { requireAuth, seedUser, isSuperAdmin } from "./routes/auth.m
 import dataRoutes from "./routes/data.mjs";
 import { checkQuota, recordUsage } from "./services/usageTracker.mjs";
 import * as providerStore from "./services/providerStore.mjs";
+import { normalizeModelId } from "./services/providerStore.mjs";
 import { createGeminiNativeHandler } from "./middleware/geminiAdapter.mjs";
 
 const IS_PROD = process.env.NODE_ENV === "production";
@@ -91,7 +92,9 @@ const upstreamImageInFlightByUser = new Map();
 
 const isGuardedImageRoute = (rawUrl) => {
   const url = String(rawUrl || "");
-  return url.includes("/v1/images/generations") || url.includes("/v1/images/edits");
+  return url.includes("/v1/images/generations")
+      || url.includes("/v1/images/edits")
+      || url.includes("/v1/chat/completions");
 };
 
 const upstreamGuard = (req, res, next) => {
@@ -141,7 +144,8 @@ const quotaGuard = (req, res, next) => {
   if (!user) return next();
   req._quotaUserId = user.id;
   if (isSuperAdmin(username)) return next();
-  const result = checkQuota(user.id);
+  const userInFlight = Number(upstreamImageInFlightByUser.get(username) || 0);
+  const result = checkQuota(user.id, userInFlight);
   if (!result.allowed) {
     return res.status(429).json({ ok: false, message: result.message, quota_exceeded: true });
   }
@@ -220,7 +224,10 @@ app.use(
       proxyRes: (proxyRes, req) => {
         const requestId = String(req.requestId || "");
         const { baseUrl } = getUpstreamConfig(req._routeModel);
-        if (req.originalUrl.includes("/v1/images/generations") || req.originalUrl.includes("/v1/images/edits")) {
+        const isImageGen = req.originalUrl.includes("/v1/images/generations");
+        const isImageEdit = req.originalUrl.includes("/v1/images/edits");
+        const isChatComp = req.originalUrl.includes("/v1/chat/completions");
+        if (isImageGen || isImageEdit || isChatComp) {
           console.info(
             `[UPSTREAM] ${requestId || "-"} ${req.method} ${req.originalUrl} <- ${proxyRes.statusCode || 0}`
           );
@@ -229,9 +236,10 @@ app.use(
               recordUsage({
                 userId: req._quotaUserId,
                 username: String(req.authUser || ""),
-                endpoint: req.originalUrl.includes("/v1/images/generations")
-                  ? "/v1/images/generations" : "/v1/images/edits",
-                model: req._routeModel || null,
+                endpoint: isImageGen ? "/v1/images/generations"
+                  : isImageEdit ? "/v1/images/edits"
+                  : "/v1/chat/completions",
+                model: normalizeModelId(req._routeModel) || null,
                 statusCode: proxyRes.statusCode || 0,
                 requestId,
               });

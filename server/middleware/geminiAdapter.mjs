@@ -7,6 +7,8 @@
  * existing http-proxy-middleware.
  */
 
+import { normalizeModelId } from "../services/providerStore.mjs";
+
 const LOG = "[GEMINI-ADAPTER]";
 
 // ---------------------------------------------------------------------------
@@ -520,7 +522,7 @@ export function createGeminiNativeHandler(getUpstreamConfig, { recordUsage, isSu
             userId: req._quotaUserId,
             username: String(req.authUser || ""),
             endpoint: req.path,
-            model: body.model || null,
+            model: normalizeModelId(body.model) || null,
             statusCode: res.statusCode || 200,
             requestId: req.requestId || "",
           });
@@ -534,6 +536,20 @@ export function createGeminiNativeHandler(getUpstreamConfig, { recordUsage, isSu
       console.error(
         `${LOG} ${requestId || "-"} error: ${err.message}`
       );
+
+      // Record failed usage too
+      if (req._quotaUserId && recordUsage) {
+        try {
+          recordUsage({
+            userId: req._quotaUserId,
+            username: String(req.authUser || ""),
+            endpoint: req.path,
+            model: normalizeModelId(body.model) || null,
+            statusCode: status,
+            requestId: requestId || "",
+          });
+        } catch (_) {}
+      }
 
       if (res.headersSent) return;
 

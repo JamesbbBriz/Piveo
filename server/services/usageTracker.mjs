@@ -35,8 +35,12 @@ export function recordUsage({ userId, username, endpoint, model, statusCode, req
 /**
  * Check if a user is within their quota limits.
  * Returns { allowed: true } or { allowed: false, message: string }.
+ *
+ * @param {string} userId
+ * @param {number} [inflightCount=0] - Number of in-flight requests already past quota guard
+ *   for this user. Added to recorded usage to prevent concurrent requests from bypassing limits.
  */
-export function checkQuota(userId) {
+export function checkQuota(userId, inflightCount = 0) {
   const db = getDb();
   const quota = db.prepare("SELECT monthly_limit, daily_limit FROM user_quotas WHERE user_id = ?").get(userId);
 
@@ -56,7 +60,7 @@ export function checkQuota(userId) {
       `SELECT COUNT(*) AS cnt FROM usage_records
        WHERE user_id = ? AND created_at >= ? AND status_code >= 200 AND status_code < 300`
     ).get(userId, dayStart).cnt;
-    if (dailyCount >= dailyLimit) {
+    if ((dailyCount + inflightCount) >= dailyLimit) {
       return { allowed: false, message: "已达到今日使用上限，请明天再试。" };
     }
   }
@@ -67,7 +71,7 @@ export function checkQuota(userId) {
       `SELECT COUNT(*) AS cnt FROM usage_records
        WHERE user_id = ? AND created_at >= ? AND status_code >= 200 AND status_code < 300`
     ).get(userId, monthStart).cnt;
-    if (monthlyCount >= monthlyLimit) {
+    if ((monthlyCount + inflightCount) >= monthlyLimit) {
       return { allowed: false, message: "已达到本月使用上限，请联系管理员。" };
     }
   }
