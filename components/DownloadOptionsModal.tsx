@@ -64,7 +64,7 @@ export const DownloadOptionsModal: React.FC<DownloadOptionsModalProps> = ({
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       let cancelled = false;
-      blobToFormat(sourceBlob, "webp", options.quality)
+      blobToFormat(sourceBlob, options.format, options.quality)
         .then((out) => {
           if (!cancelled) {
             setEstimatedSize(out.size);
@@ -83,7 +83,7 @@ export const DownloadOptionsModal: React.FC<DownloadOptionsModalProps> = ({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [sourceBlob, options.quality]);
+  }, [sourceBlob, options.format, options.quality]);
 
   if (!isOpen) return null;
 
@@ -98,8 +98,26 @@ export const DownloadOptionsModal: React.FC<DownloadOptionsModalProps> = ({
         </div>
         <div className="p-4 space-y-4">
           <div>
+            <div className="text-xs text-gray-400 mb-2">格式</div>
+            <div className="flex gap-2">
+              {(["webp", "jpeg"] as const).map((fmt) => (
+                <button
+                  key={fmt}
+                  onClick={() => onChange({ ...options, format: fmt })}
+                  className={`flex-1 py-1.5 text-xs rounded-md border font-semibold transition-colors ${
+                    options.format === fmt
+                      ? "border-banana-500 bg-banana-500 text-dark-900"
+                      : "border-dark-600 bg-dark-900 text-gray-300 hover:bg-dark-700"
+                  }`}
+                >
+                  {fmt.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
             <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
-              <span>WEBP 质量</span>
+              <span>{options.format.toUpperCase()} 质量</span>
               <span className="text-gray-200 font-semibold">{options.quality}</span>
             </div>
             <input
