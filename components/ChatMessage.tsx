@@ -35,7 +35,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
   const downloadImage = (imageUrl: string, imageId?: string) => {
     setPendingDownload({
       url: imageUrl,
-      basename: imageId ? `topseller-gen-${imageId}` : `topseller-gen-${Date.now()}`,
+      basename: imageId ? `piveo-gen-${imageId}` : `piveo-gen-${Date.now()}`,
     });
   };
 

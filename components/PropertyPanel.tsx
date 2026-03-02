@@ -33,9 +33,9 @@ const Section: React.FC<{
   defaultExpanded?: boolean;
 }> = ({ title, children }) => {
   return (
-    <div className="border-b border-dark-700">
+    <div className="border-b border-[var(--piveo-border)]">
       <div className="px-4 pt-2.5 pb-1">
-        <span className="text-[11px] font-semibold text-gray-300 tracking-wide">{title}</span>
+        <span className="text-[11px] font-semibold text-[var(--piveo-text)] tracking-wide">{title}</span>
       </div>
       <div className="px-4 pb-3">
         {children}
@@ -56,7 +56,7 @@ const ImageDetailView: React.FC<{
   const dateStr = `${String(createdDate.getMonth() + 1).padStart(2, '0')}-${String(createdDate.getDate()).padStart(2, '0')} ${String(createdDate.getHours()).padStart(2, '0')}:${String(createdDate.getMinutes()).padStart(2, '0')}`;
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto custom-scrollbar bg-dark-900">
+    <div className="piveo-property-panel flex flex-col h-full overflow-y-auto custom-scrollbar bg-[var(--piveo-card)]">
       {/* Header */}
       <div className="px-4 py-3 border-b border-dark-700 flex items-center gap-2">
         <button
@@ -429,9 +429,9 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
   }
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto custom-scrollbar bg-dark-900">
-      <div className="px-4 py-3 border-b border-dark-700">
-        <span className="text-xs font-bold text-gray-300 tracking-wider">创作设置</span>
+    <div className="piveo-property-panel flex flex-col h-full overflow-y-auto custom-scrollbar bg-[var(--piveo-card)]">
+      <div className="px-4 py-3 border-b border-[var(--piveo-border)] bg-white">
+        <span className="text-xs font-bold text-[var(--piveo-text)] tracking-wider">创作设置</span>
       </div>
 
       {/* Product Image */}

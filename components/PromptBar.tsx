@@ -1,6 +1,8 @@
 import React, { useRef } from 'react';
 import type { ReferenceIntent } from '../types';
 import { Icon } from './Icon';
+import { Button } from '@/components/base/buttons/button';
+import { Tabs } from '@/components/application/tabs/tabs';
 
 const INTENT_OPTIONS: { value: ReferenceIntent; label: string }[] = [
   { value: 'all', label: '全部参考' },
@@ -39,6 +41,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   disabled = false,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const intentItems = INTENT_OPTIONS;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -72,7 +75,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   const canSend = (inputText.trim() || selectedImage) && !isGenerating && !disabled;
 
   return (
-    <div className="bg-dark-800 border-t border-dark-700 p-4 lg:p-4 shrink-0">
+    <div className="bg-[var(--piveo-card)] border-t border-[var(--piveo-border)] p-4 lg:p-4 shrink-0">
       <div className="w-full flex flex-col gap-2">
         {/* Selected image preview + intent selector */}
         {selectedImage && (
@@ -81,44 +84,50 @@ export const PromptBar: React.FC<PromptBarProps> = ({
               <img
                 src={selectedImage.url}
                 alt="参考图"
-                className="h-16 rounded-lg border border-emerald-500/50 object-cover shadow-lg"
+                className="h-16 rounded-lg border border-[var(--piveo-border)] object-cover shadow-sm"
                 loading="lazy"
                 decoding="async"
               />
               <button
                 onClick={onClearImage}
-                className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] shadow-md hover:bg-red-600"
+                className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] shadow-sm hover:bg-red-600"
               >
                 <Icon name="times" />
               </button>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {INTENT_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => onReferenceIntentChange(opt.value)}
-                  className={`px-2.5 py-1 text-[11px] rounded-md border transition-colors ${
-                    referenceIntent === opt.value
-                      ? 'bg-banana-500/20 border-banana-500/60 text-banana-300'
-                      : 'bg-dark-700 border-dark-600 text-gray-400 hover:border-dark-500 hover:text-gray-300'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
+            <Tabs selectedKey={referenceIntent} onSelectionChange={(key) => onReferenceIntentChange(String(key) as ReferenceIntent)}>
+              <Tabs.List
+                items={intentItems}
+                type="button-gray"
+                size="sm"
+                className="bg-transparent ring-0 p-0 gap-1.5 overflow-x-auto scrollbar-hide"
+              >
+                {(opt) => (
+                  <Tabs.Item
+                    id={opt.value}
+                    textValue={opt.label}
+                    className="!text-[11px] !py-1 !px-2.5 !rounded-md !border !border-[var(--piveo-border)] !bg-white !text-[var(--piveo-body)]"
+                  >
+                    {opt.label}
+                  </Tabs.Item>
+                )}
+              </Tabs.List>
+            </Tabs>
           </div>
         )}
 
         {/* Input area */}
-        <div className="flex items-end gap-2 bg-dark-900 border border-dark-600 rounded-xl p-2 focus-within:border-dark-500 transition-colors">
-          <button
+        <div className="flex items-end gap-2 bg-white border border-[var(--piveo-border)] rounded-xl p-2 focus-within:border-[var(--piveo-text)] transition-colors">
+          <Button
+            type="button"
+            color="tertiary"
+            size="sm"
             onClick={() => fileInputRef.current?.click()}
-            className="p-2.5 text-gray-400 hover:text-banana-400 transition-colors rounded-lg hover:bg-dark-800"
-            title="上传图片"
+            className="!p-2.5 !text-[var(--piveo-body)] hover:!text-[var(--piveo-text)]"
+            aria-label="上传图片"
           >
             <Icon name="image" className="text-lg" />
-          </button>
+          </Button>
           <input
             type="file"
             ref={fileInputRef}
@@ -132,34 +141,37 @@ export const PromptBar: React.FC<PromptBarProps> = ({
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder="例如：给人物加一顶红色帽子..."
-            className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-gray-200 placeholder-gray-600 max-h-32 py-2.5 resize-none custom-scrollbar text-sm"
+            className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-[var(--piveo-text)] placeholder-[var(--piveo-muted)] max-h-32 py-2.5 resize-none custom-scrollbar text-sm"
             rows={1}
             style={{ minHeight: '40px' }}
             disabled={disabled}
           />
-          <button
+          <Button
+            type="button"
+            color="tertiary"
+            size="sm"
             onClick={onEnhance}
-            disabled={!inputText.trim() || isEnhancing || isGenerating}
-            className={`p-2.5 text-banana-500 hover:text-banana-400 rounded-lg hover:bg-dark-800 disabled:opacity-40 ${isEnhancing ? 'animate-pulse' : ''}`}
-            title="AI 提示词增强"
+            isDisabled={!inputText.trim() || isEnhancing || isGenerating}
+            isLoading={isEnhancing}
+            className="!p-2.5 !text-[var(--piveo-accent)] hover:!text-[var(--piveo-accent-hover)]"
+            aria-label="AI 提示词增强"
           >
             <Icon name="magic" />
-          </button>
-          <button
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            color="primary"
             onClick={onSend}
-            disabled={!canSend}
-            className={`p-2.5 rounded-lg font-semibold transition-all ${
-              !canSend
-                ? 'bg-dark-700 text-gray-500'
-                : 'bg-banana-500 hover:bg-banana-400 text-dark-900 shadow-lg'
-            }`}
-            title="发送"
+            isDisabled={!canSend}
+            className="!p-2.5 !bg-[var(--piveo-text)] !text-white hover:!bg-[var(--piveo-accent-hover)] disabled:!bg-[var(--piveo-border)] disabled:!text-[var(--piveo-muted)]"
+            aria-label="发送"
           >
             <Icon name="paper-plane" />
-          </button>
+          </Button>
         </div>
 
-        <div className="text-[10px] text-gray-600">
+        <div className="text-[10px] text-[var(--piveo-muted)]">
           回车发送，Shift+回车换行。支持粘贴图片。
         </div>
       </div>

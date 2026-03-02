@@ -139,13 +139,13 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
       })),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    downloadBlob(blob, `topseller-assets-${Date.now()}.json`);
+    downloadBlob(blob, `piveo-assets-${Date.now()}.json`);
   };
 
   const downloadOne = async (a: AssetItem) => {
     try {
       await downloadImageWithFormat(a.url, {
-        basename: `topseller-${a.id}`,
+        basename: `piveo-${a.id}`,
         quality: downloadOptions.quality,
       });
     } catch (e) {
@@ -197,7 +197,7 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
       await Promise.all(workers);
 
       const blob = await zip.generateAsync({ type: "blob" });
-      downloadBlob(blob, `topseller-assets-${Date.now()}.zip`);
+      downloadBlob(blob, `piveo-assets-${Date.now()}.zip`);
       if (skipped > 0) {
         addToast({ type: 'warning', message: `导出完成，跳过 ${skipped} 张失效图片。` });
       } else {

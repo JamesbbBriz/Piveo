@@ -1,5 +1,5 @@
 {
-  "name": "TopSeller 图销冠工作室",
-  "description": "用于电商图片生成与编辑的中文创作工作台，支持 OpenAI 样式接口、系统指令、画幅控制和项目历史。",
+  "name": "Piveo",
+  "description": "单图输入，一键生成套图与首帧视频的 AI 创作工作台，内建 BrandKit 品牌 DNA 约束。",
   "requestFramePermissions": []
 }

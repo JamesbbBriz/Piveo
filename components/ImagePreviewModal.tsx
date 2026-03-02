@@ -26,7 +26,7 @@ export const ImagePreviewModal: React.FC<ImagePreviewModalProps> = ({ imageUrl, 
     saveDownloadOptions(downloadOptions);
     try {
       await downloadImageWithFormat(imageUrl, {
-        basename: `topseller-preview-${Date.now()}`,
+        basename: `piveo-preview-${Date.now()}`,
         quality: downloadOptions.quality,
       });
       setDownloadOpen(false);

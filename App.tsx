@@ -1054,7 +1054,7 @@ const AppInner: React.FC = () => {
         if (image.imageUrl) {
           const options = loadDownloadOptions();
           void downloadImageWithFormat(image.imageUrl, {
-            basename: `topseller-${image.id}`,
+            basename: `piveo-${image.id}`,
             quality: options.quality,
           });
         }
@@ -1888,7 +1888,7 @@ const AppInner: React.FC = () => {
     if (!v.imageUrl) return;
     const options = loadDownloadOptions();
     await downloadImageWithFormat(v.imageUrl, {
-      basename: `topseller-batch-${v.id}`,
+      basename: `piveo-batch-${v.id}`,
       quality: options.quality,
     });
   }, []);
@@ -2569,36 +2569,36 @@ const AppInner: React.FC = () => {
 
   if (!authReady) {
     return (
-      <div className="min-h-screen bg-dark-900 text-gray-200 flex items-center justify-center">
-        <div className="text-sm text-gray-400">正在检查登录状态...</div>
+      <div className="min-h-screen bg-white text-[var(--piveo-text)] flex items-center justify-center">
+        <div className="text-sm text-[var(--piveo-body)]">正在检查登录状态...</div>
       </div>
     );
   }
 
   if (!authUser) {
     return (
-      <div className="min-h-screen bg-dark-900 text-gray-200 flex items-center justify-center p-4">
-        <form onSubmit={handleLoginSubmit} className="w-full max-w-sm bg-dark-800 border border-dark-700 rounded-2xl p-6 space-y-4 shadow-2xl">
-          <div className="text-xl font-bold text-banana-400">TopSeller 图销冠</div>
-          <div className="text-sm text-gray-400">请登录后继续使用。</div>
+      <div className="min-h-screen bg-white text-[var(--piveo-text)] flex items-center justify-center p-4">
+        <form onSubmit={handleLoginSubmit} className="w-full max-w-sm bg-[var(--piveo-card)] border border-[var(--piveo-border)] rounded-2xl p-6 space-y-4 shadow-[0_4px_12px_rgba(0,0,0,0.06)]">
+          <div className="text-xl font-bold text-[var(--piveo-accent)]">Piveo</div>
+          <div className="text-sm text-[var(--piveo-body)]">请登录后继续使用。</div>
           <div className="space-y-2">
-            <label className="text-xs text-gray-400">账号</label>
+            <label className="text-xs text-[var(--piveo-body)]">账号</label>
             <input
               type="text"
               value={loginForm.username}
               onChange={(e) => setLoginForm((prev) => ({ ...prev, username: e.target.value }))}
-              className="w-full bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-banana-500"
+              className="w-full bg-white border border-[var(--piveo-border)] rounded-lg px-3 py-2 text-sm text-[var(--piveo-text)] focus:outline-none focus:border-[var(--piveo-text)]"
               placeholder="请输入账号"
               autoComplete="username"
             />
           </div>
           <div className="space-y-2">
-            <label className="text-xs text-gray-400">密码</label>
+            <label className="text-xs text-[var(--piveo-body)]">密码</label>
             <input
               type="password"
               value={loginForm.password}
               onChange={(e) => setLoginForm((prev) => ({ ...prev, password: e.target.value }))}
-              className="w-full bg-dark-900 border border-dark-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-banana-500"
+              className="w-full bg-white border border-[var(--piveo-border)] rounded-lg px-3 py-2 text-sm text-[var(--piveo-text)] focus:outline-none focus:border-[var(--piveo-text)]"
               placeholder="请输入密码"
               autoComplete="current-password"
             />
@@ -2607,7 +2607,7 @@ const AppInner: React.FC = () => {
           <button
             type="submit"
             disabled={authLoading}
-            className="w-full bg-banana-500 hover:bg-banana-400 disabled:opacity-60 text-dark-900 font-semibold py-2.5 rounded-lg transition-colors"
+            className="w-full bg-[var(--piveo-accent)] hover:bg-[var(--piveo-accent-hover)] disabled:opacity-60 text-white font-semibold py-2.5 rounded-lg transition-colors"
           >
             {authLoading ? "登录中..." : "登录"}
           </button>
@@ -2618,10 +2618,10 @@ const AppInner: React.FC = () => {
 
   if (!hasHydratedStorage) {
     return (
-      <div className="min-h-screen bg-dark-900 text-gray-200 flex items-center justify-center">
+      <div className="min-h-screen bg-white text-[var(--piveo-text)] flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-6 h-6 border-2 border-banana-400 border-t-transparent rounded-full animate-spin" />
-          <div className="text-sm text-gray-400">正在加载数据...</div>
+          <div className="w-6 h-6 border-2 border-[var(--piveo-accent)] border-t-transparent rounded-full animate-spin" />
+          <div className="text-sm text-[var(--piveo-body)]">正在加载数据...</div>
         </div>
       </div>
     );
@@ -2642,8 +2642,35 @@ const AppInner: React.FC = () => {
     }
   };
 
+  const onboardingProps = {
+    onFileUpload: handleOnboardingFileUpload,
+    onPaste: handleOnboardingPaste,
+    onQuickStart: handleOnboardingQuickStart,
+    onPromptSubmit: handleOnboardingPromptSubmit,
+    templates: templates.map((t) => ({ name: t.name, content: t.content })),
+    products,
+    onProductSelect: (product: ProductCatalogItem) => {
+      const settings = currentSession?.settings;
+      if (settings) {
+        handleUpdateSettings({ ...settings, productImage: { id: product.id, imageUrl: product.imageUrl, createdAt: Date.now() } });
+      }
+    },
+    activeBrandKit,
+    onSetupBrandKit: () => setNavView('brandkit'),
+  };
+
+  const projectBatchProgress = batchGenerationProgress
+    ? {
+        generate: {
+          current: batchGenerationProgress.currentSlot,
+          total: batchGenerationProgress.totalSlots,
+          status: batchGenerationProgress.currentSlotLabel,
+        },
+      }
+    : undefined;
+
   // Property panel for the right side
-  const propertyPanelElement = navView === 'project' ? (
+  const propertyPanelElement = (navView === 'studio' || navView === 'project') ? (
     <PropertyPanel
       settings={currentSession.settings}
       onUpdateSettings={handleUpdateSettings}
@@ -2663,10 +2690,9 @@ const AppInner: React.FC = () => {
     />
   ) : undefined;
 
-  // Project view content: Gallery + PromptBar (replaces old chat view)
-  // When currentView === "batch", show BatchJobsPanel (legacy path, still functional)
+  // Project view content: restore legacy gallery + prompt flow.
   const projectViewContent = (
-    <>
+    <div className="flex-1 min-h-0 flex flex-col bg-[var(--piveo-bg)]">
       {currentView === "batch" ? (
         <div className="flex-1 min-h-0 overflow-hidden">
           <BatchJobsPanel
@@ -2704,157 +2730,75 @@ const AppInner: React.FC = () => {
         </div>
       ) : (
         <>
-          {/* Gallery view — primary project view */}
           <ImageGallery
             images={galleryImages}
             onImageClick={handleGalleryImageClick}
             onImageAction={handleGalleryImageAction}
             selectedImageId={selectedGalleryImageId || undefined}
             isGenerating={isGenerating}
+            batchProgress={projectBatchProgress}
+            onboardingProps={onboardingProps}
             onOpenBatchSet={openBatchSetModal}
             onGoToBatch={() => uiDispatch({ type: SET_CURRENT_VIEW, payload: 'batch' })}
           />
-          {/* Generation progress bar (inline below gallery) */}
-          {isGenerating && (
-            <div className="shrink-0 px-4 py-2 border-t border-dark-700 bg-dark-800/80">
-              <div className="flex items-center gap-3">
-                <div className="w-6 h-6 rounded-full bg-banana-500 text-dark-900 flex items-center justify-center animate-pulse shrink-0">
-                  <Icon name="robot" className="text-[10px]" />
+          {(queueStatusText || generationStage || errorDetails) && (
+            <div className="border-t border-[var(--piveo-border)] bg-[var(--piveo-card)] px-4 py-2.5 space-y-1.5">
+              {queueStatusText && <div className="text-[11px] text-[var(--piveo-body)]">{queueStatusText}</div>}
+              {generationStage && (
+                <div className="text-[11px] text-[var(--piveo-accent)]">
+                  {generationStage}
+                  {generationProgress ? ` (${generationProgress.current}/${generationProgress.total})` : ''}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-[11px] text-banana-400">
-                    {generationStage || (currentSession.settings.selectedModelId ? "正在同步已锁定的人物..." : "正在整理视觉上下文...")}
-                  </span>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] text-gray-500">
-                      {generationProgress
-                        ? `${generationProgress.current}/${generationProgress.total}`
-                        : "准备中..."}
-                    </span>
-                    {queueStatusText && (
-                      <span className="text-[10px] text-gray-600">{queueStatusText}</span>
-                    )}
+              )}
+              {errorDetails && (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[11px] text-red-600 truncate">{errorDetails.message}</div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => void retryLastGeneration()}
+                      disabled={isGenerating}
+                      className="px-2 py-1 text-[10px] rounded border border-[var(--piveo-border)] text-[var(--piveo-text)] bg-white hover:bg-[#EEF2F6] disabled:opacity-50"
+                    >
+                      重试
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelGeneration}
+                      disabled={!isGenerating}
+                      className="px-2 py-1 text-[10px] rounded border border-[var(--piveo-border)] text-[var(--piveo-text)] bg-white hover:bg-[#EEF2F6] disabled:opacity-50"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => uiDispatch({ type: SET_ERROR_DETAILS, payload: null })}
+                      className="px-2 py-1 text-[10px] rounded border border-[var(--piveo-border)] text-[var(--piveo-body)] bg-white hover:bg-[#EEF2F6]"
+                    >
+                      关闭
+                    </button>
                   </div>
                 </div>
-                <button
-                  onClick={cancelGeneration}
-                  className="px-2 py-1 text-[10px] bg-dark-900 hover:bg-dark-700 text-gray-200 border border-dark-600 rounded-md shrink-0"
-                  title="取消当前生成"
-                >
-                  取消
-                </button>
-              </div>
+              )}
             </div>
           )}
-          {/* Error banner (inline expandable) */}
-          {errorDetails && (
-            <div className="bg-dark-800 border-t border-dark-700 px-4 py-2 shrink-0">
-              <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-red-300 truncate max-w-full">
-                    {getFriendlyErrorMessage(errorDetails.message)}
-                  </span>
-                  <button
-                    onClick={retryLastGeneration}
-                    disabled={!lastRunRef.current || isGenerating}
-                    className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md disabled:opacity-40"
-                  >
-                    重试
-                  </button>
-                  <button
-                    onClick={() => setIsErrorExpanded((v) => !v)}
-                    className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md"
-                  >
-                    {isErrorExpanded ? "收起详情" : "查看详情"}
-                  </button>
-                  <button
-                    onClick={() => {
-                      uiDispatch({ type: SET_ERROR_DETAILS, payload: null });
-                      setIsErrorExpanded(false);
-                    }}
-                    className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-300 border border-dark-600 rounded-md"
-                  >
-                    忽略
-                  </button>
-                </div>
-                {/* Expandable error details inline */}
-                {isErrorExpanded && (
-                  <div className="mt-3 space-y-2 border-t border-red-500/20 pt-3">
-                    <div className="grid grid-cols-2 gap-2 text-[11px]">
-                      <div>
-                        <span className="text-gray-500">时间：</span>
-                        <span className="text-gray-300">{new Date(errorDetails.when).toLocaleString()}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">阶段：</span>
-                        <span className="text-gray-300">{errorDetails.stage || "—"}</span>
-                      </div>
-                      {errorDetails.requestId && (
-                        <div>
-                          <span className="text-gray-500">请求 ID：</span>
-                          <span className="text-gray-300 break-all">{errorDetails.requestId}</span>
-                        </div>
-                      )}
-                      {typeof errorDetails.status === "number" && (
-                        <div>
-                          <span className="text-gray-500">HTTP：</span>
-                          <span className="text-gray-300">{errorDetails.status}</span>
-                        </div>
-                      )}
-                    </div>
-                    {Array.isArray(errorDetails.advice) && errorDetails.advice.length > 0 && (
-                      <div className="text-[11px]">
-                        <div className="text-gray-500 mb-1">建议操作：</div>
-                        {errorDetails.advice.map((item, idx) => (
-                          <div key={idx} className="text-gray-300 leading-relaxed">{idx + 1}. {item}</div>
-                        ))}
-                      </div>
-                    )}
-                    <div>
-                      <button
-                        onClick={async () => {
-                          const payload = {
-                            when: errorDetails.when,
-                            stage: errorDetails.stage,
-                            message: errorDetails.message,
-                            requestId: errorDetails.requestId,
-                            status: errorDetails.status,
-                            endpoint: errorDetails.endpoint,
-                            extra: errorDetails.extra || {},
-                          };
-                          try { await navigator.clipboard.writeText(JSON.stringify(payload, null, 2)); } catch {}
-                        }}
-                        className="px-2.5 py-1 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-200 border border-dark-600 rounded-md"
-                      >
-                        复制诊断信息
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-          {/* Prompt Bar */}
           <PromptBar
             inputText={inputText}
             onInputChange={(text) => uiDispatch({ type: SET_INPUT_TEXT, payload: text })}
-            onSend={handleSendMessage}
-            onImageUpload={(file) => {
-              const reader = new FileReader();
-              reader.onloadend = () => uiDispatch({ type: SET_SELECTED_IMAGE, payload: reader.result as string });
-              reader.readAsDataURL(file);
-            }}
-            onEnhance={handleEnhancePrompt}
+            onSend={() => { void handleSendMessage(); }}
+            onImageUpload={handleOnboardingFileUpload}
+            onEnhance={() => { void handleEnhancePrompt(); }}
             isGenerating={isGenerating}
             isEnhancing={isEnhancing}
-            selectedImage={selectedImage ? { url: selectedImage, source: 'user' } : null}
-            onClearImage={() => { uiDispatch({ type: SET_SELECTED_IMAGE, payload: null }); uiDispatch({ type: SET_REFERENCE_INTENT, payload: 'all' }); }}
+            selectedImage={selectedImage ? { url: selectedImage, source: 'manual' } : null}
+            onClearImage={() => uiDispatch({ type: SET_SELECTED_IMAGE, payload: null })}
             referenceIntent={referenceIntent}
             onReferenceIntentChange={(intent) => uiDispatch({ type: SET_REFERENCE_INTENT, payload: intent })}
           />
+          <div ref={chatEndRef} />
         </>
       )}
-    </>
+    </div>
   );
 
   return (
@@ -2887,22 +2831,10 @@ const AppInner: React.FC = () => {
           onImageAction: handleGalleryImageAction,
           selectedImageId: selectedGalleryImageId || undefined,
           isGenerating,
-          onboardingProps: {
-            onFileUpload: handleOnboardingFileUpload,
-            onPaste: handleOnboardingPaste,
-            onQuickStart: handleOnboardingQuickStart,
-            onPromptSubmit: handleOnboardingPromptSubmit,
-            templates: templates.map((t) => ({ name: t.name, content: t.content })),
-            products,
-            onProductSelect: (product) => {
-              const settings = currentSession?.settings;
-              if (settings) {
-                handleUpdateSettings({ ...settings, productImage: { id: product.id, imageUrl: product.imageUrl, createdAt: Date.now() } });
-              }
-            },
-            activeBrandKit,
-            onSetupBrandKit: () => setNavView('brandkit'),
-          },
+          batchProgress: projectBatchProgress,
+          onboardingProps,
+          onOpenBatchSet: openBatchSetModal,
+          onGoToBatch: () => uiDispatch({ type: SET_CURRENT_VIEW, payload: 'batch' }),
         }}
         projectListProps={{
           projects: sessions,

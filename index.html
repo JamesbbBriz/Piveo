@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TopSeller 图销冠工作室</title>
+    <title>Piveo - Generate Image Sets and Video</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" />
@@ -12,15 +12,26 @@
         theme: {
           extend: {
             colors: {
+              piveo: {
+                bg: '#FFFFFF',
+                card: '#EEF2F6',
+                border: '#D0D5DD',
+                text: '#101828',
+                body: '#344054',
+                muted: '#667085',
+                accent: '#101828',
+                accentHover: '#1D2939',
+                accentActive: '#0B111B',
+              },
               banana: {
-                50: '#fffaeb',
-                100: '#fff3c7',
-                200: '#ffe685',
-                300: '#ffd247',
-                400: '#ffbd1a',
-                500: '#f59e0b', // 大致等同 Tailwind amber-500
-                600: '#d97706',
-                900: '#78350f',
+                50: '#F9FAFB',
+                100: '#F3F4F6',
+                200: '#E5E7EB',
+                300: '#D1D5DB',
+                400: '#9CA3AF',
+                500: '#101828',
+                600: '#1D2939',
+                900: '#0B111B',
               },
               dark: {
                 900: '#121212',
@@ -39,8 +50,8 @@
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
       body {
-        background-color: #121212;
-        color: #e5e5e5;
+        background-color: #ffffff;
+        color: #101828;
       }
       /* Custom Scrollbar */
       ::-webkit-scrollbar {
@@ -48,14 +59,14 @@
         height: 8px;
       }
       ::-webkit-scrollbar-track {
-        background: #1e1e1e; 
+        background: #e4e7ec;
       }
       ::-webkit-scrollbar-thumb {
-        background: #3d3d3d; 
+        background: #98a2b3;
         border-radius: 4px;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #555; 
+        background: #667085;
       }
     </style>
   <script type="importmap">
@@ -68,7 +79,6 @@
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
 </head>
   <body>
     <div id="root"></div>

@@ -35,22 +35,22 @@ const RailBtn: React.FC<{
     onClick={onClick}
     className={`relative w-full px-1 py-1.5 flex flex-col items-center gap-0.5 rounded-lg transition-colors
       ${active
-        ? "bg-banana-500/20 text-banana-400"
-        : "text-gray-400 hover:text-gray-200 hover:bg-dark-700/60"
+        ? "bg-[#E7ECF3] text-[var(--piveo-accent)]"
+        : "text-[var(--piveo-body)] hover:text-[var(--piveo-text)] hover:bg-[#E7ECF3]"
       } ${className ?? ""}`}
     title={label}
   >
     {svgIcon || <Icon name={icon} className="text-[14px]" />}
     <span className="text-[9px] leading-tight">{label}</span>
     {badge != null && badge > 0 && (
-      <span className="absolute top-0.5 right-0.5 min-w-[14px] h-3.5 px-0.5 flex items-center justify-center text-[8px] font-semibold bg-banana-500 text-dark-900 rounded-full">
+      <span className="absolute top-0.5 right-0.5 min-w-[14px] h-3.5 px-0.5 flex items-center justify-center text-[8px] font-semibold bg-[var(--piveo-accent)] text-white rounded-full">
         {badge}
       </span>
     )}
   </button>
 );
 
-const RailDivider = () => <div className="w-full my-0.5 border-t border-dark-600" />;
+const RailDivider = () => <div className="w-full my-0.5 border-t border-[var(--piveo-border)]" />;
 
 export const NavRail: React.FC<NavRailProps> = ({
   navView,
@@ -82,10 +82,10 @@ export const NavRail: React.FC<NavRailProps> = ({
   return (
     <div className="flex h-full">
       {/* Icon Rail */}
-      <div className="w-16 shrink-0 flex flex-col items-center bg-dark-800 border-r border-dark-700 py-2 px-1.5 gap-0.5">
+      <div className="w-16 shrink-0 flex flex-col items-center bg-white border-r border-[var(--piveo-border)] py-2 px-1.5 gap-0.5">
         {/* Brand */}
-        <div className="w-full flex flex-col items-center py-1 mb-0.5 text-banana-400">
-          <Icon name="bolt" className="text-lg" />
+        <div className="w-full flex flex-col items-center py-1 mb-0.5 text-[var(--piveo-accent)]">
+          <div className="w-7 h-7 rounded-md bg-[var(--piveo-accent)] text-white flex items-center justify-center text-[11px] font-semibold">P</div>
         </div>
 
         {/* Team Switcher */}
@@ -100,7 +100,7 @@ export const NavRail: React.FC<NavRailProps> = ({
           icon="plus"
           label="新建项目"
           onClick={onNewSession}
-          className="text-banana-400 hover:text-banana-300"
+          className="text-[var(--piveo-accent)] hover:text-[var(--piveo-accent-hover)]"
         />
 
         {/* Project List */}
@@ -189,8 +189,8 @@ export const NavRail: React.FC<NavRailProps> = ({
           onClick={onOpenSettings}
           className={`w-full px-1 py-1.5 flex flex-col items-center gap-0.5 rounded-lg transition-colors
             ${navView === 'settings'
-              ? "bg-banana-500/20 text-banana-400"
-              : "text-gray-400 hover:text-gray-200 hover:bg-dark-700/60"
+              ? "bg-[#E7ECF3] text-[var(--piveo-accent)]"
+              : "text-[var(--piveo-body)] hover:text-[var(--piveo-text)] hover:bg-[#E7ECF3]"
             }`}
           title={authUser || "用户"}
         >
@@ -201,13 +201,13 @@ export const NavRail: React.FC<NavRailProps> = ({
 
       {/* History Panel (collapsible) */}
       {panelOpen && (
-        <div className="w-[200px] shrink-0 flex flex-col bg-dark-800 border-r border-dark-700">
+        <div className="w-[200px] shrink-0 flex flex-col bg-white border-r border-[var(--piveo-border)]">
           {/* Panel header */}
-          <div className="px-3 py-2.5 border-b border-dark-700 flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-400 tracking-wider">历史记录</span>
+          <div className="px-3 py-2.5 border-b border-[var(--piveo-border)] flex items-center justify-between">
+            <span className="text-xs font-semibold text-[var(--piveo-body)] tracking-wider">历史记录</span>
             <button
               onClick={() => setPanelOpen(false)}
-              className="text-gray-500 hover:text-gray-300 transition-colors p-0.5"
+              className="text-[var(--piveo-muted)] hover:text-[var(--piveo-text)] transition-colors p-0.5"
               title="收起面板"
             >
               <Icon name="chevron-left" className="text-xs" />
@@ -221,8 +221,8 @@ export const NavRail: React.FC<NavRailProps> = ({
                 key={session.id}
                 className={`group flex items-center justify-between p-2 rounded-md cursor-pointer transition-colors ${
                   session.id === currentSessionId
-                    ? 'bg-dark-700 text-white'
-                    : 'text-gray-400 hover:bg-dark-700/50 hover:text-gray-200'
+                    ? 'bg-[#E7ECF3] text-[var(--piveo-text)]'
+                    : 'text-[var(--piveo-body)] hover:bg-[#EEF2F6] hover:text-[var(--piveo-text)]'
                 }`}
                 onClick={() => {
                   onSelectSession(session.id);
@@ -240,14 +240,14 @@ export const NavRail: React.FC<NavRailProps> = ({
                       onDeleteSession(session.id, e);
                     }
                   }}
-                  className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition-opacity p-0.5 shrink-0"
+                  className="opacity-0 group-hover:opacity-100 text-[var(--piveo-muted)] hover:text-red-500 transition-opacity p-0.5 shrink-0"
                 >
                   <Icon name="trash-alt" className="text-[11px]" />
                 </button>
               </div>
             ))}
             {sessions.length === 0 && (
-              <div className="text-center text-gray-600 py-8 text-[12px]">
+              <div className="text-center text-[var(--piveo-muted)] py-8 text-[12px]">
                 暂无历史记录
               </div>
             )}

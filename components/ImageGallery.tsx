@@ -5,6 +5,9 @@ import { ImageCard, ImageCardSkeleton } from './ImageCard';
 import { Onboarding, type OnboardingProps } from './Onboarding';
 import { fetchImageBlob, blobToFormat, loadDownloadOptions } from '../services/imageDownload';
 import type { GeneratedImage } from '../types';
+import { Button } from '@/components/base/buttons/button';
+import { Badge } from '@/components/base/badges/badges';
+import { Tabs } from '@/components/application/tabs/tabs';
 
 export interface ImageGalleryProps {
   images: GeneratedImage[];
@@ -34,6 +37,10 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
   const [isZipping, setIsZipping] = useState(false);
   const [filterTab, setFilterTab] = useState<'all' | 'single'>('all');
   const containerRef = useRef<HTMLDivElement>(null);
+  const filterItems: Array<{ id: 'all' | 'single'; label: string }> = [
+    { id: 'all', label: '全部' },
+    { id: 'single', label: '单图' },
+  ];
 
   // Sort images by createdAt descending (newest first)
   const sortedImages = useMemo(() => {
@@ -103,7 +110,7 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `topseller-${selected.length}images-${Date.now()}.zip`;
+      a.download = `piveo-${selected.length}-images-${Date.now()}.zip`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -168,81 +175,85 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
   return (
     <div ref={containerRef} className="flex flex-col h-full min-h-0 relative">
       {/* Header bar */}
-      <div className="shrink-0 px-4 py-2.5 border-b border-zinc-800 flex items-center justify-between gap-3">
+      <div className="shrink-0 px-4 py-2.5 border-b border-[var(--piveo-border)] bg-white flex items-center justify-between gap-3">
         {/* Tabs */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setFilterTab('all')}
-            className={`px-3 py-1 rounded-md text-[11px] font-medium border transition-colors ${
-              filterTab === 'all'
-                ? 'bg-banana-500/15 text-banana-400 border-banana-500/30'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border-transparent'
-            }`}
-          >
-            全部
-          </button>
-          <button
-            onClick={() => setFilterTab('single')}
-            className={`px-3 py-1 rounded-md text-[11px] font-medium border transition-colors ${
-              filterTab === 'single'
-                ? 'bg-banana-500/15 text-banana-400 border-banana-500/30'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border-transparent'
-            }`}
-          >
-            单图
-          </button>
+        <div className="flex items-center gap-1 min-w-0">
+          <Tabs selectedKey={filterTab} onSelectionChange={(key) => setFilterTab(String(key) as 'all' | 'single')}>
+            <Tabs.List
+              items={filterItems}
+              type="button-gray"
+              size="sm"
+              className="bg-transparent ring-0 p-0 gap-1 overflow-x-auto scrollbar-hide"
+            >
+              {(tab) => (
+                <Tabs.Item
+                  id={tab.id}
+                  textValue={tab.label}
+                  className="!text-[11px] !px-3 !py-1 !rounded-md !border !border-transparent !text-[var(--piveo-body)] hover:!text-[var(--piveo-text)] hover:!bg-[#EEF2F6]"
+                >
+                  {tab.label}
+                </Tabs.Item>
+              )}
+            </Tabs.List>
+          </Tabs>
           {onGoToBatch && (
-            <button
+            <Button
+              type="button"
+              color="tertiary"
+              size="sm"
               onClick={onGoToBatch}
-              className="px-3 py-1 rounded-md text-[11px] font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-transparent transition-colors"
+              className="!text-[11px] !px-3 !py-1 !rounded-md !border !border-transparent !text-[var(--piveo-body)] hover:!text-[var(--piveo-text)] hover:!bg-[#EEF2F6]"
             >
               矩阵
-            </button>
+            </Button>
           )}
         </div>
 
         {/* Actions */}
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-zinc-500">{sortedImages.length} 张图片</span>
-          <button
+          <Badge type="pill-color" size="sm" color="gray">
+            {sortedImages.length} 张图片
+          </Badge>
+          <Button
+            type="button"
+            color={isMultiSelect ? "primary" : "secondary"}
+            size="sm"
             onClick={toggleMultiSelect}
-            className={`px-2 py-1 rounded-md text-[10px] border transition-colors ${
-              isMultiSelect
-                ? 'border-blue-500/50 bg-blue-500/10 text-blue-400'
-                : 'border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
-            }`}
+            className="!text-[10px] !px-2 !py-1"
           >
             <Icon name="check-square" className="mr-1" />
             {isMultiSelect ? '退出选择' : '多选'}
-          </button>
+          </Button>
         </div>
       </div>
 
       {/* Batch progress inline */}
       {hasBatchProgress && (
-        <div className="shrink-0 px-4 py-2 border-b border-zinc-800 bg-zinc-900/50">
+        <div className="shrink-0 px-4 py-2 border-b border-[var(--piveo-border)] bg-[var(--piveo-card)]">
           {Object.entries(batchProgress!).map(([key, prog]) => (
             <div key={key} className="flex items-center gap-2 text-[11px]">
-              <Icon name="spinner" className="fa-spin text-banana-400" />
-              <span className="text-zinc-300">
+              <Icon name="spinner" className="fa-spin text-[var(--piveo-accent)]" />
+              <span className="text-[var(--piveo-text)]">
                 正在生成 {prog.current}/{prog.total}
               </span>
-              <span className="text-zinc-500">{prog.status}</span>
+              <Badge type="pill-color" size="sm" color="warning">
+                {prog.status}
+              </Badge>
             </div>
           ))}
         </div>
       )}
 
       {/* Gallery grid */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 bg-[var(--piveo-bg)]">
         {sortedImages.length === 0 && !isGenerating ? (
           onboardingProps ? (
             <Onboarding {...onboardingProps} />
           ) : (
-            <div className="flex flex-col items-center justify-center h-full text-zinc-500 opacity-60">
+            <div className="flex flex-col items-center justify-center h-full text-[var(--piveo-body)] opacity-70">
               <Icon name="images" className="text-5xl mb-4" />
               <p className="text-sm">暂无图片</p>
-              <p className="text-xs mt-1 text-zinc-600">在下方输入提示词，开始创作</p>
+              <p className="text-xs mt-1 text-[var(--piveo-muted)]">在下方输入提示词，开始创作</p>
             </div>
           )
         ) : (
@@ -267,33 +278,31 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
 
       {/* Floating multi-select action bar */}
       {isMultiSelect && checkedCount > 0 && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2.5 bg-zinc-800 border border-zinc-600 rounded-xl shadow-2xl z-20">
-          <span className="text-[11px] text-zinc-300 whitespace-nowrap">
-            已选择 <span className="text-banana-400 font-semibold">{checkedCount}</span> 张图片
-          </span>
-          <button
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2.5 bg-white border border-[var(--piveo-border)] rounded-xl shadow-[0_4px_10px_rgba(0,0,0,0.08)] z-20">
+          <Badge type="pill-color" size="sm" color="brand">
+            已选择 {checkedCount} 张图片
+          </Badge>
+          <Button
+            type="button"
+            size="sm"
+            color="primary"
             onClick={() => void handleBatchDownload()}
-            disabled={isZipping}
-            className="px-3 py-1.5 rounded-md text-[11px] border border-banana-500 bg-banana-500 text-dark-900 font-semibold hover:bg-banana-400 transition-colors disabled:opacity-50 flex items-center gap-1.5 whitespace-nowrap"
+            isDisabled={isZipping}
+            isLoading={isZipping}
+            className="!text-[11px] !px-3 !py-1.5 whitespace-nowrap"
           >
-            {isZipping ? (
-              <>
-                <Icon name="spinner" className="fa-spin text-[10px]" />
-                打包中...
-              </>
-            ) : (
-              <>
-                <Icon name="file-archive" className="text-[10px]" />
-                下载 ZIP
-              </>
-            )}
-          </button>
-          <button
+            {!isZipping && <Icon name="file-archive" className="text-[10px]" />}
+            下载 ZIP
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            color="secondary"
             onClick={toggleMultiSelect}
-            className="px-2.5 py-1.5 rounded-md text-[11px] border border-zinc-600 text-zinc-300 hover:bg-zinc-700 transition-colors whitespace-nowrap"
+            className="!text-[11px] !px-2.5 !py-1.5 whitespace-nowrap"
           >
             取消
-          </button>
+          </Button>
         </div>
       )}
     </div>

@@ -139,7 +139,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
     if (!pendingDownload?.version.imageUrl) return;
     saveDownloadOptions(downloadOptions);
     await downloadImageWithFormat(pendingDownload.version.imageUrl, {
-      basename: `topseller-batch-${pendingDownload.version.id}`,
+      basename: `piveo-batch-${pendingDownload.version.id}`,
       quality: downloadOptions.quality,
     });
     setPendingDownload(null);
