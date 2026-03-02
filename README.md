@@ -1,96 +1,177 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+<p align="center">
+  <img src="./assets/readme/piveo-hero.svg" alt="Piveo" width="100%" />
+</p>
 
-# Piveo 本地运行
+<h1 align="center">Piveo</h1>
+<p align="center"><strong>Single Image In. Image Set + First-Frame Video Out.</strong></p>
 
-本项目是一个单图生成套图 + 首帧视频的 AI 工作台（含 BrandKit 约束），默认对接 `https://n.lconai.com`（OpenAI 风格网关）。
+<p align="center">
+  <a href="https://github.com/JamesbbBriz/Piveo"><img alt="Repo" src="https://img.shields.io/badge/repo-Piveo-111827"></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-orange"></a>
+  <img alt="React" src="https://img.shields.io/badge/React-19-149ECA">
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-6-6D28D9">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6">
+</p>
 
-## 启动
+<p align="center">
+  <a href="#english">English</a> | <a href="#中文">中文</a>
+</p>
 
-**前置条件：** Node.js
+---
 
-1. 安装依赖：
-   `npm install`
-2. 配置 `.env.local`（可参考 `.env.example`）：
-   - `UPSTREAM_AUTHORIZATION`：服务端访问上游网关的鉴权头（例如：`Bearer sk-xxx`）
-   - `UPSTREAM_API_BASE_URL`：上游网关地址（默认 `https://n.lconai.com`）
-   - 推荐开发环境：`VITE_API_BASE_URL=/api`（前端只打本地代理）
-   - `VITE_DEFAULT_IMAGE_MODEL`：默认生图模型（默认：`gemini-2.5-flash-image`）
-   - `VITE_IMAGE_FETCH_TIMEOUT_MS`：前端等待图片接口超时时间（毫秒，默认 `120000`）
-   - `VITE_ENABLE_CHAT_IMAGE_FALLBACK`：是否启用 `chat/completions` 出图回退（默认关闭，建议不上线开启）
-   - `VITE_IMAGE_REQUEST_RETRIES`：图片请求自动重试次数（默认 `2`）
-   - `VITE_IMAGE_RETRY_BASE_DELAY_MS`：重试基础延迟毫秒（默认 `1200`）
-3. 启动开发服务器（会同时启动前端和登录服务）：
-   `npm run dev`
+<a id="english"></a>
+## English
 
-如果你只想单独启动某一项：
-- 前端：`npm run dev:web`
-- 认证服务：`npm run dev:auth`
-- 端口默认：前端 `3000`，认证服务 `3101`（避免与 Vite 自动端口冲突）
+Piveo is an AI creative workstation for e-commerce and creators.
+It turns one source image into a multi-style image set and a short first-frame-driven video, with BrandKit-aware consistency.
 
-## 运行时配置
+## Highlights
 
-接口地址和鉴权令牌统一放在服务端 `.env.local` 配置（不在前端填写）：
-- `VITE_API_BASE_URL`
-- `UPSTREAM_API_BASE_URL`
-- `UPSTREAM_AUTHORIZATION`
+- Single-flow generation: upload one image, choose styles, generate image set + video.
+- BrandKit-aware output: keep visual identity constraints across assets.
+- Built-in auth + API proxy server for safer upstream key handling.
+- Batch and gallery workflows for fast review, download, and reuse.
+- Open-source governance with AGPL-3.0, contribution and security policies.
 
-模型在左侧栏底部切换器选择；切换器下方显示余额（若网关未开放 billing 端点则显示“暂不可用”）。
+## Quick Start
 
-## 登录功能
+### Requirements
 
-- 已增加登录鉴权（`/auth/login`、`/auth/session`、`/auth/logout`）。
-- 默认预置用户：
-  - 账号：`guoboss`
-  - 密码：`qazwsxedc1229`
-- 可通过 `.env.local` 覆盖：
-  - `AUTH_USER`
-  - `AUTH_PASSWORD`
-  - `AUTH_JWT_SECRET`
-- 上线建议：
-  - `AUTH_JWT_SECRET` 使用高强度随机字符串。
-  - `UPSTREAM_AUTHORIZATION` 仅放服务端环境变量，禁止使用 `VITE_` 前缀。
-  - `/api` 已强制登录后访问，登录接口已带基础限流。
-  - 使用 `npm run build` 后通过 `npm run start` 启动（同进程提供鉴权 + /api 代理 + 静态资源）。
+- Node.js 20+
+- npm 10+
 
-## 数据持久化
-
-- 已启用 `IndexedDB` 持久化（会话、模板、模特）。
-- 兼容 `localStorage` 回退。
-- 首次启动会自动把旧 `localStorage` 数据迁移到 `IndexedDB`。
-
-## 常见报错与处理
-
-- `not supported model for image generation`
-  - 原因：当前账号分组不支持你填的模型，或填到了视频模型。
-  - 处理：在左侧栏底部模型切换器里切到可用模型（推荐 `gemini-2.5-flash-image` / `gpt-image-1.5`）。
-
-- `Failed to generate model`
-  - 原因：本质仍是图片生成接口失败（通常是模型或鉴权问题）。
-  - 处理：检查 `.env.local` 中的 `UPSTREAM_AUTHORIZATION`、`UPSTREAM_API_BASE_URL`、默认模型配置。
-
-- `HTTP 504 / Gateway time-out`
-  - 原因：上游网关超时（Cloudflare 504），不是前端代码异常。
-  - 处理：重试一次；或切到更快模型（如 `gemini-2.5-flash-image`）；并确认没有走 `chat/completions` 回退链路。
-
-## 开源协议
-
-本项目采用 `GNU AGPL v3`（`AGPL-3.0-or-later`）开源。
-
-- 协议全文见 [`LICENSE`](./LICENSE)
-- 贡献规范见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)
-- 社区治理见 [`GOVERNANCE.md`](./GOVERNANCE.md)
-- 行为准则见 [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)
-- 安全策略见 [`SECURITY.md`](./SECURITY.md)
-
-## 项目改名说明
-
-项目对外品牌统一为 `Piveo`。如果你的远端仓库仍是旧名（例如 `TopSeller`），可在 GitHub 完成仓库 rename 后执行：
+### Run locally
 
 ```bash
-git remote set-url origin https://github.com/<your-org-or-user>/Piveo.git
-git remote -v
+npm install
+cp .env.example .env.local
+npm run dev
 ```
 
-> 说明：为避免影响历史数据，部分内部持久化 key 仍保留旧前缀，不影响对外品牌名称。
+App services:
+
+- Web: `http://localhost:3000`
+- Auth/API server: `http://localhost:3101`
+
+## Environment Variables
+
+Use `.env.local` (based on `.env.example`):
+
+| Variable | Description |
+| --- | --- |
+| `UPSTREAM_AUTHORIZATION` | Server-side auth header for upstream gateway |
+| `UPSTREAM_API_BASE_URL` | Upstream API base URL (default: `https://n.lconai.com`) |
+| `VITE_API_BASE_URL` | Frontend API base URL (recommended: `/api`) |
+| `VITE_DEFAULT_IMAGE_MODEL` | Default image model |
+| `AUTH_USER` / `AUTH_PASSWORD` | Local login account |
+| `AUTH_JWT_SECRET` | JWT signing secret |
+
+## Scripts
+
+```bash
+npm run dev        # web + auth server
+npm run dev:web    # web only
+npm run dev:auth   # auth/api server only
+npm run build      # production build
+npm run start      # production server
+npm test           # run tests
+```
+
+## System Overview
+
+```mermaid
+flowchart LR
+  A[Upload One Image] --> B[Scene and Style Selection]
+  B --> C[Image Set Generation]
+  B --> D[First-Frame Video Generation]
+  C --> E[Result Grid]
+  D --> E
+  E --> F[Single Download or ZIP Export]
+```
+
+## Tech Stack
+
+- Frontend: React 19 + TypeScript + Vite
+- Server: Express (auth + API proxy)
+- Storage: IndexedDB with local fallback
+- Media pipeline: image/video orchestration services
+
+## Governance
+
+- License: [AGPL-3.0-or-later](./LICENSE)
+- Contributing: [CONTRIBUTING.md](./CONTRIBUTING.md)
+- Governance model: [GOVERNANCE.md](./GOVERNANCE.md)
+- Code of conduct: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- Security policy: [SECURITY.md](./SECURITY.md)
+
+## Acknowledgement
+
+README structure inspiration: [openclaw/openclaw](https://github.com/openclaw/openclaw).
+
+---
+
+<a id="中文"></a>
+## 中文
+
+Piveo 是一个面向电商与内容创作者的 AI 创作工作台。
+它可以把一张主图快速生成成套图片和首帧驱动短视频，并通过 BrandKit 约束保持品牌一致性。
+
+## 核心能力
+
+- 单一路径生成：上传一张图，选择风格，一键生成套图 + 视频。
+- BrandKit 约束：统一品牌视觉规则，减少返工。
+- 内置鉴权与代理：上游密钥仅在服务端配置，前端不暴露。
+- 支持批量与图库流：快速筛选、复用、下载与打包。
+- 完整开源治理：AGPL 协议、贡献规范、安全策略齐备。
+
+## 本地启动
+
+### 环境要求
+
+- Node.js 20+
+- npm 10+
+
+### 启动步骤
+
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+默认服务地址：
+
+- 前端：`http://localhost:3000`
+- 鉴权/API：`http://localhost:3101`
+
+## 关键环境变量
+
+请在 `.env.local` 中配置（可参考 `.env.example`）：
+
+| 变量 | 说明 |
+| --- | --- |
+| `UPSTREAM_AUTHORIZATION` | 服务端访问上游网关的鉴权头 |
+| `UPSTREAM_API_BASE_URL` | 上游 API 地址（默认 `https://n.lconai.com`） |
+| `VITE_API_BASE_URL` | 前端请求地址（建议 `/api`） |
+| `VITE_DEFAULT_IMAGE_MODEL` | 默认生图模型 |
+| `AUTH_USER` / `AUTH_PASSWORD` | 本地登录账号 |
+| `AUTH_JWT_SECRET` | JWT 签名密钥 |
+
+## 常用命令
+
+```bash
+npm run dev        # 同时启动前端和鉴权服务
+npm run dev:web    # 仅启动前端
+npm run dev:auth   # 仅启动鉴权/API 服务
+npm run build      # 生产构建
+npm run start      # 生产运行
+npm test           # 测试
+```
+
+## 开源与社区
+
+- 协议：[LICENSE](./LICENSE)
+- 贡献：[CONTRIBUTING.md](./CONTRIBUTING.md)
+- 治理：[GOVERNANCE.md](./GOVERNANCE.md)
+- 行为准则：[CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
+- 安全策略：[SECURITY.md](./SECURITY.md)

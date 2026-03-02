@@ -1,0 +1,52 @@
+<svg width="1200" height="360" viewBox="0 0 1200 360" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Piveo Hero Banner</title>
+  <desc id="desc">Piveo: Single image in, image set plus first-frame video out.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B0F1A"/>
+      <stop offset="0.6" stop-color="#121826"/>
+      <stop offset="1" stop-color="#0A0D14"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="316" y1="116" x2="426" y2="236" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF9500"/>
+      <stop offset="1" stop-color="#FF7D00"/>
+    </linearGradient>
+    <filter id="glow" x="180" y="30" width="360" height="300" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="26" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <path d="M 28 0 L 0 0 0 28" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="360" rx="18" fill="url(#bg)"/>
+  <rect width="1200" height="360" rx="18" fill="url(#grid)"/>
+
+  <circle cx="360" cy="180" r="84" fill="url(#accent)" filter="url(#glow)" opacity="0.95"/>
+  <circle cx="360" cy="180" r="62" fill="#0B0F1A"/>
+  <path d="M360 124 L402 180 L360 236 L318 180 Z" fill="url(#accent)" opacity="0.92"/>
+  <path d="M360 138 L390 180 L360 222 L330 180 Z" fill="#0B0F1A"/>
+  <circle cx="360" cy="180" r="18" fill="url(#accent)"/>
+
+  <text x="470" y="154" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="70" font-weight="700" letter-spacing="-1">Piveo</text>
+  <text x="470" y="198" fill="#B7C0CE" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="500">Single Image to Image Set + First-Frame Video</text>
+  <text x="470" y="236" fill="#8A94A6" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="400">BrandKit-aware generation for e-commerce teams and creators</text>
+
+  <rect x="470" y="262" width="154" height="42" rx="10" fill="#FF7D00"/>
+  <text x="500" y="289" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="20" font-weight="600">Open Source</text>
+
+  <g opacity="0.6">
+    <rect x="1020" y="52" width="120" height="34" rx="8" fill="#182033"/>
+    <text x="1040" y="75" fill="#D2D8E3" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">AGPL-3.0</text>
+
+    <rect x="980" y="100" width="160" height="34" rx="8" fill="#182033"/>
+    <text x="1002" y="123" fill="#D2D8E3" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">React 19 + Vite</text>
+
+    <rect x="944" y="148" width="196" height="34" rx="8" fill="#182033"/>
+    <text x="968" y="171" fill="#D2D8E3" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="16">Image Set + Video Flow</text>
+  </g>
+</svg>
