@@ -1,0 +1,36 @@
+name: Feature request / RFC
+description: Propose a feature, including RFC-scope changes
+labels: [enhancement]
+body:
+  - type: dropdown
+    id: lane
+    attributes:
+      label: Change lane
+      description: Pick one
+      options:
+        - Fast Lane (small, low risk)
+        - RFC Lane (API/schema/core flow/security)
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What user/problem does this solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe your approach.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact and risks
+      description: Compatibility, migration, security, performance.

@@ -26,3 +26,13 @@ dist-ssr
 .claude
 claude.md
 CLAUDE.md
+
+# Internal planning / research artifacts (not for OSS repo)
+docs/plans/
+marketing-output/
+findings.md
+progress.md
+task_plan.md
+review-findings.md
+PRD.md
+PRODUCT_PLAN.md

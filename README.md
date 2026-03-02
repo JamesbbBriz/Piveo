@@ -2,9 +2,9 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# TopSeller（图销冠）本地运行
+# Piveo 本地运行
 
-本项目是一个图片生成/编辑工作台，默认对接 `https://n.lconai.com`（OpenAI 风格网关）。
+本项目是一个单图生成套图 + 首帧视频的 AI 工作台（含 BrandKit 约束），默认对接 `https://n.lconai.com`（OpenAI 风格网关）。
 
 ## 启动
 
@@ -73,3 +73,24 @@
 - `HTTP 504 / Gateway time-out`
   - 原因：上游网关超时（Cloudflare 504），不是前端代码异常。
   - 处理：重试一次；或切到更快模型（如 `gemini-2.5-flash-image`）；并确认没有走 `chat/completions` 回退链路。
+
+## 开源协议
+
+本项目采用 `GNU AGPL v3`（`AGPL-3.0-or-later`）开源。
+
+- 协议全文见 [`LICENSE`](./LICENSE)
+- 贡献规范见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)
+- 社区治理见 [`GOVERNANCE.md`](./GOVERNANCE.md)
+- 行为准则见 [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)
+- 安全策略见 [`SECURITY.md`](./SECURITY.md)
+
+## 项目改名说明
+
+项目对外品牌统一为 `Piveo`。如果你的远端仓库仍是旧名（例如 `TopSeller`），可在 GitHub 完成仓库 rename 后执行：
+
+```bash
+git remote set-url origin https://github.com/<your-org-or-user>/Piveo.git
+git remote -v
+```
+
+> 说明：为避免影响历史数据，部分内部持久化 key 仍保留旧前缀，不影响对外品牌名称。
