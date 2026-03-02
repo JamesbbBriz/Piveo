@@ -42,7 +42,7 @@ export const Layout: React.FC<LayoutProps> = ({
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   return (
-    <div className="flex h-screen bg-dark-900 overflow-hidden font-sans">
+    <div className="piveo-root flex h-screen bg-[var(--piveo-bg)] overflow-hidden font-sans">
       {/* Mobile Overlay */}
       <div
         className={`fixed inset-0 bg-black/50 z-20 lg:hidden transition-opacity ${isMobileNavOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
@@ -81,18 +81,18 @@ export const Layout: React.FC<LayoutProps> = ({
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-full min-h-0 min-w-0 relative">
         {/* Mobile top bar */}
-        <div className="lg:hidden h-14 border-b border-dark-700 flex items-center px-4 justify-between bg-dark-800 shrink-0">
-          <button onClick={() => setIsMobileNavOpen(true)} className="text-gray-400 hover:text-gray-200">
+        <div className="lg:hidden h-14 border-b border-[var(--piveo-border)] flex items-center px-4 justify-between bg-white shrink-0">
+          <button onClick={() => setIsMobileNavOpen(true)} className="text-[var(--piveo-body)] hover:text-[var(--piveo-text)]">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="3" y1="5" x2="17" y2="5" />
               <line x1="3" y1="10" x2="17" y2="10" />
               <line x1="3" y1="15" x2="17" y2="15" />
             </svg>
           </button>
-          <span className="font-semibold text-gray-200 truncate max-w-[200px] text-sm">TopSeller</span>
+          <span className="font-semibold text-[var(--piveo-text)] truncate max-w-[200px] text-sm">Piveo</span>
           <button
             onClick={onLogout}
-            className="text-[11px] px-2 py-1 rounded border border-dark-600 bg-dark-800 text-gray-300"
+            className="text-[11px] px-2 py-1 rounded border border-[var(--piveo-border)] bg-white text-[var(--piveo-body)]"
           >
             退出
           </button>
@@ -107,7 +107,7 @@ export const Layout: React.FC<LayoutProps> = ({
 
           {/* Property Panel — right side, desktop only */}
           {propertyPanel && (
-            <div className="hidden lg:flex w-[300px] shrink-0 border-l border-dark-700 bg-dark-900 flex-col h-full overflow-hidden">
+            <div className="hidden lg:flex w-[300px] shrink-0 border-l border-[var(--piveo-border)] bg-white flex-col h-full overflow-hidden">
               {propertyPanel}
             </div>
           )}

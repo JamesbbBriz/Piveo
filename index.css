@@ -16,13 +16,149 @@
   height: 8px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: #1e1e1e;
+  background: #f2f4f7;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #3d3d3d;
+  background: #d0d5dd;
   border-radius: 4px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: #98a2b3;
 }
 
+:root {
+  --piveo-bg: #ffffff;
+  --piveo-card: #f7f8fa;
+  --piveo-border: #eaecef;
+  --piveo-text: #101828;
+  --piveo-body: #475467;
+  --piveo-muted: #98a2b3;
+  --piveo-accent: #ff7d00;
+  --piveo-accent-hover: #ff9500;
+  --piveo-accent-active: #e67000;
+  --piveo-spring-soft: cubic-bezier(0.34, 1.3, 0.2, 1);
+  --piveo-spring-strong: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.piveo-spring-soft {
+  transition-timing-function: var(--piveo-spring-soft);
+}
+
+.piveo-spring-strong {
+  transition-timing-function: var(--piveo-spring-strong);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Global legacy palette bridge: map old dark/banana/cyan/purple classes to Piveo light tokens. */
+.piveo-root [class*="border-dark-"] {
+  border-color: var(--piveo-border) !important;
+}
+.piveo-root [class*="bg-dark-900"] {
+  background-color: var(--piveo-bg) !important;
+}
+.piveo-root [class*="bg-dark-800"] {
+  background-color: #ffffff !important;
+}
+.piveo-root [class*="bg-dark-700"] {
+  background-color: var(--piveo-card) !important;
+}
+.piveo-root [class*="bg-dark-600"] {
+  background-color: #f2f4f7 !important;
+}
+.piveo-root [class*="bg-dark-900/"],
+.piveo-root [class*="bg-dark-800/"],
+.piveo-root [class*="bg-dark-700/"] {
+  background-color: rgba(255, 255, 255, 0.82) !important;
+}
+.piveo-root [class*="hover:bg-dark-900"]:hover {
+  background-color: #f9fafb !important;
+}
+.piveo-root [class*="hover:bg-dark-800"]:hover,
+.piveo-root [class*="hover:bg-dark-700"]:hover,
+.piveo-root [class*="hover:bg-dark-600"]:hover {
+  background-color: #f2f4f7 !important;
+}
+.piveo-root [class*="text-dark-900"],
+.piveo-root [class*="text-dark-800"],
+.piveo-root [class*="text-gray-100"],
+.piveo-root [class*="text-gray-200"],
+.piveo-root [class*="text-gray-300"] {
+  color: var(--piveo-text) !important;
+}
+.piveo-root [class*="text-gray-400"],
+.piveo-root [class*="text-gray-500"] {
+  color: var(--piveo-body) !important;
+}
+.piveo-root [class*="text-gray-600"],
+.piveo-root [class*="text-gray-700"] {
+  color: var(--piveo-muted) !important;
+}
+.piveo-root [class*="placeholder-gray-"]::placeholder {
+  color: var(--piveo-muted) !important;
+  opacity: 1;
+}
+.piveo-root [class*="text-banana-"],
+.piveo-root [class*="text-cyan-"],
+.piveo-root [class*="text-purple-"] {
+  color: var(--piveo-accent) !important;
+}
+.piveo-root [class*="hover:text-banana-"]:hover,
+.piveo-root [class*="hover:text-cyan-"]:hover,
+.piveo-root [class*="hover:text-purple-"]:hover {
+  color: var(--piveo-accent-hover) !important;
+}
+.piveo-root [class*="border-banana-"],
+.piveo-root [class*="border-cyan-"],
+.piveo-root [class*="border-purple-"],
+.piveo-root [class*="border-emerald-"] {
+  border-color: var(--piveo-accent) !important;
+}
+.piveo-root [class*="focus:border-banana-"]:focus,
+.piveo-root [class*="focus:border-cyan-"]:focus,
+.piveo-root [class*="focus:border-purple-"]:focus {
+  border-color: var(--piveo-accent) !important;
+}
+.piveo-root [class*="bg-banana-500"],
+.piveo-root [class*="bg-cyan-500"],
+.piveo-root [class*="bg-purple-500"] {
+  background-color: var(--piveo-accent) !important;
+}
+.piveo-root [class*="bg-banana-400"],
+.piveo-root [class*="bg-cyan-400"],
+.piveo-root [class*="bg-purple-400"] {
+  background-color: var(--piveo-accent-hover) !important;
+}
+.piveo-root [class*="bg-banana-500/"],
+.piveo-root [class*="bg-cyan-500/"],
+.piveo-root [class*="bg-purple-500/"],
+.piveo-root [class*="bg-banana-400/"],
+.piveo-root [class*="bg-cyan-400/"],
+.piveo-root [class*="bg-purple-400/"] {
+  background-color: #fff4eb !important;
+}
+.piveo-root [class*="hover:bg-banana-"]:hover,
+.piveo-root [class*="hover:bg-cyan-"]:hover,
+.piveo-root [class*="hover:bg-purple-"]:hover {
+  background-color: #ffe9d6 !important;
+}
+.piveo-root [class*="accent-banana-"],
+.piveo-root [class*="accent-cyan-"],
+.piveo-root [class*="accent-purple-"] {
+  accent-color: var(--piveo-accent) !important;
+}
+/* Preserve contrast for legacy solid accent buttons that were using dark text. */
+.piveo-root [class*="bg-banana-"][class*="text-dark-"],
+.piveo-root [class*="bg-cyan-"][class*="text-dark-"],
+.piveo-root [class*="bg-purple-"][class*="text-dark-"] {
+  color: #ffffff !important;
+}
