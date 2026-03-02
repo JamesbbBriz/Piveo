@@ -168,6 +168,18 @@ npm run start      # 生产运行
 npm test           # 测试
 ```
 
+## 系统概览
+
+```mermaid
+flowchart LR
+  A["上传单张主图"] --> B["选择场景与风格"]
+  B --> C["生成套图"]
+  B --> D["生成首帧视频"]
+  C --> E["结果网格展示"]
+  D --> E
+  E --> F["单图下载或 ZIP 打包导出"]
+```
+
 ## 开源与社区
 
 - 协议：[LICENSE](./LICENSE)

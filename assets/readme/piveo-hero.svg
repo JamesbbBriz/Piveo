@@ -41,6 +41,4 @@
   <text x="470" y="208" fill="#475467" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="30" font-weight="500">Single Image to Image Set + First-Frame Video</text>
   <text x="470" y="244" fill="#98A2B3" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="400">BrandKit-aware generation for e-commerce teams and creators</text>
 
-  <rect x="470" y="262" width="180" height="38" rx="10" fill="#FF7D00"/>
-  <text x="500" y="287" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="600">Open Source</text>
 </svg>
