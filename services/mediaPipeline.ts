@@ -1,6 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { BrandKit } from '@/types';
-import type { PiveoGenerateContext, PiveoStylePreset, GeneratedMediaImage, GeneratedMediaVideo } from '@/components/piveo/types';
+import type {
+  PiveoGenerateContext,
+  PiveoScene,
+  PiveoStylePreset,
+  GeneratedMediaImage,
+  GeneratedMediaVideo,
+} from '@/components/piveo/types';
 import { ResponseFormat, imageObjToDataUrl, imagesGenerations } from './openaiImages';
 import { buildBrandKitPrompt } from './brandkitPrompt';
 import { startFirstFrameVideo } from './videoGeneration';
@@ -17,10 +23,15 @@ export interface GenerateMediaSetResult {
   video: GeneratedMediaVideo | null;
 }
 
-const scenePromptDirective = (scene: 'product' | 'model') =>
-  scene === 'product'
-    ? '任务场景：商品展示。确保产品外观真实，适合独立站主图与详情页。'
-    : '任务场景：模特展示。确保人像自然，服饰或商品穿戴关系准确。';
+const scenePromptDirective = (scene: PiveoScene) => {
+  if (scene === 'product') {
+    return '任务场景：商品展示。确保产品外观真实，适合独立站主图与详情页。';
+  }
+  if (scene === 'model') {
+    return '任务场景：模特展示。确保人像自然，服饰或商品穿戴关系准确。';
+  }
+  return '任务场景：房屋与空间设计。可用于建筑外观与室内方案，保持结构比例、尺度关系与材质表达真实。';
+};
 
 const resolveBrandKitImages = async (brandKit: BrandKit | null): Promise<string[]> => {
   if (!brandKit?.images?.length) return [];
@@ -47,7 +58,7 @@ export const buildMediaTasks = ({ styles, brandKitId }: { styles: string[]; bran
   sharedContext: { brandKitId: brandKitId || null },
 });
 
-const buildPrompt = (scene: 'product' | 'model', style: PiveoStylePreset, brandKit: BrandKit | null): string => {
+const buildPrompt = (scene: PiveoScene, style: PiveoStylePreset, brandKit: BrandKit | null): string => {
   const bk = buildBrandKitPrompt(brandKit);
   return [scenePromptDirective(scene), bk, `风格：${style.name}。`, style.promptTemplate]
     .filter(Boolean)

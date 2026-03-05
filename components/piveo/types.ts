@@ -1,6 +1,6 @@
 import type { BrandKit } from '@/types';
 
-export type PiveoScene = 'product' | 'model';
+export type PiveoScene = 'product' | 'model' | 'architecture';
 
 export interface PiveoSceneOption {
   id: PiveoScene;

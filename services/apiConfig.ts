@@ -5,6 +5,7 @@ export interface ApiConfig {
 }
 
 const STORAGE_KEY = "nanobanana_api_config_v1";
+const normalizeDefaultImageModel = (modelId: string): string => String(modelId || "").trim().replace(/-2k$/i, "");
 
 const readEnvString = (key: string): string => {
   const v = (import.meta as any).env?.[key];
@@ -17,7 +18,9 @@ export const getEnvApiConfig = (): ApiConfig => {
   // 上游 Authorization 统一由后端网关注入。
   const authorization = "";
 
-  const defaultImageModel = (readEnvString("VITE_DEFAULT_IMAGE_MODEL") || "gemini-2.5-flash-image-preview").trim();
+  const defaultImageModel = normalizeDefaultImageModel(
+    (readEnvString("VITE_DEFAULT_IMAGE_MODEL") || "gemini-2.5-flash-image-preview").trim()
+  );
 
   return {
     baseUrl,
@@ -49,7 +52,7 @@ export const saveStoredApiConfig = (cfg: ApiConfig) => {
   window.localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify({
-      defaultImageModel: cfg.defaultImageModel,
+      defaultImageModel: normalizeDefaultImageModel(cfg.defaultImageModel),
     })
   );
 };
@@ -60,6 +63,6 @@ export const getEffectiveApiConfig = (): ApiConfig => {
   return {
     baseUrl: env.baseUrl.trim(),
     authorization: env.authorization.trim(),
-    defaultImageModel: (stored.defaultImageModel || env.defaultImageModel).trim(),
+    defaultImageModel: normalizeDefaultImageModel((stored.defaultImageModel || env.defaultImageModel).trim()),
   };
 };

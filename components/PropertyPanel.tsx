@@ -401,7 +401,7 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
   };
 
   const removeProduct = () => {
-    if (window.confirm('确定要删除产品图吗？')) {
+    if (window.confirm(`确定要删除${settings.creationWorkflow === 'housing' ? '空间参考图' : '产品图'}吗？`)) {
       onUpdateSettings({ ...settings, productImage: null });
     }
   };
@@ -409,6 +409,8 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
   const selectedModel = settings.selectedModelId
     ? models.find((m) => m.id === settings.selectedModelId)
     : null;
+  const isHousingFlow = settings.creationWorkflow === 'housing';
+  const referenceLabel = isHousingFlow ? '空间参考图' : '产品图';
 
   // Compute current rating for selected gallery image
   const currentImageRating = selectedGalleryImage && activeBrandKit?.ratings
@@ -434,13 +436,43 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
         <span className="text-xs font-bold text-[var(--piveo-text)] tracking-wider">创作设置</span>
       </div>
 
+      <Section title="创作方向">
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => onUpdateSettings({ ...settings, creationWorkflow: 'product' })}
+            className={`h-8 rounded-lg border text-[11px] font-semibold transition-colors ${
+              !isHousingFlow
+                ? 'bg-banana-500/10 border-banana-500 text-banana-400'
+                : 'bg-dark-700 border-dark-600 text-gray-300 hover:border-gray-500'
+            }`}
+          >
+            商品
+          </button>
+          <button
+            onClick={() => onUpdateSettings({ ...settings, creationWorkflow: 'housing', selectedModelId: null })}
+            className={`h-8 rounded-lg border text-[11px] font-semibold transition-colors ${
+              isHousingFlow
+                ? 'bg-banana-500/10 border-banana-500 text-banana-400'
+                : 'bg-dark-700 border-dark-600 text-gray-300 hover:border-gray-500'
+            }`}
+          >
+            房屋设计
+          </button>
+        </div>
+        <p className="mt-1 text-[10px] text-gray-500">
+          {isHousingFlow
+            ? '房屋设计：用于建筑外观、室内设计、空间改造。'
+            : '商品：用于产品展示、电商图和模特场景。'}
+        </p>
+      </Section>
+
       {/* Product Image */}
-      <Section title="产品图">
+      <Section title={referenceLabel}>
         {settings.productImage ? (
           <div className="relative inline-block">
             <img
               src={settings.productImage.imageUrl}
-              alt="产品图"
+              alt={referenceLabel}
               className="w-full max-h-32 rounded-lg border border-banana-500/50 object-contain bg-dark-800"
               loading="lazy"
               decoding="async"
@@ -448,7 +480,7 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
             <button
               onClick={removeProduct}
               className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] shadow-md hover:bg-red-600"
-              title="删除产品图"
+              title={`删除${referenceLabel}`}
             >
               <Icon name="times" />
             </button>
@@ -459,7 +491,7 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
             className="w-full h-20 rounded-lg border-2 border-dashed border-dark-600 bg-dark-800/50 flex flex-col items-center justify-center cursor-pointer hover:border-gray-500 transition-colors"
           >
             <Icon name="box-open" className="text-gray-500 text-lg mb-1" />
-            <span className="text-[10px] text-gray-500">点击上传产品图</span>
+            <span className="text-[10px] text-gray-500">{`点击上传${referenceLabel}`}</span>
           </div>
         )}
         <div className="relative mt-2 flex gap-2">
@@ -499,6 +531,7 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
       </Section>
 
       {/* Model Character */}
+      {!isHousingFlow && (
       <Section title="模特">
         <div className="flex flex-wrap gap-1.5 mb-2">
           <button
@@ -582,6 +615,7 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
         )}
         <input ref={modelInputRef} type="file" accept="image/*" className="hidden" onChange={uploadModel} />
       </Section>
+      )}
 
       {/* Aspect Ratio */}
       <Section title="画幅比例">

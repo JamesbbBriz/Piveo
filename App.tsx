@@ -263,6 +263,7 @@ const createNewSession = (templates: SystemTemplate[], prefs?: DefaultPreference
       aspectRatio: ar,
       systemPrompt: defaultTemplate,
       selectedModelId: null,
+      creationWorkflow: "product",
       productScale: ps,
       responseFormat: "url",
       batchCount: bc,
@@ -1241,8 +1242,10 @@ const AppInner: React.FC = () => {
     let stage = "准备请求...";
     uiDispatch({ type: SET_GENERATION_STAGE, payload: stage });
 
+    const isHousingFlow = currentSession.settings.creationWorkflow === "housing";
+
     let modelImage: string | null = null;
-    if (currentSession.settings.selectedModelId) {
+    if (!isHousingFlow && currentSession.settings.selectedModelId) {
       const selectedModel = models.find(m => m.id === currentSession.settings.selectedModelId);
       if (selectedModel) modelImage = selectedModel.imageUrl;
     }
@@ -1252,10 +1255,16 @@ const AppInner: React.FC = () => {
       productImageUrl = currentSession.settings.productImage.imageUrl;
     }
 
+    const effectiveReferenceImage = image || (isHousingFlow ? productImageUrl : null);
+    const effectiveProductImage = isHousingFlow ? null : productImageUrl;
+    const promptForRun = isHousingFlow
+      ? `【任务场景：房屋设计】可用于建筑外观、室内设计、空间改造与软装提案。重点保持结构比例、空间尺度、材质与光照真实。\n${prompt}`
+      : prompt;
+
     const messagesToUse = customMessages || currentSession.messages;
     let updatedMessages = messagesToUse;
 
-    const parentImageUrl = image || findLastImageUrl(messagesToUse);
+    const parentImageUrl = effectiveReferenceImage || findLastImageUrl(messagesToUse);
 
     try {
       for (let i = 0; i < sizes.length; i++) {
@@ -1267,10 +1276,10 @@ const AppInner: React.FC = () => {
         const generationBaseMessages = updatedMessages;
 
         const firstResult = await generateResponse(
-          prompt,
-          image,
+          promptForRun,
+          effectiveReferenceImage,
           modelImage,
-          productImageUrl,
+          effectiveProductImage,
           generationBaseMessages,
           currentSession.settings,
           {
@@ -1367,10 +1376,10 @@ const AppInner: React.FC = () => {
             if (controller.signal.aborted) break;
             try {
               const extra = await generateResponse(
-                prompt,
-                image,
+                promptForRun,
+                effectiveReferenceImage,
                 modelImage,
-                productImageUrl,
+                effectiveProductImage,
                 generationBaseMessages,
                 currentSession.settings,
                 {

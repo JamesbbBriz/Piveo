@@ -13,6 +13,12 @@ export const SCENE_OPTIONS: PiveoSceneOption[] = [
     hint: '换装、换场景、人像生成',
     icon: 'user',
   },
+  {
+    id: 'architecture',
+    label: 'Architecture',
+    hint: '建筑外观、室内改造、空间提案',
+    icon: 'building',
+  },
 ];
 
 export const STYLE_LIBRARY: PiveoStylePreset[] = [
@@ -22,7 +28,7 @@ export const STYLE_LIBRARY: PiveoStylePreset[] = [
     thumbnail:
       'https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=600&q=80',
     promptTemplate: '干净棚拍，主体清晰，光影平衡，适配独立站商品主图。',
-    sceneCompat: ['product', 'model'],
+    sceneCompat: ['product', 'model', 'architecture'],
   },
   {
     id: 'lifestyle-soft',
@@ -63,5 +69,29 @@ export const STYLE_LIBRARY: PiveoStylePreset[] = [
       'https://images.unsplash.com/photo-1479064555552-3ef4979f8908?auto=format&fit=crop&w=600&q=80',
     promptTemplate: '极简白底，边缘干净，电商标准展示风格。',
     sceneCompat: ['product', 'model'],
+  },
+  {
+    id: 'interior-natural',
+    name: 'Interior Natural',
+    thumbnail:
+      'https://images.unsplash.com/photo-1616594039964-3f4b2f4dbf43?auto=format&fit=crop&w=600&q=80',
+    promptTemplate: '室内空间设计图，强调动线、采光、材质层次与真实居住氛围。',
+    sceneCompat: ['architecture'],
+  },
+  {
+    id: 'architectural-exterior',
+    name: 'Architectural Exterior',
+    thumbnail:
+      'https://images.unsplash.com/photo-1511818966892-d7d671e672a2?auto=format&fit=crop&w=600&q=80',
+    promptTemplate: '建筑外观方案图，结构比例准确，立面细节清晰，环境光真实自然。',
+    sceneCompat: ['architecture'],
+  },
+  {
+    id: 'staging-modern-home',
+    name: 'Staging Modern Home',
+    thumbnail:
+      'https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?auto=format&fit=crop&w=600&q=80',
+    promptTemplate: '现代住宅软装提案，家具与配色协调，适合房源展示与空间氛围提升。',
+    sceneCompat: ['architecture'],
   },
 ];

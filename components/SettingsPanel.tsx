@@ -7,7 +7,7 @@ import { clearAll } from "../services/storage";
 import { getProvider, switchProvider, type ProviderOption } from "../services/auth";
 import { syncService } from "../services/sync";
 import { Icon } from "./Icon";
-import { getModelDisplayName } from "./ModelSwitcherFooter";
+import { canonicalizeModelId, getModelDisplayName } from "./ModelSwitcherFooter";
 import { useToast } from "./Toast";
 
 export const DEFAULT_PREFERENCES_KEY = "topseller.default_preferences";
@@ -188,6 +188,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       const imageModels = ids.filter((m) => /image/i.test(m) && !/^sora-/i.test(m));
       const seen = new Set<string>();
       const next = [apiConfig.defaultImageModel, ...(imageModels.length ? imageModels : ids)]
+        .map((m) => canonicalizeModelId(m))
         .filter(Boolean)
         .filter((m) => {
           const lower = m.toLowerCase();
@@ -200,7 +201,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       modelsCooldownUntilRef.current = 0;
     } catch {
       if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
-      setModels((prev) => (prev.length ? prev : [apiConfig.defaultImageModel]));
+      setModels((prev) => (prev.length ? prev : [canonicalizeModelId(apiConfig.defaultImageModel)]));
       modelsFailureCountRef.current += 1;
       const idx = Math.min(modelsFailureCountRef.current - 1, FAILURE_BACKOFFS_MS.length - 1);
       modelsCooldownUntilRef.current = Date.now() + FAILURE_BACKOFFS_MS[idx];
@@ -229,13 +230,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   // Clear pending when model syncs
   useEffect(() => {
-    if (pendingModel && pendingModel === apiConfig.defaultImageModel) {
+    if (pendingModel && pendingModel === canonicalizeModelId(apiConfig.defaultImageModel)) {
       setPendingModel(null);
     }
   }, [apiConfig.defaultImageModel, pendingModel]);
 
   const modelOptions = useMemo(() => {
-    if (!models.length) return [apiConfig.defaultImageModel];
+    if (!models.length) return [canonicalizeModelId(apiConfig.defaultImageModel)];
     return models;
   }, [models, apiConfig.defaultImageModel]);
 
@@ -307,10 +308,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <div>
             <label className="text-[11px] text-gray-500 mb-1 block">默认模型</label>
             <select
-              value={apiConfig.defaultImageModel}
+              value={canonicalizeModelId(apiConfig.defaultImageModel)}
               onChange={(e) => {
-                const next = e.target.value;
-                if (hasActiveFeature && next !== apiConfig.defaultImageModel) {
+                const next = canonicalizeModelId(e.target.value);
+                if (hasActiveFeature && next !== canonicalizeModelId(apiConfig.defaultImageModel)) {
                   setPendingModel(next);
                 } else {
                   onUpdateApiConfig({ ...apiConfig, defaultImageModel: next });

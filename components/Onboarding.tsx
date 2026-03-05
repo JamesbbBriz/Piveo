@@ -70,8 +70,8 @@ const Step1Upload: React.FC<{
 
   return (
     <div>
-      <h3 className="text-lg font-semibold text-[var(--piveo-text)] mb-1">上传产品图</h3>
-      <p className="text-xs text-[var(--piveo-body)] mb-4">拖拽或点击上传你的产品图片</p>
+      <h3 className="text-lg font-semibold text-[var(--piveo-text)] mb-1">上传参考图</h3>
+      <p className="text-xs text-[var(--piveo-body)] mb-4">可上传产品、建筑外观或室内空间图片</p>
 
       <div
         onClick={() => fileInputRef.current?.click()}
@@ -199,7 +199,7 @@ const Step3Generate: React.FC<{
             if (prompt.trim()) onSubmit(prompt.trim());
           }
         }}
-        placeholder="例如：一位年轻模特穿着产品，站在极简白色背景前，棚拍光线..."
+        placeholder="例如：现代住宅客厅方案，保留落地窗，暖木色地板，傍晚自然光..."
         rows={4}
         className="w-full px-3 py-2.5 rounded-lg bg-white border border-[var(--piveo-border)] text-sm text-[var(--piveo-text)] placeholder-[var(--piveo-muted)] focus:outline-none focus:border-[var(--piveo-text)] resize-none"
         autoFocus
@@ -276,7 +276,7 @@ export const Onboarding: React.FC<OnboardingProps> = ({
         <div className="max-w-lg w-full rounded-2xl border border-[var(--piveo-border)] bg-[var(--piveo-card)] p-6 flex flex-col items-center gap-4">
           <Badge type="pill-color" size="sm" color="brand">Quick Start</Badge>
           <h2 className="text-lg font-semibold text-[var(--piveo-text)]">开始创作</h2>
-          <p className="text-xs text-[var(--piveo-body)] text-center">上传产品图或直接输入描述</p>
+          <p className="text-xs text-[var(--piveo-body)] text-center">上传参考图或直接输入描述</p>
 
           <div className="w-full">
             <textarea

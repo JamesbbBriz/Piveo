@@ -42,13 +42,14 @@ import {
 import type { Session, SessionSettings, BatchJob, BrandKit } from '@/types';
 import { DEFAULT_ASPECT_RATIO, DEFAULT_SYSTEM_TEMPLATES } from '@/constants';
 import { getSupportedAspectRatios, getSupportedSizeForAspect } from '@/services/sizeUtils';
-import { AspectRatio, ProductScale } from '@/types';
+import { AspectRatio, ProductScale, CreationWorkflow } from '@/types';
 
 // ——— Helpers ———
 
 const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSettings => {
   const aspectRatioValues = getSupportedAspectRatios();
   const productScaleValues = Object.values(ProductScale);
+  const workflowValues: CreationWorkflow[] = ['product', 'housing'];
   const aspectRatio = aspectRatioValues.includes(raw?.aspectRatio) ? raw.aspectRatio : DEFAULT_ASPECT_RATIO;
   const batchCountRaw = typeof raw?.batchCount === "number" ? raw.batchCount : 1;
   const batchCount = Math.min(Math.max(Math.round(batchCountRaw), 1), 10);
@@ -57,6 +58,7 @@ const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSet
     systemPrompt: typeof raw?.systemPrompt === "string" ? raw.systemPrompt : defaultTemplate,
     aspectRatio,
     selectedModelId: typeof raw?.selectedModelId === "string" ? raw.selectedModelId : null,
+    creationWorkflow: workflowValues.includes(raw?.creationWorkflow) ? raw.creationWorkflow : 'product',
     productScale: productScaleValues.includes(raw?.productScale) ? raw.productScale : ProductScale.Standard,
     responseFormat: "url",
     batchCount,
@@ -436,6 +438,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 aspectRatio: ar,
                 systemPrompt: resolvedDefaultTemplate,
                 selectedModelId: null,
+                creationWorkflow: 'product',
                 productScale: prefs.productScale ?? ProductScale.Standard,
                 responseFormat: "url",
                 batchCount: prefs.batchCount ?? 1,
@@ -539,6 +542,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               aspectRatio: ar,
               systemPrompt: fallbackDefaultTemplate,
               selectedModelId: null,
+              creationWorkflow: 'product',
               productScale: prefs.productScale ?? ProductScale.Standard,
               responseFormat: "url",
               batchCount: prefs.batchCount ?? 1,

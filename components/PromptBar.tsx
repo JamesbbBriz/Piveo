@@ -140,7 +140,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder="例如：给人物加一顶红色帽子..."
+            placeholder="例如：改成现代轻奢客厅，保留原户型与采光..."
             className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-[var(--piveo-text)] placeholder-[var(--piveo-muted)] max-h-32 py-2.5 resize-none custom-scrollbar text-sm"
             rows={1}
             style={{ minHeight: '40px' }}

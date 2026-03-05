@@ -16,7 +16,6 @@ interface ModelSwitcherFooterProps {
 }
 
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
-  "gemini-3-pro-image-preview-2k": "Nano🍌 PRO 2K",
   "gemini-3-pro-image-preview": "Nano🍌 PRO",
   "gemini-3-pro-image": "Nano🍌 PRO",
   "gemini-2.5-flash-image-preview": "Nano🍌",
@@ -28,11 +27,30 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
 // These models are always shown regardless of server-returned list or allowed-models config.
 const PINNED_MODELS = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"];
 
+/** Canonicalize legacy model ids (frontend display + persistence). */
+export const canonicalizeModelId = (modelId: string): string =>
+  String(modelId || "").trim().replace(/-2k$/i, "");
+
+const dedupeModelIds = (ids: string[]): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const id of ids) {
+    const normalized = canonicalizeModelId(id);
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(normalized);
+  }
+  return result;
+};
+
 /** Frontend-only display name lookup (exact match, case-insensitive). */
 export const getModelDisplayName = (modelId: string): string => {
-  const mapped = MODEL_DISPLAY_NAMES[modelId.toLowerCase()];
+  const canonical = canonicalizeModelId(modelId);
+  const mapped = MODEL_DISPLAY_NAMES[canonical.toLowerCase()];
   if (mapped) return mapped;
-  return modelId.replace(/^(gemini-|gpt-image-)/i, "").replace(/-preview.*$/, "");
+  return canonical.replace(/^(gemini-|gpt-image-)/i, "").replace(/-preview.*$/, "");
 };
 
 const toPositiveInt = (raw: unknown, fallback: number): number => {
@@ -90,21 +108,17 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
       const ids = await listModels({ api: apiConfig, signal: AbortSignal.timeout(QUICK_TIMEOUT_MS) });
       if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
       const imageModels = ids.filter((m) => /image/i.test(m) && !/^sora-/i.test(m));
-      const seen = new Set<string>();
-      const next = [apiConfig.defaultImageModel, ...PINNED_MODELS, ...(imageModels.length ? imageModels : ids)]
-        .filter(Boolean)
-        .filter((m) => {
-          const lower = m.toLowerCase();
-          if (seen.has(lower)) return false;
-          seen.add(lower);
-          return true;
-        });
+      const next = dedupeModelIds([
+        apiConfig.defaultImageModel,
+        ...PINNED_MODELS,
+        ...(imageModels.length ? imageModels : ids),
+      ]);
       setModels(next);
       modelsFailureCountRef.current = 0;
       modelsCooldownUntilRef.current = 0;
     } catch {
       if (!mountedRef.current || reqId !== modelsReqIdRef.current) return;
-      setModels((prev) => (prev.length ? prev : [apiConfig.defaultImageModel, ...PINNED_MODELS]));
+      setModels((prev) => (prev.length ? prev : dedupeModelIds([apiConfig.defaultImageModel, ...PINNED_MODELS])));
       modelsFailureCountRef.current += 1;
       const idx = Math.min(modelsFailureCountRef.current - 1, FAILURE_BACKOFFS_MS.length - 1);
       modelsCooldownUntilRef.current = Date.now() + FAILURE_BACKOFFS_MS[idx];
@@ -137,8 +151,8 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
   }, [apiConfig.defaultImageModel, pendingModel]);
 
   const options = useMemo(() => {
-    if (!models.length) return [apiConfig.defaultImageModel];
-    return models;
+    if (!models.length) return dedupeModelIds([apiConfig.defaultImageModel]);
+    return dedupeModelIds(models);
   }, [models, apiConfig.defaultImageModel]);
 
   /* ── Compact mode: model selector, vertical ── */
@@ -146,8 +160,8 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
     return (
       <div className="w-full flex flex-col items-center gap-1 px-1 py-1.5">
         <select
-          value={apiConfig.defaultImageModel}
-          onChange={(e) => onUpdateApiConfig({ ...apiConfig, defaultImageModel: e.target.value })}
+          value={canonicalizeModelId(apiConfig.defaultImageModel)}
+          onChange={(e) => onUpdateApiConfig({ ...apiConfig, defaultImageModel: canonicalizeModelId(e.target.value) })}
           className="w-full bg-dark-900/60 border border-dark-600 rounded px-2 py-1.5 text-xs text-gray-200 text-center focus:outline-none focus:border-banana-500/50 cursor-pointer appearance-none"
           title={apiConfig.defaultImageModel}
         >
@@ -163,10 +177,10 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
     <div className="px-3 py-3 border-t border-dark-700">
       <div className="rounded-lg border border-dark-700 bg-dark-900/40 p-3">
         <select
-          value={apiConfig.defaultImageModel}
+          value={canonicalizeModelId(apiConfig.defaultImageModel)}
           onChange={(e) => {
-            const next = e.target.value;
-            if (hasActiveFeature && next !== apiConfig.defaultImageModel) {
+            const next = canonicalizeModelId(e.target.value);
+            if (hasActiveFeature && next !== canonicalizeModelId(apiConfig.defaultImageModel)) {
               setPendingModel(next);
             } else {
               onUpdateApiConfig({ ...apiConfig, defaultImageModel: next });

@@ -45,7 +45,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ value, onFileSelect, dis
       >
         {!value ? (
           <div className="text-center px-4">
-            <p className="text-sm font-medium text-[var(--piveo-text)]">上传商品 / 模特主图</p>
+            <p className="text-sm font-medium text-[var(--piveo-text)]">上传产品 / 模特 / 空间参考图</p>
             <p className="mt-1 text-xs text-[var(--piveo-body)]">Drop your image here or browse</p>
             <div className="mt-3">
               <Button type="button" size="sm" color="secondary" isDisabled={disabled}>

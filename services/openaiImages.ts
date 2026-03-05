@@ -199,6 +199,10 @@ const imageFetchTimeoutMs = Math.max(
   1_000,
   toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_FETCH_TIMEOUT_MS, 120_000)
 );
+const proImageFetchTimeoutMs = Math.max(
+  imageFetchTimeoutMs,
+  toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_FETCH_TIMEOUT_MS_PRO, 210_000)
+);
 const imageRetryMaxDelayMs = Math.max(
   imageRetryBaseDelayMs,
   toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_RETRY_MAX_DELAY_MS, 4_000)
@@ -271,9 +275,14 @@ const isLikelyTimeoutError = (e: unknown): boolean => {
   return /timeout|timed out|signal timed out/i.test(msg) || /timeout/i.test(name);
 };
 
+const resolveImageFetchTimeoutMs = (modelId?: string): number => {
+  const model = String(modelId || "").toLowerCase();
+  return /gemini-3-pro-image/i.test(model) ? proImageFetchTimeoutMs : imageFetchTimeoutMs;
+};
+
 /** 合并用户取消信号和超时信号 */
-const withTimeout = (signal?: AbortSignal): AbortSignal => {
-  const timeout = AbortSignal.timeout(imageFetchTimeoutMs);
+const withTimeout = (signal?: AbortSignal, timeoutMs: number = imageFetchTimeoutMs): AbortSignal => {
+  const timeout = AbortSignal.timeout(timeoutMs);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 };
 
@@ -480,6 +489,7 @@ const geminiImageViaChat = async (
   const responseFormat = req.response_format ?? ResponseFormat.Url;
   const created = Math.floor(Date.now() / 1000);
   const size = req.size ?? Size.The1024X1024;
+  const requestTimeoutMs = resolveImageFetchTimeoutMs(model);
 
   // 单次请求逻辑
   const generateOne = async (): Promise<图片对象> => {
@@ -521,7 +531,7 @@ const geminiImageViaChat = async (
               },
             }),
           }),
-          signal: withTimeout(signal),
+          signal: withTimeout(signal, requestTimeoutMs),
         },
         opts
       );
@@ -632,6 +642,7 @@ export const imagesGenerations = async (
         `当前模型「${model}」是视频模型，不支持图片生成。请在左侧栏「接口」里切换到图片模型（例如 gemini-2.5-flash-image-preview 或 gpt-image-1.5）。`
       );
     }
+    const requestTimeoutMs = resolveImageFetchTimeoutMs(model);
 
     const body: Record<string, any> = {
       prompt: req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt,
@@ -676,7 +687,7 @@ export const imagesGenerations = async (
             },
             credentials: "include",
             body: JSON.stringify(body),
-            signal: withTimeout(signal),
+            signal: withTimeout(signal, requestTimeoutMs),
           },
           opts
         );
@@ -695,7 +706,7 @@ export const imagesGenerations = async (
           continue;
         }
         const timeoutHint = isLikelyTimeoutError(e)
-          ? `（前端等待 ${Math.round(imageFetchTimeoutMs / 1000)} 秒后超时）`
+          ? `（前端等待 ${Math.round(requestTimeoutMs / 1000)} 秒后超时）`
           : "";
         const traceHint = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
         throw new Error(
@@ -832,6 +843,7 @@ export const imagesEdits = async (
   const cfg = getClientConfig(opts?.api);
   const signal = opts?.signal;
   const retryPolicy = toRetryPolicy(opts);
+  const requestTimeoutMs = resolveImageFetchTimeoutMs(String(req.model || cfg.defaultImageModel || ""));
 
   if (!Array.isArray(req.image) || req.image.length === 0) {
     throw new Error("images/edits 需要至少 1 张 image。");
@@ -894,7 +906,7 @@ export const imagesEdits = async (
           },
           credentials: "include",
           body: buildFormData(),
-          signal: withTimeout(signal),
+          signal: withTimeout(signal, requestTimeoutMs),
         },
         opts
       );
@@ -913,7 +925,7 @@ export const imagesEdits = async (
         continue;
       }
       const timeoutHint = isLikelyTimeoutError(e)
-        ? `（前端等待 ${Math.round(imageFetchTimeoutMs / 1000)} 秒后超时）`
+        ? `（前端等待 ${Math.round(requestTimeoutMs / 1000)} 秒后超时）`
         : "";
       const traceHint = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
       throw new Error(
