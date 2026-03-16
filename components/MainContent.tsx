@@ -15,6 +15,7 @@ interface MainContentProps {
   brandKitElement?: React.ReactNode;
   teamElement?: React.ReactNode;
   adminElement?: React.ReactNode;
+  videoElement?: React.ReactNode;
 }
 
 const PlaceholderView: React.FC<{ icon: string; title: string; subtitle: string }> = ({ icon, title, subtitle }) => (
@@ -25,10 +26,16 @@ const PlaceholderView: React.FC<{ icon: string; title: string; subtitle: string 
   </div>
 );
 
-export const MainContent: React.FC<MainContentProps> = ({ navView, children, galleryProps, projectListProps, settingsElement, assetsElement, modelsElement, productsElement, brandKitElement, teamElement, adminElement }) => {
+export const MainContent: React.FC<MainContentProps> = ({ navView, children, galleryProps, projectListProps, settingsElement, assetsElement, modelsElement, productsElement, brandKitElement, teamElement, adminElement, videoElement }) => {
   switch (navView) {
     case 'project':
       return <>{children}</>;
+
+    case 'video':
+      if (videoElement) {
+        return <>{videoElement}</>;
+      }
+      return <PlaceholderView icon="film" title="视频生成" subtitle="即将推出" />;
 
     case 'gallery':
       if (galleryProps) {

@@ -329,7 +329,16 @@ function toImageGenerationsResponse(geminiResp) {
 async function callGemini(config, model, geminiBody) {
   const token = config.authorization.replace(/^Bearer\s+/i, "").trim();
   const base = config.baseUrl.replace(/\/+$/, "");
-  const url = `${base}/v1beta/models/${model}:generateContent?key=${token}`;
+  const directEndpointPattern = /\/v1beta\/models\/[^/:]+:(?:generateContent|streamGenerateContent)$/i;
+  const directEndpointWithModelPattern = /^(.*\/v1beta\/models\/)([^/:]+)(:(?:generateContent|streamGenerateContent))$/i;
+  const directMatch = base.match(directEndpointWithModelPattern);
+  const endpoint = directMatch
+    ? `${directMatch[1]}${model}${directMatch[3]}`
+    : directEndpointPattern.test(base)
+      ? base
+      : `${base}/v1beta/models/${model}:streamGenerateContent`;
+  const separator = endpoint.includes("?") ? "&" : "?";
+  const url = `${endpoint}${separator}key=${encodeURIComponent(token)}`;
 
   const resp = await fetch(url, {
     method: "POST",
@@ -338,7 +347,56 @@ async function callGemini(config, model, geminiBody) {
     signal: AbortSignal.timeout(model.includes("pro") ? 180_000 : 90_000),
   });
 
-  const responseBody = await resp.json();
+  const rawText = await resp.text();
+  let responseBody;
+  try {
+    responseBody = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    const err = new Error("Gemini upstream returned non-JSON response");
+    err.status = resp.status;
+    err.body = rawText;
+    throw err;
+  }
+
+  if (Array.isArray(responseBody)) {
+    const parts = [];
+    let lastCandidate = null;
+    let usageMetadata = undefined;
+    let promptFeedback = undefined;
+
+    for (const chunk of responseBody) {
+      const candidate = chunk?.candidates?.[0];
+      const chunkParts = candidate?.content?.parts;
+      if (Array.isArray(chunkParts)) {
+        parts.push(...chunkParts);
+      }
+      if (candidate) {
+        lastCandidate = candidate;
+      }
+      if (chunk?.usageMetadata) {
+        usageMetadata = chunk.usageMetadata;
+      }
+      if (chunk?.promptFeedback) {
+        promptFeedback = chunk.promptFeedback;
+      }
+    }
+
+    responseBody = {
+      candidates: lastCandidate
+        ? [
+            {
+              ...lastCandidate,
+              content: {
+                ...(lastCandidate.content || {}),
+                parts,
+              },
+            },
+          ]
+        : [],
+      usageMetadata,
+      promptFeedback,
+    };
+  }
 
   if (!resp.ok) {
     const errMsg =
@@ -445,6 +503,7 @@ function handleModels(_req, res) {
   return res.json({
     object: "list",
     data: [
+      { id: "gemini-3.1-flash-image-preview", object: "model" },
       { id: "gemini-2.5-flash-image", object: "model" },
       { id: "gemini-3-pro-image-preview", object: "model" },
       { id: "gemini-3-pro-image-preview-2k", object: "model" },

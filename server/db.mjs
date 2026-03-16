@@ -10,7 +10,7 @@ const DATA_DIR = path.resolve(
   process.env.DATA_DIR || path.join(__dirname, "..", "data")
 );
 
-const CURRENT_SCHEMA_VERSION = 9;
+const CURRENT_SCHEMA_VERSION = 10;
 
 let db = null;
 
@@ -52,6 +52,7 @@ export function initDatabase() {
   if (currentVersion < 7) applySchemaV7(db);
   if (currentVersion < 8) applySchemaV8(db);
   if (currentVersion < 9) applySchemaV9(db);
+  if (currentVersion < 10) applySchemaV10(db);
 
   if (currentVersion < CURRENT_SCHEMA_VERSION) {
     db.prepare(
@@ -314,6 +315,45 @@ function applySchemaV9(db) {
     CREATE INDEX IF NOT EXISTS idx_taste_ratings_kit ON brand_taste_ratings(brand_kit_id);
 
     ALTER TABLE brand_kits ADD COLUMN taste_profile_json TEXT;
+  `);
+}
+
+function applySchemaV10(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS video_jobs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      team_id TEXT REFERENCES teams(id) ON DELETE CASCADE,
+      title TEXT NOT NULL DEFAULT '',
+      model TEXT NOT NULL DEFAULT 'veo-3.1',
+      status TEXT NOT NULL DEFAULT 'pending',
+      prompt TEXT NOT NULL DEFAULT '',
+      start_blob_id TEXT REFERENCES blobs(id),
+      end_blob_id TEXT REFERENCES blobs(id),
+      aspect_ratio TEXT NOT NULL DEFAULT '16:9',
+      resolution TEXT NOT NULL DEFAULT '720p',
+      duration_sec INTEGER NOT NULL DEFAULT 8,
+      candidate_count INTEGER NOT NULL DEFAULT 1,
+      error_message TEXT,
+      metadata_json TEXT DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS generated_videos (
+      id TEXT PRIMARY KEY,
+      video_job_id TEXT NOT NULL REFERENCES video_jobs(id) ON DELETE CASCADE,
+      blob_id TEXT REFERENCES blobs(id),
+      source_url TEXT,
+      duration_sec INTEGER NOT NULL DEFAULT 8,
+      mime_type TEXT,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_video_jobs_user ON video_jobs(user_id);
+    CREATE INDEX IF NOT EXISTS idx_video_jobs_team ON video_jobs(team_id);
+    CREATE INDEX IF NOT EXISTS idx_video_jobs_updated ON video_jobs(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_generated_videos_job ON generated_videos(video_job_id, created_at DESC);
   `);
 }
 

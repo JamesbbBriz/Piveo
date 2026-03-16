@@ -37,6 +37,7 @@ import { BrandKitPanel } from './components/BrandKitPanel';
 import { BeforeAfterView } from './components/BeforeAfterView';
 import { exportComparison } from './services/comparisonExport';
 import { ToastProvider } from './components/Toast';
+import { VideoGenerationPage } from './components/video/VideoGenerationPage';
 import type { GeneratedImage, ImageRating } from './types';
 import {
   SET_SESSIONS,
@@ -2918,6 +2919,7 @@ const AppInner: React.FC = () => {
             <AdminPanel onClose={() => setNavView('project')} />
           ) : undefined
         }
+        videoElement={<VideoGenerationPage />}
         teamElement={
           <TeamManager
             teams={teams}

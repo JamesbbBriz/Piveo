@@ -7,7 +7,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import { initDatabase, getDb } from "./db.mjs";
-import authRoutes, { requireAuth, seedUser, isSuperAdmin } from "./routes/auth.mjs";
+import authRoutes, { requireAuth, seedUser, isSuperAdmin, hasConfiguredSeedUsers } from "./routes/auth.mjs";
 import dataRoutes from "./routes/data.mjs";
 import { checkQuota, recordUsage } from "./services/usageTracker.mjs";
 import * as providerStore from "./services/providerStore.mjs";
@@ -16,8 +16,6 @@ import { createGeminiNativeHandler } from "./middleware/geminiAdapter.mjs";
 
 const IS_PROD = process.env.NODE_ENV === "production";
 const JWT_SECRET = process.env.AUTH_JWT_SECRET || "dev-only-change-me";
-const AUTH_USERNAME = String(process.env.AUTH_USER || "").trim();
-const AUTH_PASSWORD = String(process.env.AUTH_PASSWORD || "");
 
 const targetProxy = (process.env.UPSTREAM_API_BASE_URL || process.env.VITE_API_PROXY_TARGET || "https://n.lconai.com").trim();
 const normalizeAuthorization = (raw) => {
@@ -39,6 +37,8 @@ const upstreamAuthorization = normalizeAuthorization(
   process.env.VITE_AUTHORIZATION ||
   (process.env.VITE_API_KEY ? `Bearer ${process.env.VITE_API_KEY}` : "")
 );
+const videoUpstreamBaseUrl = (process.env.VIDEO_UPSTREAM_API_BASE_URL || "").trim();
+const videoUpstreamAuthorization = normalizeAuthorization(process.env.VIDEO_UPSTREAM_AUTHORIZATION || "");
 
 const targetProxyAlt = (process.env.UPSTREAM_API_BASE_URL_ALT || "").trim();
 const upstreamAuthorizationAlt = normalizeAuthorization(process.env.UPSTREAM_AUTHORIZATION_ALT || "");
@@ -49,7 +49,7 @@ if (IS_PROD && JWT_SECRET === "dev-only-change-me") {
 if (IS_PROD && !process.env.AUTH_PASSWORD) {
   throw new Error("生产环境必须配置 AUTH_PASSWORD。");
 }
-if (!AUTH_USERNAME || !AUTH_PASSWORD) {
+if (IS_PROD && !hasConfiguredSeedUsers()) {
   throw new Error("必须配置 AUTH_USER 与 AUTH_PASSWORD（或 AUTH_USER_2 等），禁止使用硬编码默认凭据。");
 }
 
@@ -155,8 +155,23 @@ const quotaGuard = (req, res, next) => {
 // ---------- Upstream proxy (/api) ----------
 // Data routes are mounted under /api/data and handled by dataRoutes above.
 // All other /api/* requests are proxied to the upstream gateway.
+const isVideoRoute = (rawUrl) => {
+  const url = String(rawUrl || "");
+  return url.includes("/v1/video/generations")
+    || url.includes("/v1/videos")
+    || /\/v1\/videos\/[^/]+/.test(url);
+};
+
 /** Resolve upstream config: if model given, route to matching provider; otherwise use active. */
-const getUpstreamConfig = (model) => {
+const getUpstreamConfig = (model, rawUrl = "") => {
+  if (isVideoRoute(rawUrl) && (videoUpstreamAuthorization || videoUpstreamBaseUrl)) {
+    const active = providerStore.getActive();
+    return {
+      baseUrl: videoUpstreamBaseUrl || active?.baseUrl || targetProxy,
+      authorization: videoUpstreamAuthorization || normalizeAuthorization(active?.apiKey) || upstreamAuthorization,
+      type: "openai",
+    };
+  }
   if (model) {
     const matched = providerStore.findProviderForModel(model);
     if (matched) {
@@ -171,7 +186,7 @@ const getUpstreamConfig = (model) => {
   return { baseUrl: targetProxy, authorization: upstreamAuthorization, type: "openai" };
 };
 
-const geminiNativeHandler = createGeminiNativeHandler(getUpstreamConfig, { recordUsage, isSuperAdmin });
+const geminiNativeHandler = createGeminiNativeHandler((model) => getUpstreamConfig(model), { recordUsage, isSuperAdmin });
 
 app.use(
   "/api",
@@ -185,7 +200,7 @@ app.use(
   requireAuth,
   (req, res, next) => {
     // authCheck: verify active provider has authorization (don't use model routing here)
-    const { authorization } = getUpstreamConfig();
+    const { authorization } = getUpstreamConfig(undefined, req.originalUrl);
     if (!authorization) {
       res.status(500).json({ ok: false, message: "当前线路未配置上游鉴权。" });
       return;
@@ -202,7 +217,7 @@ app.use(
   geminiNativeHandler,
   createProxyMiddleware({
     target: targetProxy,
-    router: (req) => getUpstreamConfig(req._routeModel).baseUrl,
+    router: (req) => getUpstreamConfig(req._routeModel, req.originalUrl).baseUrl,
     changeOrigin: true,
     secure: true,
     proxyTimeout: Number(process.env.UPSTREAM_PROXY_TIMEOUT_MS || 90000),
@@ -211,7 +226,7 @@ app.use(
     on: {
       proxyReq: (proxyReq, req) => {
         const requestId = String(req.requestId || "");
-        const { baseUrl, authorization } = getUpstreamConfig(req._routeModel);
+        const { baseUrl, authorization } = getUpstreamConfig(req._routeModel, req.originalUrl);
         proxyReq.setHeader("Authorization", authorization);
         proxyReq.setHeader("X-Auth-User", String(req.authUser || ""));
         if (requestId) {
@@ -223,7 +238,7 @@ app.use(
       },
       proxyRes: (proxyRes, req) => {
         const requestId = String(req.requestId || "");
-        const { baseUrl } = getUpstreamConfig(req._routeModel);
+        const { baseUrl } = getUpstreamConfig(req._routeModel, req.originalUrl);
         const isImageGen = req.originalUrl.includes("/v1/images/generations");
         const isImageEdit = req.originalUrl.includes("/v1/images/edits");
         const isChatComp = req.originalUrl.includes("/v1/chat/completions");
@@ -302,9 +317,16 @@ let shuttingDown = false;
 
 const server = app.listen(port, host, () => {
   console.log(`Auth server running on http://${host}:${port}`);
-  console.log(`Seed user: ${AUTH_USERNAME}`);
+  if (hasConfiguredSeedUsers()) {
+    console.log("[AUTH] Seed users loaded from environment variables.");
+  } else {
+    console.log("[AUTH] Seed users loaded from database or generated for local development.");
+  }
   const active = providerStore.getActive();
   console.log(`[UPSTREAM] active provider: ${active ? `${active.name} (${active.baseUrl})` : `env fallback (${targetProxy})`}`);
+  if (videoUpstreamAuthorization) {
+    console.log(`[UPSTREAM] video override: ${videoUpstreamBaseUrl || active?.baseUrl || targetProxy}`);
+  }
   console.log(
     `[UPSTREAM] guard: ${UPSTREAM_GUARD_ENABLED ? "on" : "off"} (per-user=${UPSTREAM_MAX_INFLIGHT_PER_USER}, global=${UPSTREAM_MAX_INFLIGHT_GLOBAL})`
   );

@@ -1,7 +1,9 @@
 import type { ProcessedUpload } from '@/components/piveo/types';
 
 const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const MAX_UPLOAD_MB = 15;
+const MAX_UPLOAD_MB = 40;
+const DEFAULT_MAX_EDGE = 1600;
+const WEBP_UPLOAD_QUALITY = 0.99;
 
 export const validateImageFile = (file: File) => {
   if (!file.type.startsWith('image/')) {
@@ -32,7 +34,12 @@ export const fileToDataUrl = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
-const resizeImageDataUrl = async (inputDataUrl: string, maxEdge = 1600): Promise<{ output: string; width: number; height: number }> => {
+export const convertImageToUploadWebp = async (
+  file: File,
+  maxEdge = DEFAULT_MAX_EDGE
+): Promise<{ output: string; width: number; height: number; mime: 'image/webp' }> => {
+  validateImageFile(file);
+  const inputDataUrl = await fileToDataUrl(file);
   const image = await loadImage(inputDataUrl);
   const ratio = Math.min(1, maxEdge / Math.max(image.naturalWidth, image.naturalHeight));
   const width = Math.max(1, Math.round(image.naturalWidth * ratio));
@@ -43,16 +50,14 @@ const resizeImageDataUrl = async (inputDataUrl: string, maxEdge = 1600): Promise
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas not available');
   ctx.drawImage(image, 0, 0, width, height);
-  const output = canvas.toDataURL('image/webp', 0.92);
+  const output = canvas.toDataURL('image/webp', WEBP_UPLOAD_QUALITY);
   canvas.width = 0;
   canvas.height = 0;
-  return { output, width, height };
+  return { output, width, height, mime: 'image/webp' };
 };
 
 export const processUploadFile = async (file: File): Promise<ProcessedUpload> => {
-  validateImageFile(file);
-  const inputDataUrl = await fileToDataUrl(file);
-  const resized = await resizeImageDataUrl(inputDataUrl);
+  const resized = await convertImageToUploadWebp(file);
   return {
     file,
     previewUrl: resized.output,

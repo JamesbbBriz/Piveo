@@ -5,9 +5,9 @@
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n AUTH,WEB -c yellow,cyan \"node server/index.mjs\" \"vite\"",
+    "dev": "concurrently -k -n AUTH,WEB -c yellow,cyan \"node --watch server/index.mjs\" \"vite\"",
     "dev:web": "vite",
-    "dev:auth": "node server/index.mjs",
+    "dev:auth": "node --watch server/index.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "start": "NODE_ENV=production node server/index.mjs",

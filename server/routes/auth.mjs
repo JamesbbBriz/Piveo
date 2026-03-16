@@ -1,4 +1,5 @@
 import net from "node:net";
+import { randomBytes } from "node:crypto";
 import { Readable } from "node:stream";
 import express from "express";
 import bcrypt from "bcryptjs";
@@ -103,6 +104,23 @@ const signToken = (username) =>
     expiresIn: SESSION_TTL_SECONDS,
   });
 
+const collectSeedUserPairsFromEnv = () => {
+  const pairs = [];
+  const primary = String(process.env.AUTH_USER || "").trim();
+  const primaryPw = String(process.env.AUTH_PASSWORD || "");
+  if (primary && primaryPw) pairs.push({ username: primary, password: primaryPw, source: "env" });
+
+  for (let i = 2; i <= 10; i++) {
+    const u = String(process.env[`AUTH_USER_${i}`] || "").trim();
+    const p = String(process.env[`AUTH_PASSWORD_${i}`] || "");
+    if (u && p) pairs.push({ username: u, password: p, source: "env" });
+  }
+
+  return pairs;
+};
+
+export const hasConfiguredSeedUsers = () => collectSeedUserPairsFromEnv().length > 0;
+
 export const verifyToken = (token) => {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
@@ -161,24 +179,28 @@ export const requireAuth = (req, res, next) => {
  * Called on startup. Insert only if the user doesn't already exist.
  */
 export async function seedUser() {
-  // Collect seed user pairs: AUTH_USER/AUTH_PASSWORD, AUTH_USER_2/AUTH_PASSWORD_2, ...
-  const pairs = [];
-  const primary = String(process.env.AUTH_USER || "").trim();
-  const primaryPw = String(process.env.AUTH_PASSWORD || "");
-  if (primary && primaryPw) pairs.push({ username: primary, password: primaryPw });
-
-  for (let i = 2; i <= 10; i++) {
-    const u = String(process.env[`AUTH_USER_${i}`] || "").trim();
-    const p = String(process.env[`AUTH_PASSWORD_${i}`] || "");
-    if (u && p) pairs.push({ username: u, password: p });
-  }
+  const db = getDb();
+  const existingUserCount = Number(db.prepare("SELECT COUNT(*) as cnt FROM users").get()?.cnt || 0);
+  const pairs = collectSeedUserPairsFromEnv();
 
   if (pairs.length === 0) {
-    throw new Error("必须配置 AUTH_USER 与 AUTH_PASSWORD，禁止使用硬编码默认凭据。");
+    if (existingUserCount > 0) {
+      console.log(`[AUTH] Reusing ${existingUserCount} existing user(s) from the database.`);
+      return;
+    }
+    if (IS_PROD) {
+      throw new Error("必须配置 AUTH_USER 与 AUTH_PASSWORD，禁止使用硬编码默认凭据。");
+    }
+
+    const username = `dev-${randomBytes(3).toString("hex")}`;
+    const password = randomBytes(9).toString("base64url");
+    pairs.push({ username, password, source: "generated" });
+    console.warn("[AUTH] 未检测到 AUTH_USER / AUTH_PASSWORD，已为当前开发环境生成一次性本地账号。");
+    console.warn(`[AUTH] Dev login username: ${username}`);
+    console.warn(`[AUTH] Dev login password: ${password}`);
   }
 
-  const db = getDb();
-  for (const { username, password } of pairs) {
+  for (const { username, password, source } of pairs) {
     const existing = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
     if (!existing) {
       const hash = await bcrypt.hash(password, 10);
@@ -186,7 +208,7 @@ export async function seedUser() {
       db.prepare(
         "INSERT INTO users (id, username, password_hash, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
       ).run(uuidv4(), username, hash, username, now, now);
-      console.log(`[AUTH] Seeded user: ${username}`);
+      console.log(`[AUTH] Seeded ${source} user: ${username}`);
     } else {
       console.log(`[AUTH] User already exists: ${username}`);
     }
