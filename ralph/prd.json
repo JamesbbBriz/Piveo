@@ -1,0 +1,132 @@
+{
+  "project": "Piveo",
+  "branchName": "ralph/veo31-video-generation",
+  "description": "Add a dedicated VEO 3.1 video generation workflow with required start frame, optional end frame, persisted history, preview/download, rerun, and backend storage APIs.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add video job persistence schema",
+      "description": "As a developer, I need database tables for video jobs and generated videos so that video history survives refreshes and can be queried safely.",
+      "acceptanceCriteria": [
+        "Add video_jobs table with status, prompt, start/end blob refs, aspect ratio, resolution, duration, candidate count, and timestamps",
+        "Add generated_videos table linked to video_jobs with blob ref, source URL, duration, mime type, and created timestamp",
+        "Schema migration runs on startup without breaking existing data",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Create backend video job CRUD endpoints",
+      "description": "As a developer, I want backend CRUD endpoints for video jobs so that the frontend can create, update, list, inspect, and delete persisted video tasks.",
+      "acceptanceCriteria": [
+        "Add authenticated endpoints for GET list, GET by id, PUT upsert, and DELETE for /api/data/video-jobs",
+        "PUT endpoint validates required start frame and prompt fields and clamps candidate count to 1-4",
+        "List and detail responses include generated video rows for each job",
+        "Access control matches existing user/team ownership patterns",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Extend video request model for frame-to-frame input",
+      "description": "As a developer, I need the video generation service to accept optional end frame and display parameters so that the new workflow can request VEO 3.1-compatible payloads.",
+      "acceptanceCriteria": [
+        "Video request payload includes first frame, optional last frame, prompt, model, aspect ratio, resolution, and duration",
+        "Existing first-frame flow remains compatible through the same service module",
+        "Fallback video generation still works when upstream video generation is disabled",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Add frontend video job service",
+      "description": "As a developer, I want a client service that uploads frames, runs generation, persists results, and reloads history so that the UI can stay focused on workflow state.",
+      "acceptanceCriteria": [
+        "Client service uploads start and optional end frame images to blob storage before saving a job",
+        "Client service runs 1-4 candidate generations and persists generated video blobs back to the server",
+        "Client service supports listing, deleting, and rerunning video jobs",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Add dedicated video navigation entry",
+      "description": "As a user, I want a top-level video generation entry in the app navigation so that I can access the workflow directly.",
+      "acceptanceCriteria": [
+        "Nav rail includes a dedicated video generation button",
+        "Main content switches to a dedicated video page when the video navigation item is selected",
+        "Existing project, library, and admin navigation continue to work",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Build video generation form",
+      "description": "As a user, I want to upload a start frame, optionally add an end frame, enter a prompt, and choose core parameters so that I can submit a VEO 3.1 video job.",
+      "acceptanceCriteria": [
+        "Video page shows start frame upload, optional end frame upload, prompt field, duration, aspect ratio, resolution, and candidate count controls",
+        "Start frame and prompt are required before submit becomes available",
+        "Submit action calls the video job service with model fixed to veo-3.1",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Show persisted video history and actions",
+      "description": "As a user, I want to review prior video jobs, preview results, download them, rerun them, and delete them so that I can manage my outputs without leaving the workflow.",
+      "acceptanceCriteria": [
+        "Video page lists persisted jobs with status, prompt summary, created time, and parameter badges",
+        "Each completed result shows an inline video preview and download action",
+        "Each job exposes rerun and delete actions",
+        "Failed jobs display the stored error message",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Add regression coverage for the video workflow",
+      "description": "As a developer, I want smoke and integration coverage for the new video workflow so that navigation, submission, and history actions remain stable.",
+      "acceptanceCriteria": [
+        "Add smoke coverage that renders the core VEO video generation controls",
+        "Add integration coverage for submit flow with required fields and history refresh",
+        "Add integration coverage for rerun and delete actions",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
