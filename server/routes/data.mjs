@@ -10,9 +10,10 @@ import { getAllUsersUsageStats, getUserUsageStats } from "../services/usageTrack
 import * as providerStore from "../services/providerStore.mjs";
 
 const router = express.Router();
+const DATA_JSON_LIMIT = String(process.env.DATA_JSON_LIMIT || "80mb").trim() || "80mb";
 
 // All data routes require authentication
-router.use("/api/data", express.json({ limit: "20mb" }), requireAuth);
+router.use("/api/data", express.json({ limit: DATA_JSON_LIMIT }), requireAuth);
 
 // ---------- Helpers ----------
 
@@ -31,6 +32,33 @@ function assertTeamAccess(userId, teamId, requiredRole) {
   if (requiredRole === "admin" && member.role !== "admin") return false;
   return true;
 }
+
+const parseJsonArray = (raw, fallback = []) => {
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const mapVideoJobWithResults = (job, results) => ({
+  ...job,
+  results,
+});
+
+const splitDataUrl = (value, fallbackContentType) => {
+  const raw = String(value || "");
+  const match = /^data:([^;,]+);base64,(.+)$/i.exec(raw);
+  if (!match) {
+    return { base64Data: raw, contentType: fallbackContentType };
+  }
+  return {
+    contentType: match[1] || fallbackContentType,
+    base64Data: match[2] || "",
+  };
+};
 
 // ---------- Users (super admin only) ----------
 
@@ -155,7 +183,8 @@ router.post("/api/data/blobs", async (req, res) => {
   if (!data) return res.status(400).json({ ok: false, message: "缺少 data 字段。" });
 
   try {
-    const blob = await saveBlob(userId, data, contentType || "image/png");
+    const normalized = splitDataUrl(data, contentType || "image/png");
+    const blob = await saveBlob(userId, normalized.base64Data, normalized.contentType);
     res.json({ ok: true, id: blob.id, url: `/api/data/blobs/${blob.id}` });
   } catch (e) {
     console.error("[DATA] blob save error:", e.message);
@@ -1010,6 +1039,189 @@ router.delete("/api/data/batch-jobs/:id", (req, res) => {
   }
 
   db.prepare("DELETE FROM batch_jobs WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ---------- Video Jobs ----------
+
+router.get("/api/data/video-jobs", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const jobs = db
+    .prepare(
+      `SELECT * FROM video_jobs
+       WHERE user_id = ? OR team_id IN (SELECT team_id FROM team_members WHERE user_id = ?)
+       ORDER BY updated_at DESC`
+    )
+    .all(userId, userId);
+
+  const resultStmt = db.prepare(
+    "SELECT * FROM generated_videos WHERE video_job_id = ? ORDER BY created_at DESC"
+  );
+  const videoJobs = jobs.map((job) => mapVideoJobWithResults(job, resultStmt.all(job.id)));
+  res.json({ ok: true, videoJobs });
+});
+
+router.get("/api/data/video-jobs/:id", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const job = db.prepare("SELECT * FROM video_jobs WHERE id = ?").get(req.params.id);
+  if (!job) return res.status(404).json({ ok: false, message: "视频任务不存在。" });
+
+  if (job.user_id !== userId) {
+    if (!job.team_id || !assertTeamAccess(userId, job.team_id)) {
+      return res.status(403).json({ ok: false, message: "无权限查看此视频任务。" });
+    }
+  }
+
+  const results = db
+    .prepare("SELECT * FROM generated_videos WHERE video_job_id = ? ORDER BY created_at DESC")
+    .all(req.params.id);
+
+  res.json({ ok: true, videoJob: mapVideoJobWithResults(job, results) });
+});
+
+router.put("/api/data/video-jobs/:id", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const {
+    title,
+    model,
+    status,
+    prompt,
+    start_blob_id,
+    end_blob_id,
+    aspect_ratio,
+    resolution,
+    duration_sec,
+    candidate_count,
+    error_message,
+    metadata_json,
+    results_json,
+    team_id,
+  } = req.body;
+
+  if (!start_blob_id) {
+    return res.status(400).json({ ok: false, message: "缺少首帧素材。" });
+  }
+  if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+    return res.status(400).json({ ok: false, message: "缺少提示词。" });
+  }
+
+  const safeStatus = ["pending", "processing", "completed", "failed"].includes(status) ? status : "pending";
+  const safeCandidateCount = Math.max(1, Math.min(Number(candidate_count) || 1, 4));
+  const safeDuration = Math.max(1, Math.min(Number(duration_sec) || 8, 30));
+  const now = Date.now();
+  const db = getDb();
+  const existing = db.prepare("SELECT user_id, team_id, created_at FROM video_jobs WHERE id = ?").get(req.params.id);
+  const parsedResults = typeof results_json === "string" ? parseJsonArray(results_json, []) : [];
+
+  if (existing) {
+    if (existing.user_id !== userId) {
+      if (!existing.team_id || !assertTeamAccess(userId, existing.team_id)) {
+        return res.status(403).json({ ok: false, message: "无权限修改此视频任务。" });
+      }
+    }
+  } else if (team_id && !assertTeamAccess(userId, team_id)) {
+    return res.status(403).json({ ok: false, message: "无权限在此团队创建视频任务。" });
+  }
+
+  const upsertJob = existing
+    ? db.prepare(
+        `UPDATE video_jobs SET title = ?, model = ?, status = ?, prompt = ?, start_blob_id = ?,
+         end_blob_id = ?, aspect_ratio = ?, resolution = ?, duration_sec = ?, candidate_count = ?,
+         error_message = ?, metadata_json = ?, team_id = ?, updated_at = ? WHERE id = ?`
+      )
+    : db.prepare(
+        `INSERT INTO video_jobs (id, user_id, team_id, title, model, status, prompt, start_blob_id, end_blob_id,
+         aspect_ratio, resolution, duration_sec, candidate_count, error_message, metadata_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+
+  const replaceResults = db.prepare("DELETE FROM generated_videos WHERE video_job_id = ?");
+  const insertResult = db.prepare(
+    `INSERT INTO generated_videos (id, video_job_id, blob_id, source_url, duration_sec, mime_type, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  );
+
+  db.transaction(() => {
+    if (existing) {
+      upsertJob.run(
+        title ?? "",
+        model ?? "veo-3.1",
+        safeStatus,
+        prompt.trim(),
+        start_blob_id,
+        end_blob_id ?? null,
+        aspect_ratio ?? "16:9",
+        resolution ?? "720p",
+        safeDuration,
+        safeCandidateCount,
+        error_message ?? null,
+        metadata_json ?? "{}",
+        team_id ?? null,
+        now,
+        req.params.id
+      );
+    } else {
+      upsertJob.run(
+        req.params.id,
+        userId,
+        team_id ?? null,
+        title ?? "",
+        model ?? "veo-3.1",
+        safeStatus,
+        prompt.trim(),
+        start_blob_id,
+        end_blob_id ?? null,
+        aspect_ratio ?? "16:9",
+        resolution ?? "720p",
+        safeDuration,
+        safeCandidateCount,
+        error_message ?? null,
+        metadata_json ?? "{}",
+        now,
+        now
+      );
+    }
+
+    replaceResults.run(req.params.id);
+    for (const result of parsedResults) {
+      insertResult.run(
+        String(result.id || uuidv4()),
+        req.params.id,
+        result.blob_id ?? null,
+        result.source_url ?? null,
+        Math.max(1, Math.min(Number(result.duration_sec) || safeDuration, 30)),
+        result.mime_type ?? null,
+        Number(result.created_at) || now
+      );
+    }
+  })();
+
+  res.json({ ok: true });
+});
+
+router.delete("/api/data/video-jobs/:id", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const job = db.prepare("SELECT user_id, team_id FROM video_jobs WHERE id = ?").get(req.params.id);
+  if (!job) return res.status(404).json({ ok: false, message: "视频任务不存在。" });
+
+  if (job.user_id !== userId) {
+    if (!job.team_id || !assertTeamAccess(userId, job.team_id, "admin")) {
+      return res.status(403).json({ ok: false, message: "无权限删除此视频任务。" });
+    }
+  }
+
+  db.prepare("DELETE FROM video_jobs WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
 });
 

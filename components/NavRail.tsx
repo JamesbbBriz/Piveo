@@ -111,6 +111,13 @@ export const NavRail: React.FC<NavRailProps> = ({
           onClick={() => onNavChange('projects')}
         />
 
+        <RailBtn
+          icon="film"
+          label="视频生成"
+          active={navView === 'video'}
+          onClick={() => onNavChange('video')}
+        />
+
         <RailDivider />
 
         {/* Assets */}

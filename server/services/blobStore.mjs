@@ -14,6 +14,8 @@ const EXT_MAP = {
   "image/webp": ".webp",
   "image/gif": ".gif",
   "image/svg+xml": ".svg",
+  "video/webm": ".webm",
+  "video/mp4": ".mp4",
 };
 
 function getUploadsDir() {
@@ -25,14 +27,13 @@ const CONVERTIBLE_TYPES = new Set([
   "image/png",
   "image/jpeg",
   "image/jpg",
-  "image/webp",
   "image/gif",
 ]);
 
 /**
  * Save a base64-encoded blob to disk and record it in the database.
- * Raster images (PNG/JPEG/GIF/WebP) are converted to WebP q99 before saving.
- * SVG and other types are stored as-is.
+ * Raster uploads (PNG/JPEG/GIF) are normalized to WebP q99 before saving.
+ * Existing WebP, SVG, video, and other types are stored as-is.
  * @param {string} userId
  * @param {string} base64Data - Raw base64 string (no data URI prefix)
  * @param {string} contentType - MIME type (e.g. "image/png")
@@ -50,9 +51,16 @@ export async function saveBlob(userId, base64Data, contentType = "image/png") {
   let finalExt = EXT_MAP[contentType] || ".bin";
 
   if (CONVERTIBLE_TYPES.has(contentType)) {
-    finalBuffer = await sharp(buffer).webp({ quality: WEBP_QUALITY }).toBuffer();
-    finalContentType = "image/webp";
-    finalExt = ".webp";
+    try {
+      finalBuffer = await sharp(buffer).webp({ quality: WEBP_QUALITY }).toBuffer();
+      finalContentType = "image/webp";
+      finalExt = ".webp";
+    } catch (e) {
+      console.warn(`[BLOB] image conversion skipped for ${contentType}: ${e.message}`);
+      finalBuffer = buffer;
+      finalContentType = contentType;
+      finalExt = EXT_MAP[contentType] || ".bin";
+    }
   }
 
   const fileName = `${id}${finalExt}`;

@@ -296,3 +296,46 @@ export interface BrandKit {
   createdAt: number;
   updatedAt: number;
 }
+
+export type VideoJobStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface VideoJobTask {
+  id: string;
+  candidateIndex: number;
+  status: string;
+  videoUrl?: string;
+  errorMessage?: string;
+  checkedAt?: number;
+}
+
+export interface VideoJobResult {
+  id: string;
+  blobId?: string;
+  videoUrl: string;
+  durationSec: number;
+  mimeType?: string;
+  fallback?: boolean;
+  fallbackReason?: string;
+  createdAt: number;
+}
+
+export interface VideoJob {
+  id: string;
+  title: string;
+  model: string;
+  status: VideoJobStatus;
+  prompt: string;
+  startFrameUrl: string;
+  startBlobId?: string;
+  endFrameUrl?: string;
+  endBlobId?: string;
+  aspectRatio: string;
+  resolution: string;
+  durationSec: number;
+  candidateCount: number;
+  errorMessage?: string;
+  upstreamTasks?: VideoJobTask[];
+  results: VideoJobResult[];
+  createdAt: number;
+  updatedAt: number;
+}

@@ -120,7 +120,6 @@ export const generateMediaSet = async (
       url: generatedVideo.url,
       durationSec: generatedVideo.durationSec,
       mutedAutoplay: true,
-      fallback: generatedVideo.fallback,
     };
   } finally {
     onProgress?.('video', 1, 1);
