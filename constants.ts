@@ -30,4 +30,4 @@ export const DEFAULT_SYSTEM_TEMPLATES: SystemTemplate[] = [
 
 // Default to the OpenAI-style image model exposed by the gateway.
 export const MODEL_NAME =
-  (import.meta as any).env?.VITE_DEFAULT_IMAGE_MODEL || 'gemini-2.5-flash-image-preview';
+  (import.meta as any).env?.VITE_DEFAULT_IMAGE_MODEL || 'gemini-3.1-flash-image-preview';

@@ -19,7 +19,7 @@ export const getEnvApiConfig = (): ApiConfig => {
   const authorization = "";
 
   const defaultImageModel = normalizeDefaultImageModel(
-    (readEnvString("VITE_DEFAULT_IMAGE_MODEL") || "gemini-2.5-flash-image-preview").trim()
+    (readEnvString("VITE_DEFAULT_IMAGE_MODEL") || "gemini-3.1-flash-image-preview").trim()
   );
 
   return {

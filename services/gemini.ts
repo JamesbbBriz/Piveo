@@ -30,6 +30,7 @@ export const enhancePrompt = async (originalPrompt: string): Promise<string> => 
 export const generateModelCharacter = async (
   opts?: { signal?: AbortSignal; description?: string }
 ): Promise<string> => {
+  const { defaultImageModel } = getEffectiveApiConfig();
   const desc = opts?.description?.trim();
   const prompt = desc
     ? `生成一张高端时尚人像写真：${desc}。中性背景、清晰对焦、8K 质感、面部特征稳定一致。`
@@ -38,7 +39,7 @@ export const generateModelCharacter = async (
   const resp = await imagesGenerations(
     {
       prompt,
-      model: "gemini-2.5-flash-image" as any,
+      model: defaultImageModel as any,
       n: 1,
       size: "1024x1024",
       response_format: ResponseFormat.B64json,
@@ -50,7 +51,7 @@ export const generateModelCharacter = async (
   const imageUrl = first ? imageObjToDataUrl(first) : null;
   if (!imageUrl) throw new Error("生成模特图片失败（响应中没有 url/b64_json）。");
   return imageUrl;
-}
+};
 
 export interface GenerateResponseOptions {
   n?: number;
