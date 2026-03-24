@@ -623,7 +623,7 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
           {getSupportedAspectRatios().map((ratio) => (
             <button
               key={ratio}
-              onClick={() => onUpdateSettings({ ...settings, aspectRatio: ratio as AspectRatio, batchSizes: [getSupportedSizeForAspect(ratio)] })}
+              onClick={() => onUpdateSettings({ ...settings, aspectRatio: ratio as AspectRatio, batchSizes: [getSupportedSizeForAspect(ratio, settings.imageSize)] })}
               className={`h-8 rounded-lg border text-[10px] font-semibold transition-colors ${
                 settings.aspectRatio === ratio
                   ? "bg-banana-500/10 border-banana-500 text-banana-400"

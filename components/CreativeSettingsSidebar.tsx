@@ -1,5 +1,5 @@
 import React from "react";
-import { AspectRatio, ProductScale, SessionSettings } from "../types";
+import { AspectRatio, ImageSize, ProductScale, SessionSettings } from "../types";
 import { getSupportedAspectRatios, getSupportedSizeForAspect } from "../services/sizeUtils";
 
 interface CreativeSettingsSidebarProps {
@@ -9,7 +9,10 @@ interface CreativeSettingsSidebarProps {
 
 export const CreativeSettingsSidebar: React.FC<CreativeSettingsSidebarProps> = ({ settings, onUpdateSettings }) => {
   const handleAspectRatioChange = (ratio: AspectRatio) => {
-    onUpdateSettings({ ...settings, aspectRatio: ratio, batchSizes: [getSupportedSizeForAspect(ratio)] });
+    onUpdateSettings({ ...settings, aspectRatio: ratio, batchSizes: [getSupportedSizeForAspect(ratio, settings.imageSize)] });
+  };
+  const handleImageSizeChange = (size: ImageSize) => {
+    onUpdateSettings({ ...settings, imageSize: size, batchSizes: [getSupportedSizeForAspect(settings.aspectRatio, size)] });
   };
   const getScaleLabel = (scale: ProductScale): string => {
     if (scale === ProductScale.Small) return "低调";
@@ -37,6 +40,26 @@ export const CreativeSettingsSidebar: React.FC<CreativeSettingsSidebarProps> = (
               </button>
             ))}
           </div>
+        </div>
+
+        <div>
+          <div className="text-[10px] text-gray-400 mb-1.5">分辨率</div>
+          <div className="flex gap-2">
+            {(["1K", "4K"] as const).map((size) => (
+              <button
+                key={size}
+                onClick={() => handleImageSizeChange(size)}
+                className={`flex-1 h-8 rounded-lg border text-[10px] font-semibold transition-colors ${
+                  settings.imageSize === size
+                    ? "bg-banana-500/10 border-banana-500 text-banana-400"
+                    : "bg-dark-700 border-dark-600 text-gray-300 hover:border-gray-500"
+                }`}
+              >
+                {size}
+              </button>
+            ))}
+          </div>
+          <div className="mt-1 text-[10px] text-gray-500">4K 生成更慢但清晰度更高，适合大图印刷。</div>
         </div>
 
         <div>

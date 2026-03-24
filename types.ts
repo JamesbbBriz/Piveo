@@ -23,6 +23,7 @@ export type ImageResponseFormat = "url" | "b64_json";
 /** 参考图意图：用户上传参考图时选择参考什么 */
 export type ReferenceIntent = 'style' | 'product' | 'composition' | 'all';
 export type CreationWorkflow = 'product' | 'housing';
+export type ImageSize = "1K" | "4K";
 
 export interface SystemTemplate {
   id: string;
@@ -101,6 +102,7 @@ export interface SessionSettings {
   responseFormat: ImageResponseFormat;
   batchCount: number; // 1-10
   batchSizes: string[]; // empty => use aspectRatio mapping
+  imageSize: ImageSize;
   autoUseLastImage: boolean; // true => 自动沿用最近图片做连续编辑
   productImage: ProductImage | null;
 }

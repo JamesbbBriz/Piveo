@@ -64,9 +64,7 @@ export interface 创建图片请求 {
  * 模型，用于图像生成的模型。
  */
 export enum Model {
-  Gemini25FlashImagePreview = "gemini-2.5-flash-image-preview",
-  Gemini3ProImagePreview2K = "gemini-3-pro-image-preview-2k",
-  GptImage15 = "gpt-image-1.5",
+  Gemini31FlashImagePreview = "gemini-3.1-flash-image-preview",
 }
 
 /**
@@ -277,7 +275,7 @@ const isLikelyTimeoutError = (e: unknown): boolean => {
 
 const resolveImageFetchTimeoutMs = (modelId?: string): number => {
   const model = String(modelId || "").toLowerCase();
-  return /gemini-3-pro-image/i.test(model) ? proImageFetchTimeoutMs : imageFetchTimeoutMs;
+  return /gemini-3[.-](pro|1)/i.test(model) ? proImageFetchTimeoutMs : imageFetchTimeoutMs;
 };
 
 /** 合并用户取消信号和超时信号 */
@@ -328,9 +326,9 @@ const chooseFallbackModel = (current: string, available: string[]): string | nul
   if (!normalized.length) return null;
 
   const preferredOrder = [
+    "gemini-3.1-flash-image-preview",
+    "gemini-2.5-flash-image",
     "gpt-image-1.5",
-    "gpt-image-1",
-    "gemini-2.5-flash-image-preview",
   ];
 
   for (const preferred of preferredOrder) {
@@ -639,7 +637,7 @@ export const imagesGenerations = async (
   const callWithModel = async (model: string): Promise<图片生成响应> => {
     if (/^sora-/i.test(model)) {
       throw new Error(
-        `当前模型「${model}」是视频模型，不支持图片生成。请在左侧栏「接口」里切换到图片模型（例如 gemini-2.5-flash-image-preview 或 gpt-image-1.5）。`
+        `当前模型「${model}」是视频模型，不支持图片生成。请在左侧栏「接口」里切换到图片模型（例如 gemini-3.1-flash-image-preview）。`
       );
     }
     const requestTimeoutMs = resolveImageFetchTimeoutMs(model);

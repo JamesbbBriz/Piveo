@@ -16,6 +16,7 @@ interface ModelSwitcherFooterProps {
 }
 
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  "gemini-3.1-flash-image-preview": "Nano🍌 2",
   "gemini-3-pro-image-preview": "Nano🍌 PRO",
   "gemini-3-pro-image": "Nano🍌 PRO",
   "gemini-2.5-flash-image-preview": "Nano🍌",
@@ -25,7 +26,7 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
 };
 
 // These models are always shown regardless of server-returned list or allowed-models config.
-const PINNED_MODELS = ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"];
+const PINNED_MODELS = ["gemini-3.1-flash-image-preview"];
 
 /** Canonicalize legacy model ids (frontend display + persistence). */
 export const canonicalizeModelId = (modelId: string): string =>

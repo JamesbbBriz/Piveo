@@ -43,9 +43,9 @@ const SUPPORTED_ASPECT_RATIO_ORDER: AspectRatio[] = [
 
 export const getSupportedAspectRatios = (): AspectRatio[] => SUPPORTED_ASPECT_RATIO_ORDER;
 
-export const getSupportedSizeForAspect = (aspect: AspectRatio | string, _model?: string): string => {
-  // All models default to 2K resolution
-  return GEMINI_PRO_IMAGE_2K_SIZE_BY_ASPECT[String(aspect)] || GEMINI_PRO_IMAGE_2K_SIZE_BY_ASPECT["1:1"];
+export const getSupportedSizeForAspect = (aspect: AspectRatio | string, imageSize?: string): string => {
+  const map = imageSize === "4K" ? GEMINI_PRO_IMAGE_2K_SIZE_BY_ASPECT : GEMINI_FLASH_IMAGE_SIZE_BY_ASPECT;
+  return map[String(aspect)] || map["1:1"];
 };
 
 export const isSupportedAspectRatio = (aspect: unknown): aspect is AspectRatio => {

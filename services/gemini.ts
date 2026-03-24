@@ -4,8 +4,8 @@ import { getSupportedSizeForAspect } from "./sizeUtils";
 import { getEffectiveApiConfig } from "./apiConfig";
 import { urlToDataUrl } from "./imageData";
 
-const aspectRatioToSize = (aspectRatio: string, model?: string): string => {
-  return getSupportedSizeForAspect(aspectRatio, model);
+const aspectRatioToSize = (aspectRatio: string, imageSize?: string): string => {
+  return getSupportedSizeForAspect(aspectRatio, imageSize);
 };
 
 export const enhancePrompt = async (originalPrompt: string): Promise<string> => {
@@ -328,7 +328,7 @@ export const generateResponse = async (
     const n = Math.min(Math.max(options.n ?? 1, 1), 10);
     const responseFormat = options.responseFormat ?? settings.responseFormat ?? "url";
     const currentModel = getEffectiveApiConfig().defaultImageModel;
-    const sizeUsed = options.size ?? aspectRatioToSize(settings.aspectRatio, currentModel);
+    const sizeUsed = options.size ?? aspectRatioToSize(settings.aspectRatio, settings.imageSize);
     const productContext = productInfoInstruction ? `\n${productInfoInstruction}` : "";
     const contextPrefix = imageContext ? `${imageContext}\n` : "";
     const brandPrefix = brandDnaInstruction ? `${brandDnaInstruction}\n` : "";
@@ -342,6 +342,7 @@ export const generateResponse = async (
         response_format: rfToEnum(responseFormat),
         size: sizeUsed,
         image: imageInputs.length ? imageInputs : undefined,
+        image_size: settings.imageSize,
       },
       { signal: options.signal, queueSource: options.queueSource || "chat" }
     );

@@ -92,8 +92,8 @@ import {
   SET_BRAND_TASTE_PROFILE,
 } from './store/actions';
 
-const aspectRatioToSize = (aspectRatio: AspectRatio | string): string => {
-  return getSupportedSizeForAspect(aspectRatio);
+const aspectRatioToSize = (aspectRatio: AspectRatio | string, imageSize?: string): string => {
+  return getSupportedSizeForAspect(aspectRatio, imageSize);
 };
 
 const isAbortError = (e: any): boolean => e?.name === "AbortError";
@@ -269,6 +269,7 @@ const createNewSession = (templates: SystemTemplate[], prefs?: DefaultPreference
       responseFormat: "url",
       batchCount: bc,
       batchSizes: [getSupportedSizeForAspect(ar)],
+      imageSize: "1K",
       autoUseLastImage: true,
       productImage: null,
     }
@@ -760,7 +761,7 @@ const AppInner: React.FC = () => {
 
     const settings = currentSession.settings;
     const currentModel = getEffectiveApiConfig().defaultImageModel;
-    const size = aspectRatioToSize(settings.aspectRatio);
+    const size = aspectRatioToSize(settings.aspectRatio, settings.imageSize);
 
     const images: string[] = [];
     if (params.referenceImage) {
@@ -822,6 +823,7 @@ const AppInner: React.FC = () => {
         response_format: ResponseFormat.Url,
         size,
         image: images.length ? images : undefined,
+        image_size: settings.imageSize,
       },
       { signal: batchAbortRef.current?.signal, queueSource: "batch" }
     );
@@ -2160,7 +2162,7 @@ const AppInner: React.FC = () => {
 
     try {
       const currentModel = getEffectiveApiConfig().defaultImageModel;
-      const size = aspectRatioToSize(currentSession.settings.aspectRatio);
+      const size = aspectRatioToSize(currentSession.settings.aspectRatio, currentSession.settings.imageSize);
 
       const images = [await urlToDataUrl(activeVersion.imageUrl)];
 
@@ -2179,6 +2181,7 @@ const AppInner: React.FC = () => {
           response_format: ResponseFormat.Url,
           size,
           image: images,
+          image_size: currentSession.settings.imageSize,
         },
         { signal: controller.signal, queueSource: "batch" }
       );

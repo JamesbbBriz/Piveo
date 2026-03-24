@@ -63,6 +63,7 @@ const normalizeSessionSettings = (raw: any, defaultTemplate: string): SessionSet
     responseFormat: "url",
     batchCount,
     batchSizes,
+    imageSize: raw?.imageSize === "4K" ? "4K" : "1K",
     autoUseLastImage: typeof raw?.autoUseLastImage === "boolean" ? raw.autoUseLastImage : true,
     productImage: raw?.productImage ?? null,
   };
@@ -443,6 +444,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 responseFormat: "url",
                 batchCount: prefs.batchCount ?? 1,
                 batchSizes: [getSupportedSizeForAspect(ar)],
+                imageSize: "1K" as const,
                 autoUseLastImage: true,
                 productImage: null,
               },
@@ -547,6 +549,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               responseFormat: "url",
               batchCount: prefs.batchCount ?? 1,
               batchSizes: [getSupportedSizeForAspect(ar)],
+              imageSize: "1K" as const,
               autoUseLastImage: true,
               productImage: null,
             },

@@ -348,7 +348,7 @@ const PromptModelPanelInner: React.FC<PromptModelPanelProps> = ({
               value={settings.aspectRatio}
               onChange={(e) => {
                 const ratio = e.target.value as AspectRatio;
-                onUpdateSettings({ ...settings, aspectRatio: ratio, batchSizes: [getSupportedSizeForAspect(ratio)] });
+                onUpdateSettings({ ...settings, aspectRatio: ratio, batchSizes: [getSupportedSizeForAspect(ratio, settings.imageSize)] });
               }}
               className="h-7 bg-dark-800 border border-dark-600 rounded-md px-1.5 text-[11px] text-gray-200 focus:outline-none focus:border-banana-500/50 cursor-pointer"
             >

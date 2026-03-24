@@ -10,6 +10,7 @@ export interface RefineMessage {
 interface RefineSettings {
   model: string;
   aspectRatio: string;
+  imageSize?: string;
   systemPrompt?: string;
 }
 
@@ -72,7 +73,7 @@ export async function sendRefineMessage(
     }
   }
 
-  const size = getSupportedSizeForAspect(settings.aspectRatio);
+  const size = getSupportedSizeForAspect(settings.aspectRatio, settings.imageSize);
 
   const body = {
     model: settings.model,

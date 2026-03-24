@@ -82,7 +82,7 @@ export const PiveoFlowPage: React.FC<PiveoFlowPageProps> = ({
           styles: selectedStyles,
           activeBrandKit,
           model,
-          size: getSupportedSizeForAspect(aspectRatio, model),
+          size: getSupportedSizeForAspect(aspectRatio),
           systemPrompt,
         },
         (phase, current, total) => {
