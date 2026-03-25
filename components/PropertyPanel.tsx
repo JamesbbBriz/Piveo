@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { AspectRatio, BrandKit, BrandTasteRating, GeneratedImage, ImageRating, ModelCharacter, ProductCatalogItem, ProductImage, SessionSettings, SystemTemplate } from '../types';
+import { AspectRatio, BrandKit, BrandTasteRating, GeneratedImage, ImageRating, ImageSize, ModelCharacter, ProductCatalogItem, ProductImage, SessionSettings, SystemTemplate } from '../types';
 import { getSupportedAspectRatios, getSupportedSizeForAspect } from '../services/sizeUtils';
 import { generateModelCharacter } from '../services/gemini';
 import { Icon } from './Icon';
@@ -634,6 +634,26 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
             </button>
           ))}
         </div>
+      </Section>
+
+      {/* Resolution */}
+      <Section title="分辨率">
+        <div className="flex gap-1.5">
+          {(["1K", "4K"] as ImageSize[]).map((size) => (
+            <button
+              key={size}
+              onClick={() => onUpdateSettings({ ...settings, imageSize: size, batchSizes: [getSupportedSizeForAspect(settings.aspectRatio, size)] })}
+              className={`flex-1 h-8 rounded-lg border text-[10px] font-semibold transition-colors ${
+                settings.imageSize === size
+                  ? "bg-banana-500/10 border-banana-500 text-banana-400"
+                  : "bg-dark-700 border-dark-600 text-gray-300 hover:border-gray-500"
+              }`}
+            >
+              {size}
+            </button>
+          ))}
+        </div>
+        <div className="mt-1 text-[9px] text-gray-500">4K 生成更慢但清晰度更高，适合大图印刷。</div>
       </Section>
 
       {/* Brand Kit Indicator */}
