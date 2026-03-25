@@ -173,11 +173,18 @@ function buildChatCompletionsBody(body) {
 
   // Aspect ratio: prefer extra_body.google.image_config.aspect_ratio, fallback to size
   const explicitAr = body.extra_body?.google?.image_config?.aspect_ratio;
+  const imageConfig = {};
   if (explicitAr) {
-    generationConfig.imageConfig = { aspectRatio: explicitAr };
+    imageConfig.aspectRatio = explicitAr;
   } else if (body.size) {
     const ar = sizeToAspectRatio(body.size);
-    if (ar) generationConfig.imageConfig = { aspectRatio: ar };
+    if (ar) imageConfig.aspectRatio = ar;
+  }
+  if (body.image_size) {
+    imageConfig.imageSize = body.image_size;
+  }
+  if (Object.keys(imageConfig).length > 0) {
+    generationConfig.imageConfig = imageConfig;
   }
 
   return { contents, generationConfig };
@@ -217,9 +224,18 @@ function buildImageGenerationsBody(body) {
     responseModalities: ["TEXT", "IMAGE"],
   };
 
-  if (body.size) {
-    const ar = sizeToAspectRatio(body.size);
-    if (ar) generationConfig.imageConfig = { aspectRatio: ar };
+  if (body.size || body.image_size) {
+    const imageConfig = {};
+    if (body.size) {
+      const ar = sizeToAspectRatio(body.size);
+      if (ar) imageConfig.aspectRatio = ar;
+    }
+    if (body.image_size) {
+      imageConfig.imageSize = body.image_size;
+    }
+    if (Object.keys(imageConfig).length > 0) {
+      generationConfig.imageConfig = imageConfig;
+    }
   }
 
   return { contents, generationConfig };
