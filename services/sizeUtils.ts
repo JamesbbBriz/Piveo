@@ -28,6 +28,20 @@ export const GEMINI_PRO_IMAGE_2K_SIZE_BY_ASPECT: Record<string, string> = {
   "21:9": "3168x1344",
 };
 
+// Nano🍌 2 (gemini-3.1-flash-image-preview) 4K 分辨率映射（2K × 2）。
+export const GEMINI_4K_SIZE_BY_ASPECT: Record<string, string> = {
+  "1:1": "4096x4096",
+  "2:3": "3392x5056",
+  "3:2": "5056x3392",
+  "3:4": "3584x4800",
+  "4:3": "4800x3584",
+  "4:5": "3712x4608",
+  "5:4": "4608x3712",
+  "9:16": "3072x5504",
+  "16:9": "5504x3072",
+  "21:9": "6336x2688",
+};
+
 const SUPPORTED_ASPECT_RATIO_ORDER: AspectRatio[] = [
   AspectRatio.Square,
   AspectRatio.TwoByThree,
@@ -44,7 +58,7 @@ const SUPPORTED_ASPECT_RATIO_ORDER: AspectRatio[] = [
 export const getSupportedAspectRatios = (): AspectRatio[] => SUPPORTED_ASPECT_RATIO_ORDER;
 
 export const getSupportedSizeForAspect = (aspect: AspectRatio | string, imageSize?: string): string => {
-  const map = imageSize === "4K" ? GEMINI_PRO_IMAGE_2K_SIZE_BY_ASPECT : GEMINI_FLASH_IMAGE_SIZE_BY_ASPECT;
+  const map = imageSize === "4K" ? GEMINI_4K_SIZE_BY_ASPECT : GEMINI_FLASH_IMAGE_SIZE_BY_ASPECT;
   return map[String(aspect)] || map["1:1"];
 };
 
