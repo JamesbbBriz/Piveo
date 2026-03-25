@@ -156,20 +156,16 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
     return dedupeModelIds(models);
   }, [models, apiConfig.defaultImageModel]);
 
-  /* ── Compact mode: model selector, vertical ── */
+  /* ── Compact mode: fixed model label ── */
   if (compact) {
     return (
       <div className="w-full flex flex-col items-center gap-1 px-1 py-1.5">
-        <select
-          value={canonicalizeModelId(apiConfig.defaultImageModel)}
-          onChange={(e) => onUpdateApiConfig({ ...apiConfig, defaultImageModel: canonicalizeModelId(e.target.value) })}
-          className="w-full bg-dark-900/60 border border-dark-600 rounded px-2 py-1.5 text-xs text-gray-200 text-center focus:outline-none focus:border-banana-500/50 cursor-pointer appearance-none"
-          title={apiConfig.defaultImageModel}
+        <div
+          className="w-full bg-dark-900/60 border border-dark-600 rounded px-2 py-1.5 text-xs text-gray-200 text-center"
+          title="gemini-3.1-flash-image-preview"
         >
-          {options.map((m) => (
-            <option key={m} value={m}>{getModelDisplayName(m)}</option>
-          ))}
-        </select>
+          Nano🍌 2
+        </div>
       </div>
     );
   }
@@ -177,55 +173,9 @@ const ModelSwitcherFooterInner: React.FC<ModelSwitcherFooterProps> = ({
   return (
     <div className="px-3 py-3 border-t border-dark-700">
       <div className="rounded-lg border border-dark-700 bg-dark-900/40 p-3">
-        <select
-          value={canonicalizeModelId(apiConfig.defaultImageModel)}
-          onChange={(e) => {
-            const next = canonicalizeModelId(e.target.value);
-            if (hasActiveFeature && next !== canonicalizeModelId(apiConfig.defaultImageModel)) {
-              setPendingModel(next);
-            } else {
-              onUpdateApiConfig({ ...apiConfig, defaultImageModel: next });
-            }
-          }}
-          className="w-full bg-dark-800 border border-dark-600 rounded-md px-2.5 py-2 text-xs text-gray-200 focus:outline-none focus:border-dark-500"
-        >
-          {options.map((m) => (
-            <option key={m} value={m}>
-              {getModelDisplayName(m)}
-            </option>
-          ))}
-        </select>
-
-        {pendingModel && (
-          <div className="mt-2 p-2.5 rounded-lg border border-amber-500/40 bg-amber-500/10 space-y-2">
-            <p className="text-[11px] text-amber-300">
-              当前有一致性功能开启，切换模型可能导致生成结果不一致。确认切换？
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  // N-1: 校验 pendingModel 是否仍在模型列表中
-                  if (!models.includes(pendingModel)) {
-                    addToast({ type: 'warning', message: '该模型已不在可用列表中，请重新选择。' });
-                    setPendingModel(null);
-                    return;
-                  }
-                  onUpdateApiConfig({ ...apiConfig, defaultImageModel: pendingModel });
-                  setPendingModel(null);
-                }}
-                className="flex-1 px-2 py-1.5 text-[11px] bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-md transition-colors"
-              >
-                确认切换
-              </button>
-              <button
-                onClick={() => setPendingModel(null)}
-                className="flex-1 px-2 py-1.5 text-[11px] bg-dark-700 hover:bg-dark-600 text-gray-300 border border-dark-600 rounded-md transition-colors"
-              >
-                取消
-              </button>
-            </div>
-          </div>
-        )}
+        <div className="w-full bg-dark-800 border border-dark-600 rounded-md px-2.5 py-2 text-xs text-gray-200">
+          Nano🍌 2
+        </div>
 
         <div className="mt-2 pt-2 border-t border-dark-700 flex items-center justify-between gap-2">
           <span className="text-[11px] text-gray-400 px-2 py-1 rounded border border-dark-600 bg-dark-800/70 truncate max-w-[110px]" title={authUser || "未登录"}>
