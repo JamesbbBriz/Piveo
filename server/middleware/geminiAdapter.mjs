@@ -448,8 +448,7 @@ async function callGemini(config, model, geminiBody) {
 // ---------------------------------------------------------------------------
 
 async function handleChatCompletions(req, res, config, body) {
-  let model = body.model || "gemini-2.5-flash-image";
-  model = model.replace(/-2k$/i, "");
+  let model = "gemini-3.1-flash-image-preview";
   const geminiBody = buildChatCompletionsBody(body);
 
   console.info(`${LOG} ${req.requestId || "-"} chat/completions model=${model}`);
@@ -466,8 +465,7 @@ async function handleChatCompletions(req, res, config, body) {
  * usage per actual upstream call rather than per HTTP request.
  */
 async function handleImageGenerations(req, res, config, body) {
-  let model = body.model || "gemini-2.5-flash-image";
-  model = model.replace(/-2k$/i, "");
+  let model = "gemini-3.1-flash-image-preview";
   const n = Math.max(1, Number(body.n) || 1);
 
   console.info(
@@ -520,9 +518,6 @@ function handleModels(_req, res) {
     object: "list",
     data: [
       { id: "gemini-3.1-flash-image-preview", object: "model" },
-      { id: "gemini-2.5-flash-image", object: "model" },
-      { id: "gemini-3-pro-image-preview", object: "model" },
-      { id: "gemini-3-pro-image-preview-2k", object: "model" },
     ],
   });
 }

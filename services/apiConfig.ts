@@ -59,10 +59,10 @@ export const saveStoredApiConfig = (cfg: ApiConfig) => {
 
 export const getEffectiveApiConfig = (): ApiConfig => {
   const env = getEnvApiConfig();
-  const stored = loadStoredApiConfig();
   return {
     baseUrl: env.baseUrl.trim(),
     authorization: env.authorization.trim(),
-    defaultImageModel: normalizeDefaultImageModel((stored.defaultImageModel || env.defaultImageModel).trim()),
+    // 写死模型，忽略 localStorage 中可能残留的旧模型选择
+    defaultImageModel: "gemini-3.1-flash-image-preview",
   };
 };

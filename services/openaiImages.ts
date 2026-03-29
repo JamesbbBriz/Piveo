@@ -759,30 +759,9 @@ export const imagesGenerations = async (
     throw new Error(generationErr);
   };
 
-  const initialModel = (req.model ?? cfg.defaultImageModel).trim();
-  try {
-    return await callWithModel(initialModel);
-  } catch (e) {
-    if (opts?.disableModelFallback) throw e;
-    const msg = e instanceof Error ? e.message : String(e);
-    if (!includesUnsupportedModelError(msg)) throw e;
-
-    // 自动兜底：当网关返回"模型不支持生图"时，尝试从 /v1/models 里选一个图片模型。
-    try {
-      const models = await listModels({ api: cfg, signal });
-      const fallback = chooseFallbackModel(initialModel, models);
-      if (!fallback) {
-        throw new Error(
-          `模型「${initialModel}」不支持生图，且未找到可用备选模型。请在左侧「接口」中手动切换模型。`
-        );
-      }
-      const fallbackResp = await callWithModel(fallback);
-      return fallbackResp;
-    } catch (fallbackError) {
-      const fallbackMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-      throw new Error(`当前模型不可用（${initialModel}）。自动切换失败：${fallbackMsg}`);
-    }
-  }
+  // 写死模型为 gemini-3.1-flash-image-preview，忽略请求和配置中的其他模型
+  const initialModel = Model.Gemini31FlashImagePreview;
+  return await callWithModel(initialModel);
 };
 
 export interface 图片编辑请求 {
@@ -870,7 +849,7 @@ export const imagesEdits = async (
     fd.append("n", String(req.n ?? 1));
     if (req.size) fd.append("size", String(req.size));
     if (req.response_format) fd.append("response_format", String(req.response_format));
-    if (req.model) fd.append("model", String(req.model));
+    fd.append("model", Model.Gemini31FlashImagePreview);
     if (req.quality) fd.append("quality", String(req.quality));
     // Pass-through for extra fields
     for (const [k, v] of Object.entries(req)) {
@@ -899,7 +878,7 @@ export const imagesEdits = async (
           method: "POST",
           headers: {
             "X-Request-Id": requestId,
-            "X-Route-Model": String(req.model || ""),
+            "X-Route-Model": Model.Gemini31FlashImagePreview,
             ...buildAuthHeaders(cfg),
           },
           credentials: "include",
