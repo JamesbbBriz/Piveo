@@ -199,7 +199,7 @@ const imageFetchTimeoutMs = Math.max(
 );
 const proImageFetchTimeoutMs = Math.max(
   imageFetchTimeoutMs,
-  toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_FETCH_TIMEOUT_MS_PRO, 210_000)
+  toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_FETCH_TIMEOUT_MS_PRO, 300_000)
 );
 const imageRetryMaxDelayMs = Math.max(
   imageRetryBaseDelayMs,
