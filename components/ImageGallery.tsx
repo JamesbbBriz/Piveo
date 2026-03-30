@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import JSZip from 'jszip';
 import { Icon } from './Icon';
 import { ImageCard, ImageCardSkeleton } from './ImageCard';
 import { Onboarding, type OnboardingProps } from './Onboarding';
@@ -83,6 +82,7 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
 
     setIsZipping(true);
     try {
+      const { default: JSZip } = await import('jszip');
       const zip = new JSZip();
       const opts = loadDownloadOptions();
       const ext = opts.format === 'png' ? 'png' : opts.format === 'webp' ? 'webp' : 'jpg';

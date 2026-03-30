@@ -1,5 +1,4 @@
 import React, { useMemo, useState } from 'react';
-import JSZip from 'jszip';
 import type { GeneratedMediaImage, GeneratedMediaVideo } from './types';
 import { downloadImageWithFormat, fetchImageBlob } from '@/services/imageDownload';
 import { Button } from '@/components/base/buttons/button';
@@ -31,6 +30,7 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ images, video, loading }
     if (!hasResults || packing) return;
     setPacking(true);
     try {
+      const { default: JSZip } = await import('jszip');
       const zip = new JSZip();
       for (let i = 0; i < sortedImages.length; i++) {
         const img = sortedImages[i];

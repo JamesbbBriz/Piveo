@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import JSZip from "jszip";
 import { Icon } from "./Icon";
 import { downloadImageWithFormat, loadDownloadOptions, saveDownloadOptions } from "../services/imageDownload";
 import { dataUrlToBlob } from "../services/imageData";
@@ -157,6 +156,7 @@ export const AssetsModal: React.FC<AssetsModalProps> = ({
   const exportZip = async () => {
     setIsExporting(true);
     try {
+      const { default: JSZip } = await import('jszip');
       const zip = new JSZip();
       const manifest = filtered.map((a) => ({
         ...a,

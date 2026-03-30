@@ -24,7 +24,7 @@ import { urlToDataUrl } from './services/imageData';
 import { AppProvider, useProjects, useBatch, useLibrary, useTeam, useUI, useAppContext } from './store/AppContext';
 import { syncService } from './services/sync';
 import { TeamManager } from './components/TeamManager';
-import { AdminPanel } from './components/AdminPanel';
+const AdminPanel = React.lazy(() => import('./components/AdminPanel').then(m => ({ default: m.AdminPanel })));
 import { Layout } from './components/Layout';
 import { MainContent } from './components/MainContent';
 import { PropertyPanel } from './components/PropertyPanel';
@@ -37,7 +37,7 @@ import { BrandKitPanel } from './components/BrandKitPanel';
 import { BeforeAfterView } from './components/BeforeAfterView';
 import { exportComparison } from './services/comparisonExport';
 import { ToastProvider } from './components/Toast';
-import { VideoGenerationPage } from './components/video/VideoGenerationPage';
+const VideoGenerationPage = React.lazy(() => import('./components/video/VideoGenerationPage').then(m => ({ default: m.VideoGenerationPage })));
 import type { GeneratedImage, ImageRating } from './types';
 import {
   SET_SESSIONS,
@@ -1968,7 +1968,7 @@ const AppInner: React.FC = () => {
             versions: [
               ...s.versions.map((v) => ({ ...v, isPrimary: false })),
               ...appended.map((v, idx) => ({ ...v, isPrimary: idx === 0 })),
-            ],
+            ].slice(-5),
             activeVersionId: appended[0]?.id || s.activeVersionId,
           };
         });
@@ -2076,7 +2076,7 @@ const AppInner: React.FC = () => {
               versions: [
                 ...s.versions.map((v) => ({ ...v, isPrimary: false })),
                 ...appended.map((v, idx) => ({ ...v, isPrimary: idx === 0 })),
-              ],
+              ].slice(-5),
               activeVersionId: appended[0]?.id || s.activeVersionId,
             };
           });
@@ -2224,7 +2224,7 @@ const AppInner: React.FC = () => {
             versions: [
               ...s.versions.map((v) => ({ ...v, isPrimary: false })),
               ...appended.map((v, idx) => ({ ...v, isPrimary: idx === 0 })),
-            ],
+            ].slice(-5),
             activeVersionId: appended[0]?.id || s.activeVersionId,
           };
         });
@@ -2309,7 +2309,7 @@ const AppInner: React.FC = () => {
               versions: [
                 ...s.versions.map((v) => ({ ...v, isPrimary: false })),
                 ...appended,
-              ],
+              ].slice(-5),
               activeVersionId: appended[0]?.id || s.activeVersionId,
               error: undefined,
             };
@@ -2919,10 +2919,16 @@ const AppInner: React.FC = () => {
         }
         adminElement={
           isSuperAdmin ? (
-            <AdminPanel onClose={() => setNavView('project')} />
+            <React.Suspense fallback={<div className="flex items-center justify-center h-full text-banana-400/60">加载中...</div>}>
+              <AdminPanel onClose={() => setNavView('project')} />
+            </React.Suspense>
           ) : undefined
         }
-        videoElement={<VideoGenerationPage />}
+        videoElement={
+          <React.Suspense fallback={<div className="flex items-center justify-center h-full text-banana-400/60">加载中...</div>}>
+            <VideoGenerationPage />
+          </React.Suspense>
+        }
         teamElement={
           <TeamManager
             teams={teams}

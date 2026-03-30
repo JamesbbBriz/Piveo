@@ -24,6 +24,9 @@ export const dataUrlToBlob = async (dataUrl: string): Promise<Blob> => {
   return await resp.blob();
 };
 
+const dataUrlCache = new Map<string, string>();
+const DATA_URL_CACHE_MAX = 20;
+
 /**
  * 将远程图片 URL 下载并转换为 data URL（base64）
  * 用于持久化存储 AI 生成的临时图片
@@ -32,6 +35,14 @@ export const urlToDataUrl = async (imageUrl: string): Promise<string> => {
   // 如果已经是 data URL，直接返回
   if (/^data:/i.test(imageUrl)) {
     return imageUrl;
+  }
+
+  // Check in-memory cache (LRU: move to end on hit)
+  const cached = dataUrlCache.get(imageUrl);
+  if (cached) {
+    dataUrlCache.delete(imageUrl);
+    dataUrlCache.set(imageUrl, cached);
+    return cached;
   }
 
   // 通过代理下载图片（避免 CORS）
@@ -45,7 +56,7 @@ export const urlToDataUrl = async (imageUrl: string): Promise<string> => {
   const blob = await resp.blob();
 
   // 转换为 data URL
-  return new Promise((resolve, reject) => {
+  const result = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
       if (typeof reader.result === "string") {
@@ -57,4 +68,13 @@ export const urlToDataUrl = async (imageUrl: string): Promise<string> => {
     reader.onerror = () => reject(new Error("读取 Blob 失败"));
     reader.readAsDataURL(blob);
   });
+
+  // Cache the result with LRU eviction
+  if (dataUrlCache.size >= DATA_URL_CACHE_MAX) {
+    const oldest = dataUrlCache.keys().next().value;
+    if (oldest !== undefined) dataUrlCache.delete(oldest);
+  }
+  dataUrlCache.set(imageUrl, result);
+
+  return result;
 };

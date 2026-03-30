@@ -610,7 +610,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         prevSessionsRef.current = pendingSessionsRef.current;
         pendingSessionsRef.current = null;
       }
-    }, 400);
+    }, 2000);
     return () => {
       if (saveSessionsTimerRef.current) clearTimeout(saveSessionsTimerRef.current);
     };
@@ -644,7 +644,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         prevBatchJobsRef.current = pendingBatchJobsRef.current;
         pendingBatchJobsRef.current = null;
       }
-    }, 400);
+    }, 2000);
     return () => {
       if (saveBatchJobsTimerRef.current) clearTimeout(saveBatchJobsTimerRef.current);
     };

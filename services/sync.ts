@@ -542,12 +542,22 @@ class SyncService {
 
     const cacheKey = this.blobCacheKey(dataUrl);
     const cached = this.blobCache.get(cacheKey);
-    if (cached) return cached;
+    if (cached) {
+      // Move to end (most recently used)
+      this.blobCache.delete(cacheKey);
+      this.blobCache.set(cacheKey, cached);
+      return cached;
+    }
 
     try {
       const mimeMatch = dataUrl.match(/^data:([^;,]+)/);
       const contentType = mimeMatch?.[1] ?? "image/png";
       const result = await this.uploadImage(dataUrl, contentType);
+      if (this.blobCache.size >= 50) {
+        // Delete oldest entry (first key in Map iteration order)
+        const oldest = this.blobCache.keys().next().value;
+        if (oldest !== undefined) this.blobCache.delete(oldest);
+      }
       this.blobCache.set(cacheKey, result);
       return result;
     } catch (e) {
@@ -673,6 +683,9 @@ class SyncService {
 
   private queueSync(key: string, fn: () => Promise<void>): void {
     if (!this.isOnline) {
+      if (this.offlineQueue.length >= 50) {
+        this.offlineQueue.shift(); // Drop oldest
+      }
       this.offlineQueue.push(fn);
       return;
     }
