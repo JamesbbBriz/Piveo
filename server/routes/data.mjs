@@ -391,7 +391,7 @@ router.get("/api/data/projects", (req, res) => {
   if (all) {
     projects = db
       .prepare(
-        `SELECT p.*, u.username AS owner_username
+        `SELECT p.id, p.user_id, p.team_id, p.title, p.settings_json, p.batch_config_json, p.created_at, p.updated_at, u.username AS owner_username
          FROM projects p
          LEFT JOIN users u ON p.user_id = u.id
          ORDER BY p.updated_at DESC`
@@ -402,13 +402,13 @@ router.get("/api/data/projects", (req, res) => {
       return res.status(403).json({ ok: false, message: "无权限查看此团队项目。" });
     }
     projects = db
-      .prepare("SELECT * FROM projects WHERE team_id = ? ORDER BY updated_at DESC")
+      .prepare("SELECT id, user_id, team_id, title, settings_json, batch_config_json, created_at, updated_at FROM projects WHERE team_id = ? ORDER BY updated_at DESC")
       .all(teamId);
   } else {
     // Personal projects + all team projects where user is member
     projects = db
       .prepare(
-        `SELECT p.* FROM projects p
+        `SELECT p.id, p.user_id, p.team_id, p.title, p.settings_json, p.batch_config_json, p.created_at, p.updated_at FROM projects p
          WHERE p.user_id = ?
             OR p.team_id IN (SELECT team_id FROM team_members WHERE user_id = ?)
          ORDER BY p.updated_at DESC`
@@ -438,6 +438,23 @@ router.get("/api/data/projects/:id", (req, res) => {
     .all(req.params.id);
 
   res.json({ ok: true, project, images });
+});
+
+router.get("/api/data/projects/:id/messages", (req, res) => {
+  const userId = getUserId(req.authUser);
+  if (!userId) return res.status(401).json({ ok: false, message: "用户不存在。" });
+
+  const db = getDb();
+  const project = db.prepare("SELECT user_id, team_id, chat_history_json FROM projects WHERE id = ?").get(req.params.id);
+  if (!project) return res.status(404).json({ ok: false, message: "项目不存在。" });
+
+  if (project.user_id !== userId) {
+    if (!project.team_id || !assertTeamAccess(userId, project.team_id)) {
+      return res.status(403).json({ ok: false, message: "无权限查看此项目。" });
+    }
+  }
+
+  res.json({ ok: true, chat_history_json: project.chat_history_json });
 });
 
 router.put("/api/data/projects/:id", (req, res) => {

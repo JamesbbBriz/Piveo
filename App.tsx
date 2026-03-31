@@ -21,7 +21,7 @@ import { downloadImageWithFormat, loadDownloadOptions } from './services/imageDo
 import { ModelsLibraryModal } from './components/ModelsLibraryModal';
 import { ProductsLibraryModal } from './components/ProductsLibraryModal';
 import { urlToDataUrl } from './services/imageData';
-import { AppProvider, useProjects, useBatch, useLibrary, useTeam, useUI, useAppContext } from './store/AppContext';
+import { AppProvider, useProjects, useBatch, useLibrary, useTeam, useUI, useHydration } from './store/AppContext';
 import { syncService } from './services/sync';
 import { TeamManager } from './components/TeamManager';
 const AdminPanel = React.lazy(() => import('./components/AdminPanel').then(m => ({ default: m.AdminPanel })));
@@ -260,6 +260,7 @@ const createNewSession = (templates: SystemTemplate[], prefs?: DefaultPreference
     title: '新项目',
     messages: [],
     updatedAt: Date.now(),
+    messagesLoaded: true,
     settings: {
       aspectRatio: ar,
       systemPrompt: defaultTemplate,
@@ -289,7 +290,7 @@ const AppInner: React.FC = () => {
     authUser, authReady, authLoading, isSuperAdmin,
     dispatch: uiDispatch,
   } = useUI();
-  const { hasHydratedStorage } = useAppContext();
+  const { hasHydratedStorage } = useHydration();
 
   // ——— Local UI state (not worth putting in store) ———
   const [navView, setNavView] = useState<string>('project');

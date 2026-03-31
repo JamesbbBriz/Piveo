@@ -91,6 +91,7 @@ export interface Session {
   messages: Message[];
   updatedAt: number;
   settings: SessionSettings;
+  messagesLoaded?: boolean;
 }
 
 export interface SessionSettings {

@@ -12,6 +12,13 @@ export const UPDATE_SESSION = 'UPDATE_SESSION';
 export const DELETE_SESSION = 'DELETE_SESSION';
 export const SET_CURRENT_SESSION_ID = 'SET_CURRENT_SESSION_ID';
 
+// Lazy loading: load session messages on demand
+export const LOAD_SESSION_MESSAGES = 'LOAD_SESSION_MESSAGES';
+
+// Image URL writeback actions (performance: replace data URLs with blob URLs in local state)
+export const REPLACE_IMAGE_URLS = 'REPLACE_IMAGE_URLS';
+export const REPLACE_BATCH_IMAGE_URLS = 'REPLACE_BATCH_IMAGE_URLS';
+
 // Batch actions
 export const SET_BATCH_JOBS = 'SET_BATCH_JOBS';
 export const ADD_BATCH_JOB = 'ADD_BATCH_JOB';

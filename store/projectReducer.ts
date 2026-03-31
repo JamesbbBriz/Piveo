@@ -10,6 +10,8 @@ import {
   UPDATE_PROJECT,
   DELETE_PROJECT,
   SET_CURRENT_PROJECT_ID,
+  REPLACE_IMAGE_URLS,
+  LOAD_SESSION_MESSAGES,
 } from './actions';
 
 export interface ProjectState {
@@ -36,7 +38,9 @@ export type ProjectAction =
   | { type: typeof ADD_PROJECT; payload: Project }
   | { type: typeof UPDATE_PROJECT; payload: { id: string; updater: (p: Project) => Project } }
   | { type: typeof DELETE_PROJECT; payload: string }
-  | { type: typeof SET_CURRENT_PROJECT_ID; payload: string | null };
+  | { type: typeof SET_CURRENT_PROJECT_ID; payload: string | null }
+  | { type: typeof REPLACE_IMAGE_URLS; payload: { sessionId: string; replacements: Map<string, string> } }
+  | { type: typeof LOAD_SESSION_MESSAGES; payload: { sessionId: string; messages: any[] } };
 
 export function projectReducer(state: ProjectState, action: ProjectAction): ProjectState {
   switch (action.type) {
@@ -85,6 +89,33 @@ export function projectReducer(state: ProjectState, action: ProjectAction): Proj
 
     case SET_CURRENT_PROJECT_ID:
       return { ...state, currentProjectId: action.payload };
+
+    case LOAD_SESSION_MESSAGES:
+      return {
+        ...state,
+        sessions: state.sessions.map((s) => {
+          if (s.id !== action.payload.sessionId) return s;
+          return { ...s, messages: action.payload.messages, messagesLoaded: true };
+        }),
+      };
+
+    case REPLACE_IMAGE_URLS:
+      return {
+        ...state,
+        sessions: state.sessions.map((s) => {
+          if (s.id !== action.payload.sessionId) return s;
+          return {
+            ...s,
+            messages: s.messages.map((msg) => ({
+              ...msg,
+              parts: msg.parts.map((part) => {
+                if (part.type !== 'image' || !action.payload.replacements.has(part.imageUrl)) return part;
+                return { ...part, imageUrl: action.payload.replacements.get(part.imageUrl)! };
+              }),
+            })),
+          };
+        }),
+      };
 
     default:
       return state;

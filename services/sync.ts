@@ -28,6 +28,12 @@ class SyncService {
   private offlineQueue: Array<() => Promise<void>> = [];
   /** Cache: data URL fingerprint → blob { id, url } */
   private blobCache = new Map<string, { id: string; url: string }>();
+  /** Callback fired after images are uploaded, providing dataUrl → blobUrl replacements */
+  private onImagesUploaded?: (type: 'project' | 'batch', id: string, replacements: Map<string, string>) => void;
+
+  setOnImagesUploaded(cb: (type: 'project' | 'batch', id: string, replacements: Map<string, string>) => void) {
+    this.onImagesUploaded = cb;
+  }
 
   constructor() {
     if (typeof window !== "undefined") {
@@ -90,6 +96,18 @@ class SyncService {
     return { projects, models, products, templates, preferences, teams, batchJobs, brandKits };
   }
 
+  async pullProjectMessages(projectId: string): Promise<any[]> {
+    const data = await this.fetchJson<{ chat_history_json: string }>(`/api/data/projects/${projectId}/messages`);
+    if (data.chat_history_json) {
+      try {
+        return JSON.parse(data.chat_history_json);
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }
+
   async pullSince(since: number): Promise<any> {
     return this.fetchJson("/api/data/sync/pull", {
       method: "POST",
@@ -102,7 +120,16 @@ class SyncService {
   async saveProject(project: any): Promise<void> {
     this.queueSync(`project:${project.id}`, async () => {
       const messages = project.messages ?? project.chatHistory ?? [];
-      const processedMessages = await this.processMessagesImages(messages);
+      const { messages: processedMessages, uploaded } = await this.processMessagesImages(messages);
+
+      // Fire callback to write blob URLs back into local state
+      if (this.onImagesUploaded && uploaded.size > 0) {
+        const replacements = new Map<string, string>();
+        for (const [dataUrl, { url }] of uploaded) {
+          replacements.set(dataUrl, url);
+        }
+        this.onImagesUploaded('project', project.id, replacements);
+      }
 
       // Handle productImage in settings
       let settings = project.settings ?? {};
@@ -136,7 +163,17 @@ class SyncService {
 
   async saveBatchJob(job: BatchJob): Promise<void> {
     this.queueSync(`batchjob:${job.id}`, async () => {
-      const processedSlots = await this.processBatchSlotImages(job.slots);
+      const { slots: processedSlots, uploaded } = await this.processBatchSlotImages(job.slots);
+
+      // Fire callback to write blob URLs back into local state
+      if (this.onImagesUploaded && uploaded.size > 0) {
+        const replacements = new Map<string, string>();
+        for (const [dataUrl, { url }] of uploaded) {
+          replacements.set(dataUrl, url);
+        }
+        this.onImagesUploaded('batch', job.id, replacements);
+      }
+
       const refUrl = await this.maybeUploadDataUrl(job.referenceImageUrl);
       const prodUrl = await this.maybeUploadDataUrl(job.productImageUrl);
       const modelUrl = await this.maybeUploadDataUrl(job.modelImageUrl);
@@ -583,9 +620,11 @@ class SyncService {
 
   /**
    * Process messages: upload data URL images to blob storage and replace with blob URLs.
-   * Only modifies the copy sent to server — local data is unchanged.
+   * Returns both the processed messages (for server) and the uploaded map (dataUrl → blob info).
    */
-  private async processMessagesImages(messages: any[]): Promise<any[]> {
+  private async processMessagesImages(messages: any[]): Promise<{ messages: any[]; uploaded: Map<string, { id: string; url: string }> }> {
+    const emptyUploaded = new Map<string, { id: string; url: string }>();
+
     // Collect all data URL images
     const dataUrls = new Set<string>();
     for (const msg of messages) {
@@ -597,7 +636,7 @@ class SyncService {
       }
     }
 
-    if (dataUrls.size === 0) return messages;
+    if (dataUrls.size === 0) return { messages, uploaded: emptyUploaded };
 
     // Upload unique images (max 3 concurrent)
     const uploaded = new Map<string, { id: string; url: string }>();
@@ -613,10 +652,10 @@ class SyncService {
       );
     }
 
-    if (uploaded.size === 0) return messages;
+    if (uploaded.size === 0) return { messages, uploaded: emptyUploaded };
 
     // Replace data URLs with blob URLs in a shallow copy
-    return messages.map((msg) => {
+    const processedMessages = messages.map((msg) => {
       if (!Array.isArray(msg?.parts)) return msg;
       const hasDataUrl = msg.parts.some(
         (p: any) => p.type === "image" && uploaded.has(p.imageUrl),
@@ -631,12 +670,17 @@ class SyncService {
         }),
       };
     });
+
+    return { messages: processedMessages, uploaded };
   }
 
   /**
    * Process batch slot images: upload data URL images in versions to blob storage.
+   * Returns both the processed slots (for server) and the uploaded map (dataUrl → blob info).
    */
-  private async processBatchSlotImages(slots: any[]): Promise<any[]> {
+  private async processBatchSlotImages(slots: any[]): Promise<{ slots: any[]; uploaded: Map<string, { id: string; url: string }> }> {
+    const emptyUploaded = new Map<string, { id: string; url: string }>();
+
     const dataUrls = new Set<string>();
     for (const slot of slots) {
       if (!Array.isArray(slot?.versions)) continue;
@@ -647,7 +691,7 @@ class SyncService {
       }
     }
 
-    if (dataUrls.size === 0) return slots;
+    if (dataUrls.size === 0) return { slots, uploaded: emptyUploaded };
 
     const uploaded = new Map<string, { id: string; url: string }>();
     const urls = Array.from(dataUrls);
@@ -662,9 +706,9 @@ class SyncService {
       );
     }
 
-    if (uploaded.size === 0) return slots;
+    if (uploaded.size === 0) return { slots, uploaded: emptyUploaded };
 
-    return slots.map((slot) => {
+    const processedSlots = slots.map((slot) => {
       if (!Array.isArray(slot?.versions)) return slot;
       const hasDataUrl = slot.versions.some((v: any) => uploaded.has(v.imageUrl));
       if (!hasDataUrl) return slot;
@@ -677,6 +721,8 @@ class SyncService {
         }),
       };
     });
+
+    return { slots: processedSlots, uploaded };
   }
 
   // ——— Internal: debounced server writes ———

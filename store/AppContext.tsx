@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useEffect, useRef, Dispatch } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useRef, useMemo, Dispatch } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { projectReducer, projectInitialState, ProjectState, ProjectAction } from './projectReducer';
 import { batchReducer, batchInitialState, BatchState, BatchAction } from './batchReducer';
@@ -38,6 +38,9 @@ import {
   SET_QUEUE_STATS,
   SET_IS_SUPER_ADMIN,
   SET_BRAND_KITS,
+  REPLACE_IMAGE_URLS,
+  REPLACE_BATCH_IMAGE_URLS,
+  LOAD_SESSION_MESSAGES,
 } from './actions';
 import type { Session, SessionSettings, BatchJob, BrandKit } from '@/types';
 import { DEFAULT_ASPECT_RATIO, DEFAULT_SYSTEM_TEMPLATES } from '@/constants';
@@ -79,16 +82,20 @@ const localizeLegacyText = (t: string): string => {
 };
 
 function mapServerProjectsToSessions(serverProjects: any[], defaultTemplate: string): Session[] {
-  return serverProjects.map((p) => ({
-    id: p.id,
-    title: p.title ?? "",
-    messages: p.chat_history_json ? JSON.parse(p.chat_history_json) : [],
-    updatedAt: p.updated_at ?? Date.now(),
-    settings: normalizeSessionSettings(
-      p.settings_json ? JSON.parse(p.settings_json) : {},
-      defaultTemplate,
-    ),
-  }));
+  return serverProjects.map((p) => {
+    const hasChatHistory = p.chat_history_json != null;
+    return {
+      id: p.id,
+      title: p.title ?? "",
+      messages: hasChatHistory ? JSON.parse(p.chat_history_json) : [],
+      updatedAt: p.updated_at ?? Date.now(),
+      settings: normalizeSessionSettings(
+        p.settings_json ? JSON.parse(p.settings_json) : {},
+        defaultTemplate,
+      ),
+      messagesLoaded: hasChatHistory, // false when chat_history_json excluded from list response
+    };
+  });
 }
 
 function mapServerBatchJobsToFrontend(serverJobs: any[]): BatchJob[] {
@@ -116,6 +123,7 @@ function normalizeSessions(sessions: Session[], defaultTemplate: string): Sessio
   return sessions.map((s) => ({
     ...s,
     settings: normalizeSessionSettings(s.settings, defaultTemplate),
+    messagesLoaded: s.messagesLoaded !== false, // preserve explicit false, default to true
     messages: Array.isArray(s.messages)
       ? s.messages.map((m: any) => ({
           ...m,
@@ -241,23 +249,14 @@ const uiInitialState: UIState = {
   isSuperAdmin: false,
 };
 
-// ——— Context Type ———
+// ——— Split Contexts (one per reducer + hydration) ———
 
-export interface AppContextType {
-  project: ProjectState;
-  projectDispatch: Dispatch<ProjectAction>;
-  batch: BatchState;
-  batchDispatch: Dispatch<BatchAction>;
-  library: LibraryState;
-  libraryDispatch: Dispatch<LibraryAction>;
-  team: TeamState;
-  teamDispatch: Dispatch<TeamAction>;
-  ui: UIState;
-  uiDispatch: Dispatch<UIAction>;
-  hasHydratedStorage: boolean;
-}
-
-const AppContext = createContext<AppContextType | null>(null);
+const ProjectContext = createContext<{ state: ProjectState; dispatch: Dispatch<ProjectAction> } | null>(null);
+const BatchContext = createContext<{ state: BatchState; dispatch: Dispatch<BatchAction> } | null>(null);
+const LibraryContext = createContext<{ state: LibraryState; dispatch: Dispatch<LibraryAction> } | null>(null);
+const TeamContext = createContext<{ state: TeamState; dispatch: Dispatch<TeamAction> } | null>(null);
+const UIContext = createContext<{ state: UIState; dispatch: Dispatch<UIAction> } | null>(null);
+const HydrationContext = createContext<{ hasHydratedStorage: boolean }>({ hasHydratedStorage: false });
 
 // ——— Provider ———
 
@@ -294,13 +293,77 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => { cancelled = true; };
   }, []);
 
-  // Queue stats subscription
+  // Queue stats subscription (throttled to max once per 200ms)
   useEffect(() => {
+    let lastDispatchTime = 0;
+    let pendingStats: any = null;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+
     const unsubscribe = onQueueStateChange((stats) => {
-      uiDispatch({ type: SET_QUEUE_STATS, payload: stats });
+      const now = Date.now();
+      if (now - lastDispatchTime >= 200) {
+        lastDispatchTime = now;
+        uiDispatch({ type: SET_QUEUE_STATS, payload: stats });
+      } else {
+        pendingStats = stats;
+        if (!timerId) {
+          timerId = setTimeout(() => {
+            timerId = null;
+            if (pendingStats) {
+              lastDispatchTime = Date.now();
+              uiDispatch({ type: SET_QUEUE_STATS, payload: pendingStats });
+              pendingStats = null;
+            }
+          }, 200 - (now - lastDispatchTime));
+        }
+      }
     });
-    return unsubscribe;
+
+    return () => {
+      unsubscribe();
+      if (timerId) clearTimeout(timerId);
+    };
   }, []);
+
+  // Register image URL writeback callback on sync service
+  useEffect(() => {
+    syncService.setOnImagesUploaded((type, id, replacements) => {
+      if (type === 'project') {
+        projectDispatch({ type: REPLACE_IMAGE_URLS, payload: { sessionId: id, replacements } });
+      } else if (type === 'batch') {
+        batchDispatch({ type: REPLACE_BATCH_IMAGE_URLS, payload: { jobId: id, replacements } });
+      }
+    });
+  }, []);
+
+  // Lazy-load session messages when switching to a session whose messages haven't been loaded
+  useEffect(() => {
+    if (!project.currentSessionId || !ui.authUser) return;
+    const session = project.sessions.find(s => s.id === project.currentSessionId);
+    if (!session || session.messagesLoaded) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const messages = await syncService.pullProjectMessages(project.currentSessionId!);
+        if (cancelled) return;
+        projectDispatch({
+          type: LOAD_SESSION_MESSAGES,
+          payload: { sessionId: project.currentSessionId!, messages },
+        });
+      } catch (e) {
+        console.warn('[AppContext] Failed to load session messages:', e);
+        // Mark as loaded with empty messages to avoid infinite retry
+        if (!cancelled) {
+          projectDispatch({
+            type: LOAD_SESSION_MESSAGES,
+            payload: { sessionId: project.currentSessionId!, messages: [] },
+          });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [project.currentSessionId, ui.authUser]);
 
   // Bootstrap data after auth — server-first with IndexedDB fallback
   useEffect(() => {
@@ -435,6 +498,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               title: '新项目',
               messages: [],
               updatedAt: Date.now(),
+              messagesLoaded: true,
               settings: {
                 aspectRatio: ar,
                 systemPrompt: resolvedDefaultTemplate,
@@ -540,6 +604,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             title: '新项目',
             messages: [],
             updatedAt: Date.now(),
+            messagesLoaded: true,
             settings: {
               aspectRatio: ar,
               systemPrompt: fallbackDefaultTemplate,
@@ -591,10 +656,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       saveSessionsTimerRef.current = null;
       if (pendingSessionsRef.current) {
         void saveSessions(pendingSessionsRef.current);
-        // Sync changed sessions to server
+        // Sync changed sessions to server (skip sessions whose messages haven't been loaded yet)
         const prev = prevSessionsRef.current;
         const prevMap = new Map<string, Session>(prev.map((s) => [s.id, s]));
         for (const s of pendingSessionsRef.current) {
+          if (s.messagesLoaded === false) continue; // don't overwrite server data with empty messages
           const old = prevMap.get(s.id);
           if (!old || old.updatedAt !== s.updatedAt) {
             syncService.saveProject(s);
@@ -736,56 +802,92 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: batch.batchJobs[0].id });
   }, [batch.batchJobs, batch.selectedBatchJobId]);
 
-  const contextValue: AppContextType = {
-    project,
-    projectDispatch,
-    batch,
-    batchDispatch,
-    library,
-    libraryDispatch,
-    team,
-    teamDispatch,
-    ui,
-    uiDispatch,
-    hasHydratedStorage,
-  };
+  // Memoize each context value so it only changes when the relevant state changes.
+  // dispatch functions from useReducer are stable (React guarantees this).
+  const projectCtx = useMemo(() => ({ state: project, dispatch: projectDispatch }), [project]);
+  const batchCtx = useMemo(() => ({ state: batch, dispatch: batchDispatch }), [batch]);
+  const libCtx = useMemo(() => ({ state: library, dispatch: libraryDispatch }), [library]);
+  const teamCtx = useMemo(() => ({ state: team, dispatch: teamDispatch }), [team]);
+  const uiCtx = useMemo(() => ({ state: ui, dispatch: uiDispatch }), [ui]);
+  const hydrationCtx = useMemo(() => ({ hasHydratedStorage }), [hasHydratedStorage]);
 
   return (
-    <AppContext.Provider value={contextValue}>
-      {children}
-    </AppContext.Provider>
+    <HydrationContext.Provider value={hydrationCtx}>
+      <UIContext.Provider value={uiCtx}>
+        <ProjectContext.Provider value={projectCtx}>
+          <BatchContext.Provider value={batchCtx}>
+            <LibraryContext.Provider value={libCtx}>
+              <TeamContext.Provider value={teamCtx}>
+                {children}
+              </TeamContext.Provider>
+            </LibraryContext.Provider>
+          </BatchContext.Provider>
+        </ProjectContext.Provider>
+      </UIContext.Provider>
+    </HydrationContext.Provider>
   );
 };
 
 // ——— Custom Hooks ———
 
-export function useAppContext(): AppContextType {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useAppContext must be used within <AppProvider>');
-  return ctx;
+/** Compatibility hook — reads from all 5 split contexts. Prefer individual hooks for performance. */
+export function useAppContext() {
+  const project = useContext(ProjectContext);
+  const batch = useContext(BatchContext);
+  const library = useContext(LibraryContext);
+  const team = useContext(TeamContext);
+  const ui = useContext(UIContext);
+  const { hasHydratedStorage } = useContext(HydrationContext);
+
+  if (!project || !batch || !library || !team || !ui) {
+    throw new Error('useAppContext must be used within <AppProvider>');
+  }
+
+  return {
+    project: project.state,
+    projectDispatch: project.dispatch,
+    batch: batch.state,
+    batchDispatch: batch.dispatch,
+    library: library.state,
+    libraryDispatch: library.dispatch,
+    team: team.state,
+    teamDispatch: team.dispatch,
+    ui: ui.state,
+    uiDispatch: ui.dispatch,
+    hasHydratedStorage,
+  };
 }
 
 export function useProjects() {
-  const { project, projectDispatch } = useAppContext();
-  return { ...project, dispatch: projectDispatch };
+  const ctx = useContext(ProjectContext);
+  if (!ctx) throw new Error('useProjects must be used within AppProvider');
+  return useMemo(() => ({ ...ctx.state, dispatch: ctx.dispatch }), [ctx.state, ctx.dispatch]);
 }
 
 export function useBatch() {
-  const { batch, batchDispatch } = useAppContext();
-  return { ...batch, dispatch: batchDispatch };
+  const ctx = useContext(BatchContext);
+  if (!ctx) throw new Error('useBatch must be used within AppProvider');
+  return useMemo(() => ({ ...ctx.state, dispatch: ctx.dispatch }), [ctx.state, ctx.dispatch]);
 }
 
 export function useLibrary() {
-  const { library, libraryDispatch } = useAppContext();
-  return { ...library, dispatch: libraryDispatch };
+  const ctx = useContext(LibraryContext);
+  if (!ctx) throw new Error('useLibrary must be used within AppProvider');
+  return useMemo(() => ({ ...ctx.state, dispatch: ctx.dispatch }), [ctx.state, ctx.dispatch]);
 }
 
 export function useTeam() {
-  const { team, teamDispatch } = useAppContext();
-  return { ...team, dispatch: teamDispatch };
+  const ctx = useContext(TeamContext);
+  if (!ctx) throw new Error('useTeam must be used within AppProvider');
+  return useMemo(() => ({ ...ctx.state, dispatch: ctx.dispatch }), [ctx.state, ctx.dispatch]);
 }
 
 export function useUI() {
-  const { ui, uiDispatch } = useAppContext();
-  return { ...ui, dispatch: uiDispatch };
+  const ctx = useContext(UIContext);
+  if (!ctx) throw new Error('useUI must be used within AppProvider');
+  return useMemo(() => ({ ...ctx.state, dispatch: ctx.dispatch }), [ctx.state, ctx.dispatch]);
+}
+
+export function useHydration() {
+  return useContext(HydrationContext);
 }

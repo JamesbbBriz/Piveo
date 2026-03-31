@@ -8,6 +8,7 @@ import {
   SET_BATCH_GENERATING,
   SET_BATCH_GENERATION_PROGRESS,
   SET_REFINING_SLOT_IDS,
+  REPLACE_BATCH_IMAGE_URLS,
 } from './actions';
 
 export interface BatchState {
@@ -38,7 +39,8 @@ export type BatchAction =
   | { type: typeof SET_SELECTED_BATCH_JOB_ID; payload: string | null }
   | { type: typeof SET_BATCH_GENERATING; payload: boolean }
   | { type: typeof SET_BATCH_GENERATION_PROGRESS; payload: BatchState['batchGenerationProgress'] }
-  | { type: typeof SET_REFINING_SLOT_IDS; payload: Set<string> };
+  | { type: typeof SET_REFINING_SLOT_IDS; payload: Set<string> }
+  | { type: typeof REPLACE_BATCH_IMAGE_URLS; payload: { jobId: string; replacements: Map<string, string> } };
 
 export function batchReducer(state: BatchState, action: BatchAction): BatchState {
   switch (action.type) {
@@ -73,6 +75,24 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 
     case SET_REFINING_SLOT_IDS:
       return { ...state, refiningSlotIds: action.payload };
+
+    case REPLACE_BATCH_IMAGE_URLS:
+      return {
+        ...state,
+        batchJobs: state.batchJobs.map((job) => {
+          if (job.id !== action.payload.jobId) return job;
+          return {
+            ...job,
+            slots: job.slots.map((slot) => ({
+              ...slot,
+              versions: slot.versions.map((ver) => {
+                if (!action.payload.replacements.has(ver.imageUrl)) return ver;
+                return { ...ver, imageUrl: action.payload.replacements.get(ver.imageUrl)! };
+              }),
+            })),
+          };
+        }),
+      };
 
     default:
       return state;
