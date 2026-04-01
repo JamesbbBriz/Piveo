@@ -360,7 +360,7 @@ async function callGemini(config, model, geminiBody) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(geminiBody),
-    signal: AbortSignal.timeout(model.includes("pro") ? 180_000 : 90_000),
+    signal: AbortSignal.timeout(model.includes("pro") ? 300_000 : 180_000),
   });
 
   const rawText = await resp.text();

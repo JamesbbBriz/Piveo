@@ -220,8 +220,8 @@ app.use(
     router: (req) => getUpstreamConfig(req._routeModel, req.originalUrl).baseUrl,
     changeOrigin: true,
     secure: true,
-    proxyTimeout: Number(process.env.UPSTREAM_PROXY_TIMEOUT_MS || 90000),
-    timeout: Number(process.env.UPSTREAM_TIMEOUT_MS || 95000),
+    proxyTimeout: Number(process.env.UPSTREAM_PROXY_TIMEOUT_MS || 300000),
+    timeout: Number(process.env.UPSTREAM_TIMEOUT_MS || 305000),
     pathRewrite: { "^/api": "" },
     on: {
       proxyReq: (proxyReq, req) => {

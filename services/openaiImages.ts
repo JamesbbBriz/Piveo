@@ -195,7 +195,7 @@ const imageRetryBaseDelayMs = toPositiveInt((import.meta as any)?.env?.VITE_IMAG
 const RETRYABLE_STATUS = new Set([408, 425, 500, 502, 503, 504, 522, 524]);
 const imageFetchTimeoutMs = Math.max(
   1_000,
-  toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_FETCH_TIMEOUT_MS, 120_000)
+  toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_FETCH_TIMEOUT_MS, 300_000)
 );
 const proImageFetchTimeoutMs = Math.max(
   imageFetchTimeoutMs,
