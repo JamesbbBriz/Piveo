@@ -475,13 +475,21 @@ router.put("/api/data/projects/:id", (req, res) => {
         return res.status(403).json({ ok: false, message: "无权限修改此项目。" });
       }
     }
+    // Guard: don't overwrite existing chat history with empty data (lazy-loading safety)
+    let safeChatHistory = chat_history_json;
+    if (!safeChatHistory || safeChatHistory === "[]" || safeChatHistory === "null") {
+      const current = db.prepare("SELECT chat_history_json FROM projects WHERE id = ?").get(req.params.id);
+      if (current?.chat_history_json && current.chat_history_json !== "[]") {
+        safeChatHistory = current.chat_history_json; // preserve existing
+      }
+    }
     db.prepare(
       `UPDATE projects SET title = ?, settings_json = ?, chat_history_json = ?,
        batch_config_json = ?, team_id = ?, updated_at = ? WHERE id = ?`
     ).run(
       title ?? "",
       settings_json ?? "{}",
-      chat_history_json ?? "[]",
+      safeChatHistory ?? "[]",
       batch_config_json ?? null,
       team_id ?? null,
       now,
@@ -1009,6 +1017,14 @@ router.put("/api/data/batch-jobs/:id", (req, res) => {
         return res.status(403).json({ ok: false, message: "无权限修改此矩阵任务。" });
       }
     }
+    // Guard: don't overwrite existing slots with empty data
+    let safeSlots = slots_json;
+    if (!safeSlots || safeSlots === "[]" || safeSlots === "null") {
+      const current = db.prepare("SELECT slots_json FROM batch_jobs WHERE id = ?").get(req.params.id);
+      if (current?.slots_json && current.slots_json !== "[]") {
+        safeSlots = current.slots_json;
+      }
+    }
     db.prepare(
       `UPDATE batch_jobs SET title = ?, project_id = ?, product_id = ?, status = ?,
        base_prompt = ?, reference_image_url = ?, product_image_url = ?, model_image_url = ?,
@@ -1017,7 +1033,7 @@ router.put("/api/data/batch-jobs/:id", (req, res) => {
     ).run(
       title ?? "", project_id ?? null, product_id ?? null, status ?? "draft",
       base_prompt ?? "", reference_image_url ?? null, product_image_url ?? null, model_image_url ?? null,
-      slots_json ?? "[]", action_logs_json ?? "[]", tags_json ?? "[]", team_id ?? null,
+      safeSlots ?? "[]", action_logs_json ?? "[]", tags_json ?? "[]", team_id ?? null,
       archived_at ?? null, deleted_at ?? null, now, req.params.id
     );
   } else {
