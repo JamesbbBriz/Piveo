@@ -330,6 +330,7 @@ const AppInner: React.FC = () => {
 
   // ——— Derived state ———
   const currentSession = sessions.find(s => s.id === currentSessionId) || sessions[0];
+  const isSessionLoading = currentSession?.messagesLoaded === false;
   const currentMessageCount = currentSession?.messages.length || 0;
   const selectedBatchJob = useMemo(
     () => batchJobs.find((j) => j.id === selectedBatchJobId) || batchJobs[0] || null,
@@ -2744,17 +2745,23 @@ const AppInner: React.FC = () => {
         </div>
       ) : (
         <>
-          <ImageGallery
-            images={galleryImages}
-            onImageClick={handleGalleryImageClick}
-            onImageAction={handleGalleryImageAction}
-            selectedImageId={selectedGalleryImageId || undefined}
-            isGenerating={isGenerating}
-            batchProgress={projectBatchProgress}
-            onboardingProps={onboardingProps}
-            onOpenBatchSet={openBatchSetModal}
-            onGoToBatch={() => uiDispatch({ type: SET_CURRENT_VIEW, payload: 'batch' })}
-          />
+          {isSessionLoading ? (
+            <div className="flex items-center justify-center h-64 text-[var(--piveo-muted)]">
+              <Icon name="spinner fa-spin" className="mr-2" />加载中...
+            </div>
+          ) : (
+            <ImageGallery
+              images={galleryImages}
+              onImageClick={handleGalleryImageClick}
+              onImageAction={handleGalleryImageAction}
+              selectedImageId={selectedGalleryImageId || undefined}
+              isGenerating={isGenerating}
+              batchProgress={projectBatchProgress}
+              onboardingProps={onboardingProps}
+              onOpenBatchSet={openBatchSetModal}
+              onGoToBatch={() => uiDispatch({ type: SET_CURRENT_VIEW, payload: 'batch' })}
+            />
+          )}
           {(queueStatusText || generationStage || errorDetails) && (
             <div className="border-t border-[var(--piveo-border)] bg-[var(--piveo-card)] px-4 py-2.5 space-y-1.5">
               {queueStatusText && <div className="text-[11px] text-[var(--piveo-body)]">{queueStatusText}</div>}

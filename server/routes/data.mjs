@@ -475,12 +475,13 @@ router.put("/api/data/projects/:id", (req, res) => {
         return res.status(403).json({ ok: false, message: "无权限修改此项目。" });
       }
     }
-    // Guard: don't overwrite existing chat history with empty data (lazy-loading safety)
+    // Guard: if chat_history_json was not provided (undefined), preserve existing data.
+    // If explicitly sent (even as "[]"), allow it — that's an intentional clear.
     let safeChatHistory = chat_history_json;
-    if (!safeChatHistory || safeChatHistory === "[]" || safeChatHistory === "null") {
+    if (chat_history_json === undefined || chat_history_json === null) {
       const current = db.prepare("SELECT chat_history_json FROM projects WHERE id = ?").get(req.params.id);
-      if (current?.chat_history_json && current.chat_history_json !== "[]") {
-        safeChatHistory = current.chat_history_json; // preserve existing
+      if (current?.chat_history_json) {
+        safeChatHistory = current.chat_history_json;
       }
     }
     db.prepare(
@@ -1017,11 +1018,11 @@ router.put("/api/data/batch-jobs/:id", (req, res) => {
         return res.status(403).json({ ok: false, message: "无权限修改此矩阵任务。" });
       }
     }
-    // Guard: don't overwrite existing slots with empty data
+    // Guard: if slots_json was not provided (undefined), preserve existing data.
     let safeSlots = slots_json;
-    if (!safeSlots || safeSlots === "[]" || safeSlots === "null") {
+    if (slots_json === undefined || slots_json === null) {
       const current = db.prepare("SELECT slots_json FROM batch_jobs WHERE id = ?").get(req.params.id);
-      if (current?.slots_json && current.slots_json !== "[]") {
+      if (current?.slots_json) {
         safeSlots = current.slots_json;
       }
     }

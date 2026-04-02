@@ -46,6 +46,8 @@ export const ResultGrid: React.FC<ResultGridProps> = ({ images, video, loading }
 
       const blob = await zip.generateAsync({ type: 'blob' });
       downloadBlob(blob, `piveo-${sortedImages.length}-images-${Date.now()}.zip`);
+    } catch (err) {
+      console.error('ZIP download failed:', err);
     } finally {
       setPacking(false);
     }
