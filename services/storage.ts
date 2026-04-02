@@ -305,6 +305,24 @@ export const backupSessionsSync = (sessions: Session[]) => {
 };
 
 export const saveSessions = async (sessions: Session[]): Promise<void> => {
+  // Merge: for sessions whose messages haven't been lazy-loaded yet,
+  // preserve the existing cached messages from IndexedDB to avoid data loss.
+  const hasUnloaded = sessions.some((s) => (s as any).messagesLoaded === false);
+  if (hasUnloaded) {
+    const existing = await loadSessions();
+    if (existing.length > 0) {
+      const existingMap = new Map(existing.map((s) => [s.id, s]));
+      sessions = sessions.map((s) => {
+        if ((s as any).messagesLoaded === false) {
+          const cached = existingMap.get(s.id);
+          if (cached?.messages?.length) {
+            return { ...s, messages: cached.messages, messagesLoaded: true } as Session;
+          }
+        }
+        return s;
+      });
+    }
+  }
   await idbSet("sessions", sessions);
   deferLocalSet(SESSIONS_KEY, sessions);
 };
