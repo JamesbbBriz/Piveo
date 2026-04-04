@@ -270,7 +270,7 @@ const createNewSession = (templates: SystemTemplate[], prefs?: DefaultPreference
       responseFormat: "url",
       batchCount: bc,
       batchSizes: [getSupportedSizeForAspect(ar)],
-      imageSize: "1K",
+      imageSize: "2K",
       autoUseLastImage: true,
       productImage: null,
     }

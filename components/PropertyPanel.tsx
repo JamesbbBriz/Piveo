@@ -639,7 +639,7 @@ const PropertyPanelInner: React.FC<PropertyPanelProps> = ({
       {/* Resolution */}
       <Section title="分辨率">
         <div className="flex gap-1.5">
-          {(["1K", "4K"] as ImageSize[]).map((size) => (
+          {(["1K", "2K"] as ImageSize[]).map((size) => (
             <button
               key={size}
               onClick={() => onUpdateSettings({ ...settings, imageSize: size, batchSizes: [getSupportedSizeForAspect(settings.aspectRatio, size)] })}

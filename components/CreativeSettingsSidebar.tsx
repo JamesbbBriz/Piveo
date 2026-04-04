@@ -45,7 +45,7 @@ export const CreativeSettingsSidebar: React.FC<CreativeSettingsSidebarProps> = (
         <div>
           <div className="text-[10px] text-gray-400 mb-1.5">分辨率</div>
           <div className="flex gap-2">
-            {(["1K", "4K"] as const).map((size) => (
+            {(["1K", "2K"] as const).map((size) => (
               <button
                 key={size}
                 onClick={() => handleImageSizeChange(size)}

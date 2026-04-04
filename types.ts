@@ -23,7 +23,7 @@ export type ImageResponseFormat = "url" | "b64_json";
 /** 参考图意图：用户上传参考图时选择参考什么 */
 export type ReferenceIntent = 'style' | 'product' | 'composition' | 'all';
 export type CreationWorkflow = 'product' | 'housing';
-export type ImageSize = "1K" | "4K";
+export type ImageSize = "1K" | "2K" | "4K";
 
 export interface SystemTemplate {
   id: string;
