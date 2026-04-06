@@ -1309,7 +1309,7 @@ router.put("/api/data/templates", (req, res) => {
     : db.prepare("DELETE FROM templates WHERE user_id = ? AND team_id IS NULL");
 
   const insertStmt = db.prepare(
-    "INSERT INTO templates (id, user_id, team_id, name, content) VALUES (?, ?, ?, ?, ?)"
+    "INSERT OR REPLACE INTO templates (id, user_id, team_id, name, content) VALUES (?, ?, ?, ?, ?)"
   );
 
   db.transaction(() => {
