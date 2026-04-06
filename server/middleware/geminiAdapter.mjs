@@ -358,7 +358,10 @@ async function callGemini(config, model, geminiBody) {
 
   const resp = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": config.authorization,
+    },
     body: JSON.stringify(geminiBody),
     signal: AbortSignal.timeout(model.includes("pro") ? 300_000 : 180_000),
   });
