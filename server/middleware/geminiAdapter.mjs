@@ -342,6 +342,9 @@ function toImageGenerationsResponse(geminiResp) {
 // Gemini API call
 // ---------------------------------------------------------------------------
 
+const GEMINI_NETWORK_RETRIES = 2; // retry up to 2 times on network-level errors
+const GEMINI_RETRY_DELAY_MS = 1000;
+
 async function callGemini(config, model, geminiBody) {
   const token = config.authorization.replace(/^Bearer\s+/i, "").trim();
   const base = config.baseUrl.replace(/\/+$/, "");
@@ -352,98 +355,129 @@ async function callGemini(config, model, geminiBody) {
     ? `${directMatch[1]}${model}${directMatch[3]}`
     : directEndpointPattern.test(base)
       ? base
-      : `${base}/v1beta/models/${model}:streamGenerateContent`;
+      : `${base}/v1beta/models/${model}:generateContent`;
   const separator = endpoint.includes("?") ? "&" : "?";
   const url = `${endpoint}${separator}key=${encodeURIComponent(token)}`;
+  const timeoutMs = model.includes("pro") ? 300_000 : 180_000;
+  const bodyStr = JSON.stringify(geminiBody);
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": config.authorization,
-    },
-    body: JSON.stringify(geminiBody),
-    signal: AbortSignal.timeout(model.includes("pro") ? 300_000 : 180_000),
-  });
-
-  const rawText = await resp.text();
-  let responseBody;
-  try {
-    responseBody = rawText ? JSON.parse(rawText) : {};
-  } catch {
-    const err = new Error("Gemini upstream returned non-JSON response");
-    err.status = resp.status;
-    err.body = rawText;
-    throw err;
-  }
-
-  if (Array.isArray(responseBody)) {
-    const parts = [];
-    let lastCandidate = null;
-    let usageMetadata = undefined;
-    let promptFeedback = undefined;
-
-    for (const chunk of responseBody) {
-      const candidate = chunk?.candidates?.[0];
-      const chunkParts = candidate?.content?.parts;
-      if (Array.isArray(chunkParts)) {
-        parts.push(...chunkParts);
-      }
-      if (candidate) {
-        lastCandidate = candidate;
-      }
-      if (chunk?.usageMetadata) {
-        usageMetadata = chunk.usageMetadata;
-      }
-      if (chunk?.promptFeedback) {
-        promptFeedback = chunk.promptFeedback;
-      }
+  let lastErr = null;
+  for (let attempt = 0; attempt <= GEMINI_NETWORK_RETRIES; attempt++) {
+    if (attempt > 0) {
+      console.warn(`${LOG} retrying callGemini (attempt ${attempt + 1}/${GEMINI_NETWORK_RETRIES + 1}) after: ${lastErr?.message}`);
+      await new Promise((r) => setTimeout(r, GEMINI_RETRY_DELAY_MS * attempt));
     }
 
-    responseBody = {
-      candidates: lastCandidate
-        ? [
-            {
-              ...lastCandidate,
-              content: {
-                ...(lastCandidate.content || {}),
-                parts,
+    let resp;
+    try {
+      resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": config.authorization,
+        },
+        body: bodyStr,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (fetchErr) {
+      // Network-level error (DNS, connection reset, TLS, etc.)
+      lastErr = fetchErr;
+      if (attempt < GEMINI_NETWORK_RETRIES) continue;
+      const err = new Error(`fetch failed: ${fetchErr.message}`);
+      err.status = 502;
+      throw err;
+    }
+
+    // If upstream returned 502/503/504, retry
+    if ([502, 503, 504].includes(resp.status) && attempt < GEMINI_NETWORK_RETRIES) {
+      const text = await resp.text().catch(() => "");
+      lastErr = new Error(`HTTP ${resp.status} ${text.slice(0, 200)}`);
+      continue;
+    }
+
+    const rawText = await resp.text();
+    let responseBody;
+    try {
+      responseBody = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      const err = new Error("Gemini upstream returned non-JSON response");
+      err.status = resp.status;
+      err.body = rawText;
+      throw err;
+    }
+
+    // generateContent returns a single object (not array), but keep array handling for streamGenerateContent compat
+    if (Array.isArray(responseBody)) {
+      const parts = [];
+      let lastCandidate = null;
+      let usageMetadata = undefined;
+      let promptFeedback = undefined;
+
+      for (const chunk of responseBody) {
+        const candidate = chunk?.candidates?.[0];
+        const chunkParts = candidate?.content?.parts;
+        if (Array.isArray(chunkParts)) {
+          parts.push(...chunkParts);
+        }
+        if (candidate) {
+          lastCandidate = candidate;
+        }
+        if (chunk?.usageMetadata) {
+          usageMetadata = chunk.usageMetadata;
+        }
+        if (chunk?.promptFeedback) {
+          promptFeedback = chunk.promptFeedback;
+        }
+      }
+
+      responseBody = {
+        candidates: lastCandidate
+          ? [
+              {
+                ...lastCandidate,
+                content: {
+                  ...(lastCandidate.content || {}),
+                  parts,
+                },
               },
-            },
-          ]
-        : [],
-      usageMetadata,
-      promptFeedback,
-    };
+            ]
+          : [],
+        usageMetadata,
+        promptFeedback,
+      };
+    }
+
+    if (!resp.ok) {
+      const errMsg =
+        responseBody?.error?.message ||
+        responseBody?.error?.status ||
+        `HTTP ${resp.status}`;
+      const err = new Error(errMsg);
+      err.status = resp.status;
+      err.body = responseBody;
+      throw err;
+    }
+
+    // Check for blocked / empty candidates
+    if (
+      !responseBody.candidates ||
+      responseBody.candidates.length === 0
+    ) {
+      const blockReason =
+        responseBody.promptFeedback?.blockReason || "UNKNOWN";
+      const err = new Error(
+        `Gemini returned no candidates (blockReason: ${blockReason})`
+      );
+      err.status = 400;
+      err.body = responseBody;
+      throw err;
+    }
+
+    return responseBody;
   }
 
-  if (!resp.ok) {
-    const errMsg =
-      responseBody?.error?.message ||
-      responseBody?.error?.status ||
-      `HTTP ${resp.status}`;
-    const err = new Error(errMsg);
-    err.status = resp.status;
-    err.body = responseBody;
-    throw err;
-  }
-
-  // Check for blocked / empty candidates
-  if (
-    !responseBody.candidates ||
-    responseBody.candidates.length === 0
-  ) {
-    const blockReason =
-      responseBody.promptFeedback?.blockReason || "UNKNOWN";
-    const err = new Error(
-      `Gemini returned no candidates (blockReason: ${blockReason})`
-    );
-    err.status = 400;
-    err.body = responseBody;
-    throw err;
-  }
-
-  return responseBody;
+  // Should not reach here, but just in case
+  throw lastErr || new Error("callGemini exhausted retries");
 }
 
 // ---------------------------------------------------------------------------
