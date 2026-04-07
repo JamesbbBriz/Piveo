@@ -388,8 +388,8 @@ async function callGemini(config, model, geminiBody) {
       throw err;
     }
 
-    // If upstream returned 502/503/504, retry
-    if ([502, 503, 504].includes(resp.status) && attempt < GEMINI_NETWORK_RETRIES) {
+    // If upstream returned 5xx gateway/timeout error, retry (522/524 are Cloudflare-specific)
+    if ([502, 503, 504, 522, 524].includes(resp.status) && attempt < GEMINI_NETWORK_RETRIES) {
       const text = await resp.text().catch(() => "");
       lastErr = new Error(`HTTP ${resp.status} ${text.slice(0, 200)}`);
       continue;
