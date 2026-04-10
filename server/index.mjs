@@ -87,6 +87,7 @@ const UPSTREAM_GUARD_ENABLED = String(process.env.UPSTREAM_GUARD_ENABLED || "tru
 const UPSTREAM_MAX_INFLIGHT_PER_USER = toPositiveInt(process.env.UPSTREAM_MAX_INFLIGHT_PER_USER, 2);
 const UPSTREAM_MAX_INFLIGHT_GLOBAL = toPositiveInt(process.env.UPSTREAM_MAX_INFLIGHT_GLOBAL, 12);
 const UPSTREAM_GUARD_RETRY_AFTER_SEC = toPositiveInt(process.env.UPSTREAM_GUARD_RETRY_AFTER_SEC, 5);
+const UPSTREAM_HARD_TIMEOUT_MS = toPositiveInt(process.env.UPSTREAM_HARD_TIMEOUT_MS, 305_000);
 let upstreamImageInFlightGlobal = 0;
 const upstreamImageInFlightByUser = new Map();
 
@@ -212,6 +213,30 @@ app.use(
   // Extract X-Route-Model header for smart routing
   (req, _res, next) => {
     req._routeModel = String(req.headers["x-route-model"] || "").trim() || undefined;
+    next();
+  },
+  // Hard timeout: destroy the connection if upstream hasn't responded in time.
+  // http-proxy-middleware's proxyTimeout can silently fail when the upstream
+  // keeps the TCP connection alive without sending HTTP data, leaving zombie
+  // requests that permanently occupy concurrency slots.
+  (req, res, next) => {
+    if (!isGuardedImageRoute(req.originalUrl)) return next();
+    const timer = setTimeout(() => {
+      const rid = String(req.requestId || "");
+      console.error(`[UPSTREAM] ${rid} hard timeout (${UPSTREAM_HARD_TIMEOUT_MS}ms) — destroying connection`);
+      if (!res.headersSent) {
+        res.writeHead(504, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({
+          ok: false,
+          message: `上游请求超时（服务端 ${Math.round(UPSTREAM_HARD_TIMEOUT_MS / 1000)}s 硬超时）`,
+          request_id: rid || undefined,
+        }));
+      } else {
+        res.destroy();
+      }
+    }, UPSTREAM_HARD_TIMEOUT_MS);
+    res.on("finish", () => clearTimeout(timer));
+    res.on("close", () => clearTimeout(timer));
     next();
   },
   geminiNativeHandler,
