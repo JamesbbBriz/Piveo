@@ -118,6 +118,14 @@ class SyncService {
   // ——— Projects ———
 
   async saveProject(project: any): Promise<void> {
+    // Hard guard: only push when messagesLoaded is explicitly true. A session
+    // whose chat history hasn't been lazy-loaded (false) OR whose flag is
+    // missing (undefined, e.g. legacy IndexedDB data) has messages: [] as a
+    // placeholder, not real state — pushing would wipe server chat_history_json.
+    if (project?.messagesLoaded !== true) {
+      console.warn(`[Sync] skip saveProject(${project?.id}): messagesLoaded=${project?.messagesLoaded}`);
+      return;
+    }
     this.queueSync(`project:${project.id}`, async () => {
       const messages = project.messages ?? project.chatHistory ?? [];
       const { messages: processedMessages, uploaded } = await this.processMessagesImages(messages);

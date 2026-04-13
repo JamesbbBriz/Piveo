@@ -17,6 +17,16 @@ router.use("/api/data", express.json({ limit: DATA_JSON_LIMIT }), requireAuth);
 
 // ---------- Helpers ----------
 
+// Append-only audit log for data-loss guards. Survives restarts and is visible
+// regardless of whether the host captures stdout. Same dir as SQLite.
+const DATA_GUARD_LOG = path.join(getDataDir(), "data-guard.log");
+function dataGuardLog(line) {
+  try {
+    fs.appendFileSync(DATA_GUARD_LOG, `${new Date().toISOString()} ${line}\n`);
+  } catch {}
+  console.warn(line);
+}
+
 function getUserId(username) {
   const db = getDb();
   const row = db.prepare("SELECT id FROM users WHERE username = ?").get(username);
@@ -475,14 +485,46 @@ router.put("/api/data/projects/:id", (req, res) => {
         return res.status(403).json({ ok: false, message: "无权限修改此项目。" });
       }
     }
-    // Guard: if chat_history_json was not provided (undefined), preserve existing data.
-    // If explicitly sent (even as "[]"), allow it — that's an intentional clear.
+    // Hard guard: never let a PUT collapse non-empty chat history to empty.
+    // `[]` / `null` / `undefined` from the client are all treated as "no update" —
+    // the existing DB value is preserved. Intentional clears must go through
+    // DELETE /api/data/projects/:id (which removes the whole project).
+    // Reason: lazy-loading + sync races repeatedly nuked user-generated images.
     let safeChatHistory = chat_history_json;
-    if (chat_history_json === undefined || chat_history_json === null) {
+    const incomingIsEmpty =
+      chat_history_json === undefined ||
+      chat_history_json === null ||
+      chat_history_json === "[]" ||
+      chat_history_json === "null" ||
+      chat_history_json === "";
+    if (incomingIsEmpty) {
       const current = db.prepare("SELECT chat_history_json FROM projects WHERE id = ?").get(req.params.id);
-      if (current?.chat_history_json) {
+      if (current?.chat_history_json && current.chat_history_json !== "[]") {
         safeChatHistory = current.chat_history_json;
+        // Audit: log every blocked overwrite so we can trace the offending client path.
+        try {
+          const prevLen = JSON.parse(current.chat_history_json).length;
+          if (prevLen > 0) {
+            dataGuardLog(
+              `[DataGuard] blocked empty chat_history overwrite project=${req.params.id} user=${userId} prev_messages=${prevLen} reqId=${req.requestId ?? "-"}`
+            );
+          }
+        } catch {}
       }
+    } else {
+      // Audit: even non-empty writes that drop ≥90% of messages are suspicious.
+      try {
+        const current = db.prepare("SELECT chat_history_json FROM projects WHERE id = ?").get(req.params.id);
+        if (current?.chat_history_json) {
+          const prevLen = JSON.parse(current.chat_history_json).length || 0;
+          const nextLen = JSON.parse(chat_history_json).length || 0;
+          if (prevLen >= 5 && nextLen < prevLen * 0.1) {
+            dataGuardLog(
+              `[DataGuard] suspicious shrink chat_history project=${req.params.id} user=${userId} ${prevLen}→${nextLen} reqId=${req.requestId ?? "-"}`
+            );
+          }
+        }
+      } catch {}
     }
     db.prepare(
       `UPDATE projects SET title = ?, settings_json = ?, chat_history_json = ?,
@@ -1018,13 +1060,41 @@ router.put("/api/data/batch-jobs/:id", (req, res) => {
         return res.status(403).json({ ok: false, message: "无权限修改此矩阵任务。" });
       }
     }
-    // Guard: if slots_json was not provided (undefined), preserve existing data.
+    // Hard guard: same defense-in-depth as projects.chat_history_json.
+    // Empty incoming slots never overwrite non-empty stored slots.
     let safeSlots = slots_json;
-    if (slots_json === undefined || slots_json === null) {
+    const incomingSlotsEmpty =
+      slots_json === undefined ||
+      slots_json === null ||
+      slots_json === "[]" ||
+      slots_json === "null" ||
+      slots_json === "";
+    if (incomingSlotsEmpty) {
       const current = db.prepare("SELECT slots_json FROM batch_jobs WHERE id = ?").get(req.params.id);
-      if (current?.slots_json) {
+      if (current?.slots_json && current.slots_json !== "[]") {
         safeSlots = current.slots_json;
+        try {
+          const prevLen = JSON.parse(current.slots_json).length;
+          if (prevLen > 0) {
+            dataGuardLog(
+              `[DataGuard] blocked empty slots overwrite batch=${req.params.id} user=${userId} prev_slots=${prevLen} reqId=${req.requestId ?? "-"}`
+            );
+          }
+        } catch {}
       }
+    } else {
+      try {
+        const current = db.prepare("SELECT slots_json FROM batch_jobs WHERE id = ?").get(req.params.id);
+        if (current?.slots_json) {
+          const prevLen = JSON.parse(current.slots_json).length || 0;
+          const nextLen = JSON.parse(slots_json).length || 0;
+          if (prevLen >= 5 && nextLen < prevLen * 0.1) {
+            dataGuardLog(
+              `[DataGuard] suspicious shrink slots batch=${req.params.id} user=${userId} ${prevLen}→${nextLen} reqId=${req.requestId ?? "-"}`
+            );
+          }
+        }
+      } catch {}
     }
     db.prepare(
       `UPDATE batch_jobs SET title = ?, project_id = ?, product_id = ?, status = ?,
