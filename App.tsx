@@ -840,9 +840,16 @@ const AppInner: React.FC = () => {
         .map((o) => (o ? imageObjToDataUrl(o) : null))
         .filter((u): u is string => Boolean(u))
         .map(async (url, idx) => {
+          // 先尝试直传 blob，失败再退回 data URL（sync 还会重试）
           let persistentUrl = url;
-          try { persistentUrl = await urlToDataUrl(url); }
-          catch (e) { console.warn('批量任务图片转换失败:', e); }
+          if (/^https?:\/\//i.test(url)) {
+            try {
+              persistentUrl = await syncService.remoteUrlToBlobUrl(url);
+            } catch (e) {
+              console.warn('[batch] blob 直传失败，降级 data URL：', e);
+              try { persistentUrl = await urlToDataUrl(url); } catch {}
+            }
+          }
           return {
             id: uuidv4(),
             slotId: params.slotId,
@@ -1222,6 +1229,34 @@ const AppInner: React.FC = () => {
     batchAbortRef.current?.abort();
   };
 
+  // 把上游生成/编辑返回的任意 URL 持久化为 /api/data/blobs/<id> 引用。
+  // 优先走 blob 直传，只有网络失败时才退回 data URL（再交给 sync 在下次保存时重试）。
+  // 统一入口，避免多处 push image part 的代码各自走 urlToDataUrl 把 base64 塞进 state，
+  // 避免 chat_history_json 膨胀到几十 MB 进而让 lazy-load 失败（刷新后聊天消失）。
+  const toPersistentImageUrl = useCallback(async (url: string): Promise<string> => {
+    if (!url) return url;
+    if (url.startsWith("/api/data/blobs/") || url.startsWith("/api/blobs/")) return url;
+    if (/^https?:\/\//i.test(url)) {
+      try {
+        return await syncService.remoteUrlToBlobUrl(url);
+      } catch (e) {
+        console.warn('[toPersistentImageUrl] blob 直传失败，降级 data URL：', e);
+        try { return await urlToDataUrl(url); } catch { return url; }
+      }
+    }
+    if (/^data:/i.test(url)) {
+      try {
+        const m = url.match(/^data:([^;,]+)/);
+        const result = await syncService.uploadImage(url, m?.[1] || "image/png");
+        return result.url;
+      } catch (e) {
+        console.warn('[toPersistentImageUrl] data URL 上传 blob 失败，保留 data URL（sync 会重试）：', e);
+        return url;
+      }
+    }
+    return url;
+  }, []);
+
   const executeGeneration = useCallback(async (
     prompt: string,
     image: string | null,
@@ -1341,12 +1376,7 @@ const AppInner: React.FC = () => {
         }
 
         const pushImagePart = async (url: string, resultMeta: GenerateResponseResult) => {
-          let persistentUrl = url;
-          try {
-            persistentUrl = await urlToDataUrl(url);
-          } catch (e) {
-            console.warn('图片转换失败，使用原 URL:', e);
-          }
+          const persistentUrl = await toPersistentImageUrl(url);
 
           aiMessage.parts.push({
             type: "image",
@@ -1427,12 +1457,7 @@ const AppInner: React.FC = () => {
                 failed += 1;
               } else {
                 setBalanceRefreshTick((v) => v + 1);
-                let persistentUrl = extraUrl;
-                try {
-                  persistentUrl = await urlToDataUrl(extraUrl);
-                } catch (e) {
-                  console.warn('图片转换失败，使用原 URL:', e);
-                }
+                const persistentUrl = await toPersistentImageUrl(extraUrl);
 
                 patchLatestAiMessage({
                   type: "image",
@@ -2230,9 +2255,7 @@ const AppInner: React.FC = () => {
           .map((o) => (o ? imageObjToDataUrl(o) : null))
           .filter((u): u is string => Boolean(u))
           .map(async (url, idx) => {
-            let persistentUrl = url;
-            try { persistentUrl = await urlToDataUrl(url); }
-            catch (e) { console.warn("优化图片转换失败:", e); }
+            const persistentUrl = await toPersistentImageUrl(url);
             return {
               id: uuidv4(),
               slotId,
@@ -2423,14 +2446,7 @@ const AppInner: React.FC = () => {
         }
 
         const persistentUrls = await Promise.all(
-          generatedImageUrls.map(async (url) => {
-            try {
-              return await urlToDataUrl(url);
-            } catch (e) {
-              console.warn('遮罩编辑图片转换失败，使用原 URL:', e);
-              return url;
-            }
-          })
+          generatedImageUrls.map((url) => toPersistentImageUrl(url))
         );
 
         appendToBatch(persistentUrls, modelUsed, size);
