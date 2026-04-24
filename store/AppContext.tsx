@@ -343,25 +343,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!session || session.messagesLoaded) return;
 
     let cancelled = false;
-    (async () => {
+    const sessionId = project.currentSessionId;
+
+    // 指数回退重试：1s → 3s → 10s，最多 3 次。**拒绝**在失败时把 messagesLoaded 置 true
+    // 且 messages=[]——那会让已有服务器历史的 session 在客户端看起来被"清空"，
+    // 配合 UPDATE_SESSION 的 auto-save 会把空数组写回（虽有 sync guard 拦住，但 UI 仍
+    // 显示空）。让用户/effect 有机会重试，直到拿到真实数据。
+    const delays = [0, 1000, 3000, 10000];
+    let attempt = 0;
+
+    const tryLoad = async (): Promise<void> => {
       try {
-        const messages = await syncService.pullProjectMessages(project.currentSessionId!);
+        const messages = await syncService.pullProjectMessages(sessionId);
         if (cancelled) return;
         projectDispatch({
           type: LOAD_SESSION_MESSAGES,
-          payload: { sessionId: project.currentSessionId!, messages },
+          payload: { sessionId, messages },
         });
       } catch (e) {
-        console.warn('[AppContext] Failed to load session messages:', e);
-        // Mark as loaded with empty messages to avoid infinite retry
-        if (!cancelled) {
-          projectDispatch({
-            type: LOAD_SESSION_MESSAGES,
-            payload: { sessionId: project.currentSessionId!, messages: [] },
-          });
+        if (cancelled) return;
+        attempt += 1;
+        const nextDelay = delays[attempt];
+        if (typeof nextDelay === "number") {
+          console.warn(
+            `[AppContext] Failed to load session messages (attempt ${attempt}/${delays.length - 1}), retry in ${nextDelay}ms:`,
+            e
+          );
+          setTimeout(() => {
+            if (!cancelled) void tryLoad();
+          }, nextDelay);
+        } else {
+          console.error(
+            `[AppContext] Giving up loading session messages after ${attempt} attempts. Session keeps messagesLoaded=false; user can retry by switching away and back.`,
+            e
+          );
+          // 故意不 dispatch LOAD_SESSION_MESSAGES：保留 messagesLoaded=false 状态，
+          // 这样 saveProject 的 guard 会继续跳过写入，避免覆盖服务器已有历史。
         }
       }
-    })();
+    };
+
+    // 首次立即触发，后续由失败路径自己 schedule
+    void tryLoad();
     return () => { cancelled = true; };
   }, [project.currentSessionId, ui.authUser]);
 

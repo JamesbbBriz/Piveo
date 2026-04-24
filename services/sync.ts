@@ -128,7 +128,7 @@ class SyncService {
     }
     this.queueSync(`project:${project.id}`, async () => {
       const messages = project.messages ?? project.chatHistory ?? [];
-      const { messages: processedMessages, uploaded } = await this.processMessagesImages(messages);
+      const { messages: processedMessages, uploaded, failedCount } = await this.processMessagesImages(messages);
 
       // Fire callback to write blob URLs back into local state
       if (this.onImagesUploaded && uploaded.size > 0) {
@@ -139,12 +139,23 @@ class SyncService {
         this.onImagesUploaded('project', project.id, replacements);
       }
 
+      // 任一图片上传失败都放弃本次 PUT：宁可保留本地 dataURL 等待下次 debounced
+      // 重试，也不把内联 base64 写进 chat_history_json。历史原因：单条 session
+      // 一旦膨胀到 >10MB，lazy-load 会失败，刷新后整段聊天历史"消失"。
+      if (failedCount > 0) {
+        throw new Error(
+          `图片上传未完成（失败 ${failedCount} 张），已放弃本次保存以避免数据膨胀；将在下次变更时重试。`
+        );
+      }
+
       // Handle productImage in settings
       let settings = project.settings ?? {};
       if (settings.productImage?.startsWith("data:")) {
         const result = await this.uploadDataUrl(settings.productImage);
         if (result) {
           settings = { ...settings, productImage: result.url };
+        } else {
+          throw new Error("产品图上传失败，已放弃本次保存以避免 settings 泄漏 base64。");
         }
       }
 
@@ -171,7 +182,7 @@ class SyncService {
 
   async saveBatchJob(job: BatchJob): Promise<void> {
     this.queueSync(`batchjob:${job.id}`, async () => {
-      const { slots: processedSlots, uploaded } = await this.processBatchSlotImages(job.slots);
+      const { slots: processedSlots, uploaded, failedCount } = await this.processBatchSlotImages(job.slots);
 
       // Fire callback to write blob URLs back into local state
       if (this.onImagesUploaded && uploaded.size > 0) {
@@ -180,6 +191,13 @@ class SyncService {
           replacements.set(dataUrl, url);
         }
         this.onImagesUploaded('batch', job.id, replacements);
+      }
+
+      // 与 saveProject 一致：任一图片上传失败即放弃本次保存
+      if (failedCount > 0) {
+        throw new Error(
+          `矩阵图片上传未完成（失败 ${failedCount} 张），已放弃本次保存；将在下次变更时重试。`
+        );
       }
 
       const refUrl = await this.maybeUploadDataUrl(job.referenceImageUrl);
@@ -427,6 +445,32 @@ class SyncService {
     );
   }
 
+  /**
+   * 把任意外部图片 URL（上游返回的 http(s) URL）持久化为本站 blob URL。
+   * 失败时抛错，由调用方决定降级策略（使用 data URL 或原 URL）。
+   * 目的：让 chat message 从诞生起就只携带 `/api/data/blobs/<id>` 引用，
+   * 避免 base64 临时内联带来的 chat_history_json 膨胀 + lazy-load 失败。
+   */
+  async remoteUrlToBlobUrl(remoteUrl: string): Promise<string> {
+    if (!/^https?:\/\//i.test(remoteUrl)) return remoteUrl;
+    const proxyUrl = `/auth/image-proxy?url=${encodeURIComponent(remoteUrl)}`;
+    const resp = await fetch(proxyUrl, { credentials: "include" });
+    if (!resp.ok) throw new Error(`远程图片下载失败：HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const contentType = blob.type || "image/png";
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === "string") resolve(reader.result);
+        else reject(new Error("FileReader 返回非字符串"));
+      };
+      reader.onerror = () => reject(new Error("读取 Blob 失败"));
+      reader.readAsDataURL(blob);
+    });
+    const result = await this.uploadImage(dataUrl, contentType);
+    return result.url;
+  }
+
   // ——— Admin (super admin only) ———
 
   async createUser(username: string, password: string, displayName?: string): Promise<any> {
@@ -628,9 +672,15 @@ class SyncService {
 
   /**
    * Process messages: upload data URL images to blob storage and replace with blob URLs.
-   * Returns both the processed messages (for server) and the uploaded map (dataUrl → blob info).
+   * 返回已处理消息、已上传映射，以及是否有任何图片未成功上传。
+   * 调用方应在 failedCount > 0 时**放弃本次保存**，以免把内联 base64 泄漏到 chat_history_json
+   * （那会让单条 session JSON 膨胀到几十 MB，进而让 lazy-load 失败，用户刷新后看到空历史）。
    */
-  private async processMessagesImages(messages: any[]): Promise<{ messages: any[]; uploaded: Map<string, { id: string; url: string }> }> {
+  private async processMessagesImages(messages: any[]): Promise<{
+    messages: any[];
+    uploaded: Map<string, { id: string; url: string }>;
+    failedCount: number;
+  }> {
     const emptyUploaded = new Map<string, { id: string; url: string }>();
 
     // Collect all data URL images
@@ -644,10 +694,11 @@ class SyncService {
       }
     }
 
-    if (dataUrls.size === 0) return { messages, uploaded: emptyUploaded };
+    if (dataUrls.size === 0) return { messages, uploaded: emptyUploaded, failedCount: 0 };
 
     // Upload unique images (max 3 concurrent)
     const uploaded = new Map<string, { id: string; url: string }>();
+    let failedCount = 0;
     const urls = Array.from(dataUrls);
     const CONCURRENCY = 3;
     for (let i = 0; i < urls.length; i += CONCURRENCY) {
@@ -656,11 +707,12 @@ class SyncService {
         batch.map(async (dataUrl) => {
           const result = await this.uploadDataUrl(dataUrl);
           if (result) uploaded.set(dataUrl, result);
+          else failedCount += 1;
         }),
       );
     }
 
-    if (uploaded.size === 0) return { messages, uploaded: emptyUploaded };
+    if (uploaded.size === 0) return { messages, uploaded: emptyUploaded, failedCount };
 
     // Replace data URLs with blob URLs in a shallow copy
     const processedMessages = messages.map((msg) => {
@@ -679,14 +731,19 @@ class SyncService {
       };
     });
 
-    return { messages: processedMessages, uploaded };
+    return { messages: processedMessages, uploaded, failedCount };
   }
 
   /**
    * Process batch slot images: upload data URL images in versions to blob storage.
-   * Returns both the processed slots (for server) and the uploaded map (dataUrl → blob info).
+   * Returns both the processed slots (for server), the uploaded map, and failedCount.
+   * 同 processMessagesImages，调用方应在 failedCount > 0 时放弃本次保存。
    */
-  private async processBatchSlotImages(slots: any[]): Promise<{ slots: any[]; uploaded: Map<string, { id: string; url: string }> }> {
+  private async processBatchSlotImages(slots: any[]): Promise<{
+    slots: any[];
+    uploaded: Map<string, { id: string; url: string }>;
+    failedCount: number;
+  }> {
     const emptyUploaded = new Map<string, { id: string; url: string }>();
 
     const dataUrls = new Set<string>();
@@ -699,9 +756,10 @@ class SyncService {
       }
     }
 
-    if (dataUrls.size === 0) return { slots, uploaded: emptyUploaded };
+    if (dataUrls.size === 0) return { slots, uploaded: emptyUploaded, failedCount: 0 };
 
     const uploaded = new Map<string, { id: string; url: string }>();
+    let failedCount = 0;
     const urls = Array.from(dataUrls);
     const CONCURRENCY = 3;
     for (let i = 0; i < urls.length; i += CONCURRENCY) {
@@ -710,11 +768,12 @@ class SyncService {
         batch.map(async (dataUrl) => {
           const result = await this.uploadDataUrl(dataUrl);
           if (result) uploaded.set(dataUrl, result);
+          else failedCount += 1;
         }),
       );
     }
 
-    if (uploaded.size === 0) return { slots, uploaded: emptyUploaded };
+    if (uploaded.size === 0) return { slots, uploaded: emptyUploaded, failedCount };
 
     const processedSlots = slots.map((slot) => {
       if (!Array.isArray(slot?.versions)) return slot;
@@ -730,7 +789,7 @@ class SyncService {
       };
     });
 
-    return { slots: processedSlots, uploaded };
+    return { slots: processedSlots, uploaded, failedCount };
   }
 
   // ——— Internal: debounced server writes ———
