@@ -344,7 +344,13 @@ export const generateResponse = async (
     const productContext = productInfoInstruction ? `\n${productInfoInstruction}` : "";
     const contextPrefix = imageContext ? `${imageContext}\n` : "";
     const brandPrefix = brandDnaInstruction ? `${brandDnaInstruction}\n` : "";
-    const promptUsed = `${brandPrefix}${contextPrefix}${productContext}${finalPrompt} ${scaleInstruction}`.trim();
+    // 多图编号模式下告诉模型"第 N 张附件 = 图N"，让用户的"用图1的脸"之类指令可被精确识别。
+    // 仅在 imageInputs >= 2 时加，单图场景保持简洁。
+    const multiImageHint =
+      multiImageMode && imageInputs.length >= 2
+        ? `本次输入了 ${imageInputs.length} 张参考图，按顺序编号为图1、图2${imageInputs.length >= 3 ? `…图${imageInputs.length}` : ""}。请严格按用户在 prompt 中指定的编号（如"图1"、"图2"）取用对应图片的元素。\n`
+        : "";
+    const promptUsed = `${brandPrefix}${contextPrefix}${multiImageHint}${productContext}${finalPrompt} ${scaleInstruction}`.trim();
 
     const resp = await imagesGenerations(
       {

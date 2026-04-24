@@ -168,14 +168,30 @@ export const PromptBar: React.FC<PromptBarProps> = ({
           </div>
         )}
 
-        {/* 多图附件编号条 */}
+        {/* 多图附件编号条 + 使用提示 */}
         {attachments && attachments.length > 0 && (
-          <NumberedAttachmentsStrip
-            attachments={attachments}
-            onRemove={handleRemoveAttachment}
-            onReorder={onAttachmentsChange ? handleReorderAttachment : undefined}
-            onInsertRef={handleInsertRef}
-          />
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 text-[11px] text-[var(--piveo-muted)] leading-none">
+              <Icon name="info-circle" className="text-[10px]" />
+              <span>
+                已附 <span className="text-[var(--piveo-text)] font-medium">{attachments.length}</span> 张参考图。
+                {attachments.length >= 2 ? (
+                  <>
+                    点编号插入引用，Prompt 里可说{" "}
+                    <span className="text-[var(--piveo-text)] font-medium">"用图1的脸，图2的背景"</span>。
+                  </>
+                ) : (
+                  <>再粘贴/上传可继续添加，最多 6 张。</>
+                )}
+              </span>
+            </div>
+            <NumberedAttachmentsStrip
+              attachments={attachments}
+              onRemove={handleRemoveAttachment}
+              onReorder={onAttachmentsChange ? handleReorderAttachment : undefined}
+              onInsertRef={handleInsertRef}
+            />
+          </div>
         )}
 
         {/* Input area */}
@@ -203,7 +219,13 @@ export const PromptBar: React.FC<PromptBarProps> = ({
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder="例如：改成现代轻奢客厅，保留原户型与采光..."
+            placeholder={
+              attachments && attachments.length >= 2
+                ? "例如：用图1的脸 + 图2的背景 + 图3的服装风格，合成一张..."
+                : attachments && attachments.length === 1
+                ? "例如：把这张图的背景换成北欧客厅，光线保留..."
+                : "例如：改成现代轻奢客厅，保留原户型与采光..."
+            }
             className="flex-1 bg-transparent border-none focus:outline-none focus:ring-0 text-[var(--piveo-text)] placeholder-[var(--piveo-muted)] max-h-32 py-2.5 resize-none custom-scrollbar text-sm"
             rows={1}
             style={{ minHeight: '40px' }}
