@@ -41,7 +41,7 @@ export const generateModelCharacter = async (
       prompt,
       model: defaultImageModel as any,
       n: 1,
-      size: "1024x1024",
+      size: "2048x2048",
       response_format: ResponseFormat.B64json,
     },
     { signal: opts?.signal, queueSource: "model-gen" }
@@ -72,6 +72,9 @@ export interface GenerateResponseOptions {
   referenceIntent?: ReferenceIntent;
   /** 活跃的品牌套件 — 注入品牌 DNA 到 prompt */
   activeBrandKit?: BrandKit | null;
+  /** 多图编号模式：true 时只用 extraImages 作为图片输入，跳过 modelImage/productImage/历史自动复用和自动 imageContext 前缀，
+   *  让用户 prompt 里的"图1/图2…"编号精确对齐 extraImages 的数组下标。 */
+  multiImageMode?: boolean;
 }
 
 export interface GenerateResponseResult {
@@ -120,12 +123,20 @@ export const generateResponse = async (
   options: GenerateResponseOptions = {}
 ): Promise<GenerateResponseResult> => {
 
+  // 多图编号模式：用户已在 UI 上显式编号了附件，只用 extraImages，跳过所有自动合并路径。
+  const multiImageMode = Boolean(options.multiImageMode);
+  if (multiImageMode) {
+    referenceImage = null;
+    modelImage = null;
+    productImage = null;
+  }
+
   // If user didn't provide a new image this turn, fall back to the most recent
   // image in the history for iterative edits.
   const lastMsg = history[history.length - 1];
   const hasNewImage = lastMsg?.parts?.some(p => p.type === 'image') ?? false;
   let lastHistoryImage: string | null = null;
-  if (!options.disableAutoUseLastImage && settings.autoUseLastImage && !hasNewImage && !referenceImage) {
+  if (!multiImageMode && !options.disableAutoUseLastImage && settings.autoUseLastImage && !hasNewImage && !referenceImage) {
     for (let i = history.length - 2; i >= 0; i--) {
       const imgPart = history[i].parts.find(p => p.type === 'image' && p.imageUrl);
       if (imgPart?.imageUrl) {
@@ -252,7 +263,8 @@ export const generateResponse = async (
     }
 
     // Add brand reference images to imageInputsRaw
-    if (bk.images && bk.images.length > 0) {
+    // 多图编号模式下跳过，避免打乱用户的"图1/图2…"编号
+    if (!multiImageMode && bk.images && bk.images.length > 0) {
       for (const img of bk.images) {
         if (img.imageUrl) imageInputsRaw.push(img.imageUrl);
       }

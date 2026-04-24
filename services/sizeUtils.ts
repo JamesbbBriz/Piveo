@@ -28,6 +28,20 @@ export const GEMINI_PRO_IMAGE_2K_SIZE_BY_ASPECT: Record<string, string> = {
   "21:9": "3168x1344",
 };
 
+// gpt-image-2-pro 家族固定 2K 分辨率映射（所有维度整除 16）。
+export const GPT_IMAGE_2K_SIZE_BY_ASPECT: Record<string, string> = {
+  "1:1": "2048x2048",
+  "2:3": "1664x2496",
+  "3:2": "2496x1664",
+  "3:4": "1536x2048",
+  "4:3": "2048x1536",
+  "4:5": "1664x2080",
+  "5:4": "2080x1664",
+  "9:16": "1152x2048",
+  "16:9": "2048x1152",
+  "21:9": "2688x1152",
+};
+
 // Nano🍌 2 (gemini-3.1-flash-image-preview) 4K 分辨率映射（2K × 2）。
 export const GEMINI_4K_SIZE_BY_ASPECT: Record<string, string> = {
   "1:1": "4096x4096",
@@ -57,7 +71,16 @@ const SUPPORTED_ASPECT_RATIO_ORDER: AspectRatio[] = [
 
 export const getSupportedAspectRatios = (): AspectRatio[] => SUPPORTED_ASPECT_RATIO_ORDER;
 
-export const getSupportedSizeForAspect = (aspect: AspectRatio | string, imageSize?: string): string => {
+export const getSupportedSizeForAspect = (
+  aspect: AspectRatio | string,
+  imageSize?: string,
+  modelId?: string
+): string => {
+  // gpt-image-2-pro 家族：始终使用固定 2K 映射，忽略 imageSize
+  if (modelId && /gpt-image-2/i.test(modelId)) {
+    const map = GPT_IMAGE_2K_SIZE_BY_ASPECT;
+    return map[String(aspect)] || map["1:1"];
+  }
   const map =
     imageSize === "4K" ? GEMINI_4K_SIZE_BY_ASPECT
     : imageSize === "1K" ? GEMINI_FLASH_IMAGE_SIZE_BY_ASPECT

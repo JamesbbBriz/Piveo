@@ -19,7 +19,7 @@ export const getEnvApiConfig = (): ApiConfig => {
   const authorization = "";
 
   const defaultImageModel = normalizeDefaultImageModel(
-    (readEnvString("VITE_DEFAULT_IMAGE_MODEL") || "gemini-3.1-flash-image-preview").trim()
+    (readEnvString("VITE_DEFAULT_IMAGE_MODEL") || "gpt-image-2-pro").trim()
   );
 
   return {
@@ -63,6 +63,6 @@ export const getEffectiveApiConfig = (): ApiConfig => {
     baseUrl: env.baseUrl.trim(),
     authorization: env.authorization.trim(),
     // 写死模型，忽略 localStorage 中可能残留的旧模型选择
-    defaultImageModel: "gemini-3.1-flash-image-preview",
+    defaultImageModel: "gpt-image-2-pro",
   };
 };

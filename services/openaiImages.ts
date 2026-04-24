@@ -65,6 +65,7 @@ export interface 创建图片请求 {
  */
 export enum Model {
   Gemini31FlashImagePreview = "gemini-3.1-flash-image-preview",
+  GptImage2Pro = "gpt-image-2-pro",
 }
 
 /**
@@ -351,7 +352,7 @@ const getClientConfig = (override?: Partial<ApiConfig>): ApiConfig => {
   };
   merged.baseUrl = normalizeBaseUrl(merged.baseUrl || "/api");
   merged.authorization = (merged.authorization || "").trim();
-  merged.defaultImageModel = (merged.defaultImageModel || Model.Gemini25FlashImagePreview).trim();
+  merged.defaultImageModel = (merged.defaultImageModel || Model.GptImage2Pro).trim();
   return merged;
 };
 
@@ -623,7 +624,9 @@ const geminiImageViaChat = async (
 };
 
 /**
- * OpenAI-style: POST /v1/images/generations
+ * OpenAI-style: POST /v1/images/generations（0 张输入图，JSON）
+ *                或 /v1/images/edits（1+ 张输入图，multipart/form-data）
+ * 根据 req.image 长度自动分派到不同端点。
  * Returns { created, data: [{ url | b64_json, revised_prompt? }, ...] }
  */
 export const imagesGenerations = async (
@@ -634,33 +637,71 @@ export const imagesGenerations = async (
   const signal = opts?.signal;
   const retryPolicy = toRetryPolicy(opts);
 
+  // 根据输入图数量选择端点：1 张及以上 → /v1/images/edits（multipart）；否则 → /v1/images/generations（JSON）
+  const hasImages = Array.isArray(req.image) && req.image.length > 0;
+  const endpointPath: "/v1/images/generations" | "/v1/images/edits" =
+    hasImages ? "/v1/images/edits" : "/v1/images/generations";
+
   const callWithModel = async (model: string): Promise<图片生成响应> => {
     if (/^sora-/i.test(model)) {
       throw new Error(
-        `当前模型「${model}」是视频模型，不支持图片生成。请在左侧栏「接口」里切换到图片模型（例如 gemini-3.1-flash-image-preview）。`
+        `当前模型「${model}」是视频模型，不支持图片生成。请在左侧栏「接口」里切换到图片模型（例如 gpt-image-2-pro）。`
       );
     }
     const requestTimeoutMs = resolveImageFetchTimeoutMs(model);
 
-    const body: Record<string, any> = {
-      prompt: req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt,
+    const promptWithSystem = req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt;
+    const nVal = req.n ?? 1;
+    const sizeVal = req.size ?? Size.The1024X1024;
+    const responseFormatVal = req.response_format ?? ResponseFormat.Url;
+
+    // 有图 → multipart；上游 edits 端点要求重复 append 同一个 key "image"
+    let preparedImages: Array<{ blob: Blob; filename: string }> = [];
+    if (hasImages) {
+      preparedImages = [];
+      for (let i = 0; i < req.image!.length; i++) {
+        const input = req.image![i];
+        const { blob, mimeType } = await inputToBlob(input, signal);
+        const ext = mimeType.includes("png") ? "png"
+          : mimeType.includes("jpeg") ? "jpg"
+          : mimeType.includes("webp") ? "webp"
+          : mimeType.includes("gif") ? "gif"
+          : "png";
+        preparedImages.push({ blob, filename: `image-${i}.${ext}` });
+      }
+    }
+
+    // 无图 → JSON body
+    const jsonBody: Record<string, any> = hasImages ? {} : {
+      prompt: promptWithSystem,
       model,
-      n: req.n ?? 1,
-      response_format: req.response_format ?? ResponseFormat.Url,
-      size: req.size ?? Size.The1024X1024,
+      n: nVal,
+      response_format: responseFormatVal,
+      size: sizeVal,
     };
-
-    if (req.image?.length) {
-      body.image = req.image.map(normalizeImageInput);
+    if (!hasImages) {
+      // Pass-through for extra fields（仅 JSON 路径保留原有透传行为）
+      for (const [k, v] of Object.entries(req)) {
+        if (k in jsonBody) continue;
+        if (k === "image" || k === "prompt" || k === "model" || k === "n" || k === "response_format" || k === "size" || k === "systemPrompt")
+          continue;
+        jsonBody[k] = v;
+      }
     }
 
-    // Pass-through for extra fields (future-proofing)
-    for (const [k, v] of Object.entries(req)) {
-      if (k in body) continue;
-      if (k === "image" || k === "prompt" || k === "model" || k === "n" || k === "response_format" || k === "size" || k === "systemPrompt")
-        continue;
-      body[k] = v;
-    }
+    // 有图 → 每次 attempt 重新构造 FormData（FormData/Blob 不可重复消费）
+    const buildFormData = (): FormData => {
+      const fd = new FormData();
+      for (const img of preparedImages) {
+        fd.append("image", img.blob, img.filename);
+      }
+      fd.append("model", model);
+      fd.append("prompt", promptWithSystem);
+      fd.append("size", String(sizeVal));
+      fd.append("response_format", String(responseFormatVal));
+      fd.append("n", String(nVal));
+      return fd;
+    };
 
     let lastStatus = 0;
     let lastText = "";
@@ -673,22 +714,28 @@ export const imagesGenerations = async (
       lastRequestId = requestId;
       const startedAt = Date.now();
       try {
-        resp = await fetchViaQueue(
-          `${cfg.baseUrl}/v1/images/generations`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Request-Id": requestId,
-              "X-Route-Model": model || "",
-              ...buildAuthHeaders(cfg),
-            },
-            credentials: "include",
-            body: JSON.stringify(body),
-            signal: withTimeout(signal, requestTimeoutMs),
-          },
-          opts
-        );
+        const baseHeaders: Record<string, string> = {
+          "X-Request-Id": requestId,
+          "X-Route-Model": model || "",
+          ...buildAuthHeaders(cfg),
+        };
+        // 注意：multipart 路径不要设 Content-Type，让 fetch 自动加 boundary
+        const init: RequestInit = hasImages
+          ? {
+              method: "POST",
+              headers: baseHeaders,
+              credentials: "include",
+              body: buildFormData(),
+              signal: withTimeout(signal, requestTimeoutMs),
+            }
+          : {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...baseHeaders },
+              credentials: "include",
+              body: JSON.stringify(jsonBody),
+              signal: withTimeout(signal, requestTimeoutMs),
+            };
+        resp = await fetchViaQueue(`${cfg.baseUrl}${endpointPath}`, init, opts);
       } catch (e: any) {
         const isAbort = e instanceof DOMException && e.name === "AbortError";
         if (!isAbort || isLikelyTimeoutError(e)) {
@@ -727,7 +774,7 @@ export const imagesGenerations = async (
         return {
           ...json,
           model_used: model,
-          endpoint_used: "/v1/images/generations",
+          endpoint_used: endpointPath,
         };
       }
 
@@ -748,7 +795,8 @@ export const imagesGenerations = async (
     const traceSuffix = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
     const generationErr = `图片接口请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}。${traceSuffix}`.trim();
     // 仅在显式开启 VITE_ENABLE_CHAT_IMAGE_FALLBACK=true 且为"模型不支持"时才回退 chat。
-    if (enableGeminiChatFallback && isGeminiImageModel(model) && includesUnsupportedModelError(detail)) {
+    // chat 回退仅适用于无图（JSON）路径下的 Gemini 图片模型。
+    if (!hasImages && enableGeminiChatFallback && isGeminiImageModel(model) && includesUnsupportedModelError(detail)) {
       try {
         return await geminiImageViaChat({ ...req, model: model as Model }, cfg, model, signal, opts);
       } catch (chatErr) {
@@ -759,8 +807,8 @@ export const imagesGenerations = async (
     throw new Error(generationErr);
   };
 
-  // 写死模型为 gemini-3.1-flash-image-preview，忽略请求和配置中的其他模型
-  const initialModel = Model.Gemini31FlashImagePreview;
+  // 使用有效配置中的默认模型（现为 gpt-image-2-pro）
+  const initialModel = String(req.model || cfg.defaultImageModel || "gpt-image-2-pro").trim();
   return await callWithModel(initialModel);
 };
 
@@ -849,7 +897,7 @@ export const imagesEdits = async (
     fd.append("n", String(req.n ?? 1));
     if (req.size) fd.append("size", String(req.size));
     if (req.response_format) fd.append("response_format", String(req.response_format));
-    fd.append("model", Model.Gemini31FlashImagePreview);
+    fd.append("model", String(req.model || cfg.defaultImageModel || Model.GptImage2Pro));
     if (req.quality) fd.append("quality", String(req.quality));
     // Pass-through for extra fields
     for (const [k, v] of Object.entries(req)) {
@@ -878,7 +926,7 @@ export const imagesEdits = async (
           method: "POST",
           headers: {
             "X-Request-Id": requestId,
-            "X-Route-Model": Model.Gemini31FlashImagePreview,
+            "X-Route-Model": String(req.model || cfg.defaultImageModel || Model.GptImage2Pro),
             ...buildAuthHeaders(cfg),
           },
           credentials: "include",

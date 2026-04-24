@@ -3,6 +3,7 @@ import type { ReferenceIntent } from '../types';
 import { Icon } from './Icon';
 import { Button } from '@/components/base/buttons/button';
 import { Tabs } from '@/components/application/tabs/tabs';
+import { NumberedAttachmentsStrip, type Attachment } from './NumberedAttachmentsStrip';
 
 const INTENT_OPTIONS: { value: ReferenceIntent; label: string }[] = [
   { value: 'all', label: '全部参考' },
@@ -24,6 +25,9 @@ interface PromptBarProps {
   referenceIntent: ReferenceIntent;
   onReferenceIntentChange: (intent: ReferenceIntent) => void;
   disabled?: boolean;
+  // 多图附件（可选）：顺序即 1..N 编号顺序
+  attachments?: Attachment[];
+  onAttachmentsChange?: (next: Attachment[]) => void;
 }
 
 export const PromptBar: React.FC<PromptBarProps> = ({
@@ -39,9 +43,57 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   referenceIntent,
   onReferenceIntentChange,
   disabled = false,
+  attachments,
+  onAttachmentsChange,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const intentItems = INTENT_OPTIONS;
+
+  // 在 textarea 光标位置插入 @图N 引用；若拿不到光标则追加到末尾
+  const insertAtCursor = (snippet: string) => {
+    const el = textareaRef.current;
+    if (!el) {
+      onInputChange((inputText || '') + snippet);
+      return;
+    }
+    const start = el.selectionStart ?? inputText.length;
+    const end = el.selectionEnd ?? inputText.length;
+    const before = inputText.slice(0, start);
+    const after = inputText.slice(end);
+    const next = before + snippet + after;
+    onInputChange(next);
+    // 恢复光标到插入内容之后
+    requestAnimationFrame(() => {
+      const pos = start + snippet.length;
+      try {
+        el.focus();
+        el.setSelectionRange(pos, pos);
+      } catch {
+        /* ignore */
+      }
+    });
+  };
+
+  const handleInsertRef = (idx: number) => {
+    insertAtCursor(`@图${idx + 1} `);
+  };
+
+  const handleRemoveAttachment = (id: string) => {
+    if (!onAttachmentsChange || !attachments) return;
+    onAttachmentsChange(attachments.filter((a) => a.id !== id));
+  };
+
+  const handleReorderAttachment = (fromIdx: number, toIdx: number) => {
+    if (!onAttachmentsChange || !attachments) return;
+    if (fromIdx === toIdx) return;
+    if (fromIdx < 0 || fromIdx >= attachments.length) return;
+    if (toIdx < 0 || toIdx >= attachments.length) return;
+    const next = attachments.slice();
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, moved);
+    onAttachmentsChange(next);
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -116,6 +168,16 @@ export const PromptBar: React.FC<PromptBarProps> = ({
           </div>
         )}
 
+        {/* 多图附件编号条 */}
+        {attachments && attachments.length > 0 && (
+          <NumberedAttachmentsStrip
+            attachments={attachments}
+            onRemove={handleRemoveAttachment}
+            onReorder={onAttachmentsChange ? handleReorderAttachment : undefined}
+            onInsertRef={handleInsertRef}
+          />
+        )}
+
         {/* Input area */}
         <div className="flex items-end gap-2 bg-white border border-[var(--piveo-border)] rounded-xl p-2 focus-within:border-[var(--piveo-text)] transition-colors">
           <Button
@@ -136,6 +198,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
             className="hidden"
           />
           <textarea
+            ref={textareaRef}
             value={inputText}
             onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={handleKeyDown}

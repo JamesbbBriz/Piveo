@@ -13,6 +13,7 @@ import { AssetsModal, type AssetItem } from './components/AssetsModal';
 import { type ErrorDetails } from './components/ErrorDetailsModal';
 import { MaskEditorModal, type MaskEditorHistoryItem } from './components/MaskEditorModal';
 import { imagesEdits, imagesGenerations, imageObjToDataUrl, ResponseFormat } from './services/openaiImages';
+import type { Attachment } from './components/NumberedAttachmentsStrip';
 import { filterSizesByAspect, getSupportedAspectRatios, getSupportedSizeForAspect } from './services/sizeUtils';
 import { login, logout } from './services/auth';
 import { BatchSetItem, BatchSetModal } from './components/BatchSetModal';
@@ -291,6 +292,10 @@ const AppInner: React.FC = () => {
     dispatch: uiDispatch,
   } = useUI();
   const { hasHydratedStorage } = useHydration();
+
+  // 多图附件（本轮输入，发送后清空）。顺序即 1..N 编号顺序，上限 6 张。
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const MAX_ATTACHMENTS = 6;
 
   // ——— Local UI state (not worth putting in store) ———
   const [navView, setNavView] = useState<string>('project');
@@ -1009,11 +1014,27 @@ const AppInner: React.FC = () => {
   }, [teamDispatch]);
 
   // ——— Onboarding handlers ———
-  const handleOnboardingFileUpload = useCallback((file: File) => {
+  // 读 File/Blob 为 data URL，并追加到 attachments（多图编号工作流）
+  const appendAttachmentFromBlob = useCallback((blob: Blob | File) => {
     const reader = new FileReader();
-    reader.onloadend = () => uiDispatch({ type: SET_SELECTED_IMAGE, payload: reader.result as string });
-    reader.readAsDataURL(file);
-  }, [uiDispatch]);
+    reader.onloadend = () => {
+      const url = reader.result as string;
+      if (!url) return;
+      setAttachments((prev) => {
+        if (prev.length >= MAX_ATTACHMENTS) {
+          console.warn(`[attachments] 已达上限 ${MAX_ATTACHMENTS} 张，忽略新附件`);
+          return prev;
+        }
+        const filename = (blob as File).name || undefined;
+        return [...prev, { id: uuidv4(), url, filename }];
+      });
+    };
+    reader.readAsDataURL(blob);
+  }, []);
+
+  const handleOnboardingFileUpload = useCallback((file: File) => {
+    appendAttachmentFromBlob(file);
+  }, [appendAttachmentFromBlob]);
 
   const handleOnboardingPaste = useCallback(async () => {
     try {
@@ -1022,16 +1043,14 @@ const AppInner: React.FC = () => {
         const imageType = item.types.find((t) => t.startsWith('image/'));
         if (imageType) {
           const blob = await item.getType(imageType);
-          const reader = new FileReader();
-          reader.onloadend = () => uiDispatch({ type: SET_SELECTED_IMAGE, payload: reader.result as string });
-          reader.readAsDataURL(blob);
+          appendAttachmentFromBlob(blob);
           return;
         }
       }
     } catch {
       // Clipboard API not available or denied
     }
-  }, [uiDispatch]);
+  }, [appendAttachmentFromBlob]);
 
   const handleOnboardingQuickStart = useCallback((templateName: string) => {
     const template = templates.find((t) => t.name === templateName);
@@ -1215,6 +1234,8 @@ const AppInner: React.FC = () => {
       forceNoAutoReuse?: boolean;
       queueSource?: "chat" | "batch" | "mask-edit" | "model-gen";
       referenceIntent?: import('./types').ReferenceIntent;
+      /** 多图编号模式：用户在 UI 上显式编号附件，走精确对齐路径 */
+      multiImageMode?: boolean;
     }
   ) => {
     if (!currentSession) return;
@@ -1297,6 +1318,7 @@ const AppInner: React.FC = () => {
             queueSource: opts?.queueSource || "chat",
             referenceIntent: opts?.referenceIntent,
             activeBrandKit,
+            multiImageMode: opts?.multiImageMode,
           }
         );
         setBalanceRefreshTick((v) => v + 1);
@@ -1397,6 +1419,7 @@ const AppInner: React.FC = () => {
                   queueSource: opts?.queueSource || "chat",
                   referenceIntent: opts?.referenceIntent,
                   activeBrandKit,
+                  multiImageMode: opts?.multiImageMode,
                 }
               );
               const extraUrl = extra.images[0];
@@ -1515,7 +1538,8 @@ const AppInner: React.FC = () => {
   }, [apiConfig, currentSession, models, projectDispatch, uiDispatch]);
 
   const handleSendMessage = async () => {
-    if ((!inputText.trim() && !selectedImage) || isGenerating || !currentSession) return;
+    const hasAttachments = attachments.length > 0;
+    if ((!inputText.trim() && !selectedImage && !hasAttachments) || isGenerating || !currentSession) return;
 
     const newUserMessage: Message = {
       id: uuidv4(),
@@ -1525,7 +1549,14 @@ const AppInner: React.FC = () => {
     };
 
     if (inputText.trim()) newUserMessage.parts.push({ type: 'text', text: inputText });
-    if (selectedImage) newUserMessage.parts.push({ type: 'image', imageUrl: selectedImage });
+    // 多图模式：每张附件都作为独立 part 进入历史（保留编号顺序）
+    if (hasAttachments) {
+      for (const att of attachments) {
+        newUserMessage.parts.push({ type: 'image', imageUrl: att.url });
+      }
+    } else if (selectedImage) {
+      newUserMessage.parts.push({ type: 'image', imageUrl: selectedImage });
+    }
 
     const updatedMessages = [...currentSession.messages, newUserMessage];
     const updatedTitle = currentSession.messages.length === 0 ? (inputText.trim().slice(0, 30) || "新创作") : currentSession.title;
@@ -1539,13 +1570,19 @@ const AppInner: React.FC = () => {
     });
 
     const promptToPass = inputText;
-    const imageToPass = selectedImage;
-    const intentToPass = selectedImage ? referenceIntent : undefined;
+    const imageToPass = hasAttachments ? null : selectedImage;
+    const intentToPass = (!hasAttachments && selectedImage) ? referenceIntent : undefined;
+    const extraImagesToPass = hasAttachments ? attachments.map((a) => a.url) : undefined;
     uiDispatch({ type: SET_INPUT_TEXT, payload: '' });
     uiDispatch({ type: SET_SELECTED_IMAGE, payload: null });
     uiDispatch({ type: SET_REFERENCE_INTENT, payload: 'all' });
+    setAttachments([]);
 
-    await executeGeneration(promptToPass, imageToPass, updatedMessages, { referenceIntent: intentToPass });
+    await executeGeneration(promptToPass, imageToPass, updatedMessages, {
+      referenceIntent: intentToPass,
+      extraImages: extraImagesToPass,
+      multiImageMode: hasAttachments,
+    });
   };
 
   const handleVariation = useCallback(async (type: string, imageUrl: string) => {
@@ -2815,6 +2852,8 @@ const AppInner: React.FC = () => {
             onClearImage={() => uiDispatch({ type: SET_SELECTED_IMAGE, payload: null })}
             referenceIntent={referenceIntent}
             onReferenceIntentChange={(intent) => uiDispatch({ type: SET_REFERENCE_INTENT, payload: intent })}
+            attachments={attachments}
+            onAttachmentsChange={setAttachments}
           />
           <div ref={chatEndRef} />
         </>
