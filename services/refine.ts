@@ -73,7 +73,7 @@ export async function sendRefineMessage(
     }
   }
 
-  const size = getSupportedSizeForAspect(settings.aspectRatio, settings.imageSize);
+  const size = getSupportedSizeForAspect(settings.aspectRatio, settings.imageSize, settings.model);
 
   const body = {
     model: settings.model,

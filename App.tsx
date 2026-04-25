@@ -94,7 +94,10 @@ import {
 } from './store/actions';
 
 const aspectRatioToSize = (aspectRatio: AspectRatio | string, imageSize?: string): string => {
-  return getSupportedSizeForAspect(aspectRatio, imageSize);
+  // 把当前 model 一并传进去：gpt-image-2-pro 家族会强制 GPT 2K 映射，
+  // 忽略历史 session 里残留的 imageSize="4K"（4K Gemini 尺寸会让上游静默超时）。
+  const modelId = getEffectiveApiConfig().defaultImageModel;
+  return getSupportedSizeForAspect(aspectRatio, imageSize, modelId);
 };
 
 const isAbortError = (e: any): boolean => e?.name === "AbortError";
