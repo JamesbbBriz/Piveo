@@ -9,8 +9,20 @@
  */
 
 import type { BatchJob } from "@/types";
+import { addPendingSyncId, removePendingSyncId, getPendingSyncIds } from "./storage";
 
 const FAILED_OPS_MAX = 100;
+
+export interface SyncStatus {
+  /** 当前还在 syncQueue + offlineQueue 中等待发送的项数（瞬时） */
+  pending: number;
+  /** withRetry 耗尽后写入 localStorage 的 project/batchJob ID 数（持久） */
+  failed: number;
+  /** 最近一次 sync 失败的错误信息，UI 可以悬停展示 */
+  lastError: string | null;
+  /** 上次成功 flush 的时间戳；用于"刚刚保存"提示 */
+  lastSyncedAt: number | null;
+}
 
 interface FailedOp {
   key: string;
@@ -30,9 +42,30 @@ class SyncService {
   private blobCache = new Map<string, { id: string; url: string }>();
   /** Callback fired after images are uploaded, providing dataUrl → blobUrl replacements */
   private onImagesUploaded?: (type: 'project' | 'batch', id: string, replacements: Map<string, string>) => void;
+  /** Sync 状态订阅者；UI 用它显示"未同步：N 项"。 */
+  private onSyncStatusChange?: (status: SyncStatus) => void;
+  private lastError: string | null = null;
+  private lastSyncedAt: number | null = null;
 
   setOnImagesUploaded(cb: (type: 'project' | 'batch', id: string, replacements: Map<string, string>) => void) {
     this.onImagesUploaded = cb;
+  }
+
+  setOnSyncStatusChange(cb: (status: SyncStatus) => void): void {
+    this.onSyncStatusChange = cb;
+    // 初始推一次，UI 可以拿到当前 failed 计数
+    this.emitStatus();
+  }
+
+  private emitStatus(): void {
+    if (!this.onSyncStatusChange) return;
+    const failed = getPendingSyncIds("projects").length + getPendingSyncIds("batch_jobs").length;
+    this.onSyncStatusChange({
+      pending: this.syncQueue.size + this.offlineQueue.length,
+      failed,
+      lastError: this.lastError,
+      lastSyncedAt: this.lastSyncedAt,
+    });
   }
 
   constructor() {
@@ -57,6 +90,8 @@ class SyncService {
     this.syncQueue.clear();
     this.offlineQueue = [];
     this.blobCache.clear();
+    this.lastError = null;
+    this.lastSyncedAt = null;
     this.userId = null;
   }
 
@@ -64,6 +99,16 @@ class SyncService {
     this.reset();
     this.userId = userId;
     this.drainFailedOps();
+    this.emitStatus();
+  }
+
+  /** 给 AppContext 用：拿到当前 user 还有哪些项目/矩阵任务 sync 没成功 */
+  getPendingProjectIds(): string[] {
+    return getPendingSyncIds("projects");
+  }
+
+  getPendingBatchJobIds(): string[] {
+    return getPendingSyncIds("batch_jobs");
   }
 
   /** Per-user localStorage key for failed sync ops */
@@ -184,12 +229,18 @@ class SyncService {
           team_id: project.teamId ?? null,
         }),
       });
+      // 成功了：从待同步注册表里摘掉，让 UI 的"未同步：N 项"自动减
+      removePendingSyncId("projects", project.id);
+      this.emitStatus();
     });
   }
 
   async deleteProject(projectId: string): Promise<void> {
     this.queueSync(`project:${projectId}`, () =>
-      this.fetchJson(`/api/data/projects/${projectId}`, { method: "DELETE" }).then(() => {}),
+      this.fetchJson(`/api/data/projects/${projectId}`, { method: "DELETE" }).then(() => {
+        removePendingSyncId("projects", projectId);
+        this.emitStatus();
+      }),
     );
   }
 
@@ -238,12 +289,17 @@ class SyncService {
           deleted_at: job.deletedAt ?? null,
         }),
       });
+      removePendingSyncId("batch_jobs", job.id);
+      this.emitStatus();
     });
   }
 
   async deleteBatchJob(jobId: string): Promise<void> {
     this.queueSync(`batchjob:${jobId}`, () =>
-      this.fetchJson(`/api/data/batch-jobs/${jobId}`, { method: "DELETE" }).then(() => {}),
+      this.fetchJson(`/api/data/batch-jobs/${jobId}`, { method: "DELETE" }).then(() => {
+        removePendingSyncId("batch_jobs", jobId);
+        this.emitStatus();
+      }),
     );
   }
 
@@ -815,9 +871,11 @@ class SyncService {
         this.offlineQueue.shift(); // Drop oldest
       }
       this.offlineQueue.push(fn);
+      this.emitStatus();
       return;
     }
     this.syncQueue.set(key, fn);
+    this.emitStatus();
     if (this.flushTimer !== null) {
       clearTimeout(this.flushTimer);
     }
@@ -827,32 +885,53 @@ class SyncService {
     }, 500);
   }
 
+  /** key 形如 "project:abc-123" / "batchjob:xyz" → 拆出 kind + id */
+  private parseSyncKey(key: string): { kind: "projects" | "batch_jobs"; id: string } | null {
+    if (key.startsWith("project:")) return { kind: "projects", id: key.slice("project:".length) };
+    if (key.startsWith("batchjob:")) return { kind: "batch_jobs", id: key.slice("batchjob:".length) };
+    return null;
+  }
+
   private async flushSyncQueue(): Promise<void> {
     const entries = Array.from(this.syncQueue.entries());
     this.syncQueue.clear();
     for (const [key, fn] of entries) {
       try {
         await this.withRetry(fn);
+        this.lastSyncedAt = Date.now();
+        this.lastError = null;
       } catch (e: any) {
+        const msg = e instanceof Error ? e.message : String(e);
         console.error(`[Sync] failed to sync ${key}:`, e);
+        this.lastError = msg;
         // Persist non-4xx failures to localStorage for later retry
         if (!(e && typeof e.status === "number" && e.status >= 400 && e.status < 500)) {
           this.persistFailedOp(key);
+          // 同时把 project/batchJob id 写入 per-user 待同步注册表，
+          // 下次 bootstrap 完成时会从最新 React state 找到对应实体重新发送
+          const parsed = this.parseSyncKey(key);
+          if (parsed) addPendingSyncId(parsed.kind, parsed.id);
         }
       }
     }
+    this.emitStatus();
   }
 
   private async drainOfflineQueue(): Promise<void> {
     const queue = [...this.offlineQueue];
     this.offlineQueue = [];
+    this.emitStatus();
     for (const fn of queue) {
       try {
         await this.withRetry(fn);
+        this.lastSyncedAt = Date.now();
+        this.lastError = null;
       } catch (e) {
         console.error("[Sync] offline queue drain failed:", e);
+        this.lastError = e instanceof Error ? e.message : String(e);
       }
     }
+    this.emitStatus();
   }
 
   // ——— Failed ops persistence ———

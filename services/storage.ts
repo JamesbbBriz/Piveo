@@ -10,6 +10,11 @@ const PRODUCTS_KEY = "nanobanana_products_v1";
 const PROJECTS_KEY = "nanobanana_projects_v1";
 const MIGRATION_DONE_KEY = "nanobanana_project_migration_done";
 const CURRENT_SESSION_ID_KEY_PREFIX = "nanobanana_current_session_id";
+// per-user 同步备份：beforeunload/pagehide 同步落盘的最后一道防线，bootstrap 在 IDB 为空时优先读取这里
+const EMERGENCY_BACKUP_PREFIX = "nanobanana_emergency_backup";
+// per-user 待同步项目 ID 列表：sync 重试耗尽后写入，下次 bootstrap 重新提交
+const PENDING_SYNC_PROJECTS_PREFIX = "nanobanana_pending_sync_projects";
+const PENDING_SYNC_BATCH_JOBS_PREFIX = "nanobanana_pending_sync_batch_jobs";
 
 const DB_NAME_PREFIX = "nanobanana_persistence_v2";
 const DB_VERSION = 1;
@@ -326,6 +331,126 @@ const writeSessionsBackupSync = (sessions: Session[]) => {
 
 export const backupSessionsSync = (sessions: Session[]) => {
   writeSessionsBackupSync(sessions);
+};
+
+// ——— 同步紧急备份（per-user）———
+// beforeunload / pagehide 时同步落盘，async 的 IDB 写在浏览器关闭瞬间不保证完成。
+// 这是"刷新前 2 秒生成的图丢"这一类问题的最后一道防线。
+
+const emergencyKey = (kind: "sessions" | "batch_jobs"): string =>
+  storageUserId
+    ? `${EMERGENCY_BACKUP_PREFIX}_${kind}_${storageUserId}`
+    : `${EMERGENCY_BACKUP_PREFIX}_${kind}`;
+
+export const backupSessionsEmergency = (sessions: Session[]): void => {
+  if (!hasWindow()) return;
+  try {
+    const serialized = JSON.stringify(sessions);
+    if (serialized.length > LOCAL_BACKUP_MAX_BYTES) {
+      // 体积超限直接放弃这一项备份，宁可丢也不让 setItem 抛 quota exceeded 拖累整个 unload
+      return;
+    }
+    window.localStorage.setItem(emergencyKey("sessions"), serialized);
+  } catch {
+    // unload 路径上不能再做更多
+  }
+};
+
+export const backupBatchJobsEmergency = (jobs: BatchJob[]): void => {
+  if (!hasWindow()) return;
+  try {
+    const serialized = JSON.stringify(jobs);
+    if (serialized.length > LOCAL_BACKUP_MAX_BYTES) return;
+    window.localStorage.setItem(emergencyKey("batch_jobs"), serialized);
+  } catch {
+    // ignore
+  }
+};
+
+export const loadEmergencySessionsBackup = (): Session[] | null => {
+  if (!hasWindow()) return null;
+  try {
+    const raw = window.localStorage.getItem(emergencyKey("sessions"));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+export const loadEmergencyBatchJobsBackup = (): BatchJob[] | null => {
+  if (!hasWindow()) return null;
+  try {
+    const raw = window.localStorage.getItem(emergencyKey("batch_jobs"));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Bootstrap 成功用上服务器/IDB 数据后清空紧急备份，避免下次启动用陈旧数据覆盖。 */
+export const clearEmergencyBackups = (): void => {
+  if (!hasWindow()) return;
+  try {
+    window.localStorage.removeItem(emergencyKey("sessions"));
+    window.localStorage.removeItem(emergencyKey("batch_jobs"));
+  } catch {
+    // ignore
+  }
+};
+
+// ——— 待同步项目 ID 注册表（per-user）———
+// sync 队列重试耗尽后把 project ID / batch job ID 写到这里。
+// 下次 bootstrap 完成时 / 周期性轮询时，从最新 React state 中找到对应实体重新发送。
+
+const pendingSyncKey = (kind: "projects" | "batch_jobs"): string => {
+  const prefix = kind === "projects" ? PENDING_SYNC_PROJECTS_PREFIX : PENDING_SYNC_BATCH_JOBS_PREFIX;
+  return storageUserId ? `${prefix}_${storageUserId}` : prefix;
+};
+
+const readPendingSet = (kind: "projects" | "batch_jobs"): Set<string> => {
+  if (!hasWindow()) return new Set();
+  try {
+    const raw = window.localStorage.getItem(pendingSyncKey(kind));
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr.filter((v) => typeof v === "string") : []);
+  } catch {
+    return new Set();
+  }
+};
+
+const writePendingSet = (kind: "projects" | "batch_jobs", set: Set<string>): void => {
+  if (!hasWindow()) return;
+  try {
+    if (set.size === 0) {
+      window.localStorage.removeItem(pendingSyncKey(kind));
+    } else {
+      window.localStorage.setItem(pendingSyncKey(kind), JSON.stringify(Array.from(set)));
+    }
+  } catch {
+    // ignore
+  }
+};
+
+export const addPendingSyncId = (kind: "projects" | "batch_jobs", id: string): void => {
+  const set = readPendingSet(kind);
+  set.add(id);
+  writePendingSet(kind, set);
+};
+
+export const removePendingSyncId = (kind: "projects" | "batch_jobs", id: string): void => {
+  const set = readPendingSet(kind);
+  if (set.delete(id)) {
+    writePendingSet(kind, set);
+  }
+};
+
+export const getPendingSyncIds = (kind: "projects" | "batch_jobs"): string[] => {
+  return Array.from(readPendingSet(kind));
 };
 
 export const saveSessions = async (sessions: Session[]): Promise<void> => {
