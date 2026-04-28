@@ -133,22 +133,51 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                       />
                     )}
 
+                    {/* P0-#1：永久可见的"下载 + 更多"chip。原 hover-only overlay 让新用户和触控用户
+                        完全看不到操作存在；这里在右下角放一个始终可见的入口，带文字标签自描述。 */}
+                    {!failedImages.has(part.imageUrl) && (
+                      <div className="absolute bottom-2 right-2 flex gap-1.5 pointer-events-none">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            downloadImage(part.imageUrl!, part.meta?.id);
+                          }}
+                          className="pointer-events-auto bg-white/95 hover:bg-white text-dark-900 px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 shadow-lg backdrop-blur-sm transition-colors"
+                          title="下载"
+                        >
+                          <Icon name="download" />
+                          <span>下载</span>
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowActionsIdx(showActionsIdx === idx ? null : idx);
+                          }}
+                          className="pointer-events-auto bg-dark-900/85 hover:bg-dark-800 text-white px-3 py-1.5 rounded-full text-xs font-medium flex items-center gap-1.5 shadow-lg backdrop-blur-sm transition-colors"
+                          title="更多操作"
+                        >
+                          <Icon name="ellipsis-h" />
+                          <span>更多</span>
+                        </button>
+                      </div>
+                    )}
+
                     {/* Hover + Click Toggle Actions —— 图片加载失败时隐藏，避免在失败 UI 上叠 hover 操作面板 */}
                     {!failedImages.has(part.imageUrl) && (
                     <div className={`absolute inset-0 bg-black/40 transition-opacity flex flex-col items-center justify-center gap-3 ${showActionsIdx === idx ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto'}`}>
-                      
-                      {/* Standard Actions */}
-                      <div className="pointer-events-auto flex gap-3">
-                        <button 
+
+                      {/* P1-#7：触控目标 p-2 → p-3（≥44px 满足 iOS HIG），gap-3 → gap-4 防误触 */}
+                      <div className="pointer-events-auto flex gap-4 flex-wrap justify-center">
+                        <button
                           onClick={() => downloadImage(part.imageUrl!, part.meta?.id)}
-                          className="bg-white text-dark-900 p-2 rounded-full hover:bg-banana-400 transition-colors shadow-lg"
+                          className="bg-white text-dark-900 p-3 rounded-full hover:bg-banana-400 transition-colors shadow-lg"
                           title="下载"
                         >
                           <Icon name="download" />
                         </button>
-                        <button 
+                        <button
                           onClick={() => onPreviewImage(part.imageUrl!)}
-                          className="bg-dark-800 text-white p-2 rounded-full hover:bg-dark-600 transition-colors shadow-lg"
+                          className="bg-dark-800 text-white p-3 rounded-full hover:bg-dark-600 transition-colors shadow-lg"
                           title="查看原图"
                         >
                            <Icon name="expand" />
@@ -156,7 +185,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                         {!isUser && onMaskEdit && (
                           <button
                             onClick={() => onMaskEdit(part.imageUrl!)}
-                            className="bg-dark-800 text-white p-2 rounded-full hover:bg-dark-600 transition-colors shadow-lg"
+                            className="bg-dark-800 text-white p-3 rounded-full hover:bg-dark-600 transition-colors shadow-lg"
                             title="局部编辑（遮罩）"
                           >
                             <Icon name="paint-brush" />
@@ -165,7 +194,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                         {!isUser && onUseAsReference && (
                           <button
                             onClick={() => onUseAsReference(part.imageUrl!)}
-                            className="bg-dark-800 text-white p-2 rounded-full hover:bg-dark-600 transition-colors shadow-lg"
+                            className="bg-dark-800 text-white p-3 rounded-full hover:bg-dark-600 transition-colors shadow-lg"
                             title="设为参考图"
                           >
                             <Icon name="image" />
@@ -174,7 +203,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                         {!isUser && onBatchFromImage && (
                           <button
                             onClick={() => onBatchFromImage(part.imageUrl!)}
-                            className="bg-dark-800 text-white p-2 rounded-full hover:bg-dark-600 transition-colors shadow-lg"
+                            className="bg-dark-800 text-white p-3 rounded-full hover:bg-dark-600 transition-colors shadow-lg"
                             title="生成矩阵"
                           >
                             <Icon name="layer-group" />
@@ -183,7 +212,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                         {!isUser && onRefine && (
                           <button
                             onClick={() => onRefine(part.imageUrl!)}
-                            className="bg-cyan-500/80 text-dark-900 p-2 rounded-full hover:bg-cyan-400 transition-colors shadow-lg"
+                            className="bg-cyan-500/80 text-dark-900 p-3 rounded-full hover:bg-cyan-400 transition-colors shadow-lg"
                             title="迭代"
                           >
                             <Icon name="wand-magic-sparkles" />
@@ -191,21 +220,21 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                         )}
                       </div>
 
-                      {/* AI Variations (Only for model generated images) */}
+                      {/* AI Variations (Only for model generated images) — P1-#9: 10px → 12px (text-xs) */}
                       {!isUser && (
                          <div className="pointer-events-auto flex flex-col items-center gap-2 bg-dark-900/90 p-2 rounded-xl border border-dark-600 backdrop-blur-sm mt-2 transform translate-y-4 group-hover:translate-y-0 transition-all">
                             <div className="flex items-center gap-2">
-                                <span className="text-[10px] text-gray-400 px-1 font-bold tracking-wider">角度</span>
-                                <button onClick={() => onVariation("远景", part.imageUrl!)} className="text-[10px] text-white hover:text-banana-400 px-2 py-1 rounded hover:bg-dark-700">远景</button>
-                                <button onClick={() => onVariation("特写", part.imageUrl!)} className="text-[10px] text-white hover:text-banana-400 px-2 py-1 rounded hover:bg-dark-700">特写</button>
+                                <span className="text-xs text-gray-400 px-1 font-bold tracking-wider">角度</span>
+                                <button onClick={() => onVariation("远景", part.imageUrl!)} className="text-xs text-white hover:text-banana-400 px-2.5 py-1.5 rounded hover:bg-dark-700">远景</button>
+                                <button onClick={() => onVariation("特写", part.imageUrl!)} className="text-xs text-white hover:text-banana-400 px-2.5 py-1.5 rounded hover:bg-dark-700">特写</button>
                             </div>
                             <div className="h-px w-full bg-dark-600"></div>
                             <div className="flex items-center gap-2">
-                                <span className="text-[10px] text-gray-400 px-1 font-bold tracking-wider">产品</span>
-                                <button onClick={() => onVariation("缩小产品", part.imageUrl!)} className="text-[10px] text-banana-400 hover:text-banana-300 px-2 py-1 rounded hover:bg-dark-700 flex items-center gap-1">
+                                <span className="text-xs text-gray-400 px-1 font-bold tracking-wider">产品</span>
+                                <button onClick={() => onVariation("缩小产品", part.imageUrl!)} className="text-xs text-banana-400 hover:text-banana-300 px-2.5 py-1.5 rounded hover:bg-dark-700 flex items-center gap-1">
                                     <Icon name="compress-arrows-alt" /> 缩小
                                 </button>
-                                <button onClick={() => onVariation("放大产品", part.imageUrl!)} className="text-[10px] text-banana-400 hover:text-banana-300 px-2 py-1 rounded hover:bg-dark-700 flex items-center gap-1">
+                                <button onClick={() => onVariation("放大产品", part.imageUrl!)} className="text-xs text-banana-400 hover:text-banana-300 px-2.5 py-1.5 rounded hover:bg-dark-700 flex items-center gap-1">
                                     <Icon name="expand-arrows-alt" /> 放大
                                 </button>
                             </div>

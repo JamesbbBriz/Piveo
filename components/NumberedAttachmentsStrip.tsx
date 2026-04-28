@@ -102,13 +102,15 @@ export const NumberedAttachmentsStrip: React.FC<NumberedAttachmentsStripProps> =
               {displayNum}
             </button>
 
-            {/* 右上角删除按钮：hover 时显现，避免误点 */}
+            {/* 右上角删除按钮：hover 时显现避免桌面端误点；触控设备无 hover，永久显示。
+                P1-#14：之前 opacity-0 group-hover:opacity-100 让 iPad 用户根本删不掉附件，
+                因为 thumbnail 的点击被 onInsertRef 占用了，没法触发 hover。 */}
             <button
               type="button"
               onClick={() => onRemove(att.id)}
               title="移除此参考图"
               aria-label={`移除参考图 ${displayNum}`}
-              className="absolute top-1 right-1 w-4 h-4 rounded-full bg-red-500 text-white flex items-center justify-center text-[9px] leading-none shadow-sm opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity hover:bg-red-600"
+              className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center text-[10px] leading-none shadow-sm md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 transition-opacity hover:bg-red-600"
             >
               <Icon name="times" />
             </button>
