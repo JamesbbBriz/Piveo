@@ -1130,7 +1130,11 @@ const AppInner: React.FC = () => {
         }
         break;
       case 'delete':
-        if (window.confirm('确定要删除这张图片吗？')) {
+      case 'delete-bulk': {
+        // 'delete-bulk' 由 ImageGallery 多选工具栏触发——它已经统一 confirm 过一次，
+        // 这里跳过单图 confirm 避免每张都弹一遍。
+        const skipConfirm = action === 'delete-bulk';
+        if (skipConfirm || window.confirm('确定要删除这张图片吗？')) {
           if (image.source === 'batch' && image.jobId && image.slotId) {
             // Remove the version from batch slot
             updateBatchJobById(image.jobId, (job) => ({
@@ -1163,6 +1167,7 @@ const AppInner: React.FC = () => {
           }
         }
         break;
+      }
       case 'deselect':
         setSelectedGalleryImageId(null);
         break;
@@ -1564,7 +1569,13 @@ const AppInner: React.FC = () => {
       const errorMessage: Message = {
         id: uuidv4(),
         role: 'model',
-        parts: [{ type: 'text', text: friendly }],
+        parts: [{
+          type: 'text',
+          text: friendly,
+          // 标记成"失败消息"，ChatMessage 据此渲染红色错误卡片 + 重试按钮，
+          // 不再让用户从底部 errorDetails 状态条里去找重试入口
+          meta: { isError: true, retryPrompt: prompt },
+        }],
         timestamp: Date.now()
       };
       updatedMessages = [...updatedMessages, errorMessage];
@@ -2883,20 +2894,23 @@ const AppInner: React.FC = () => {
                   </div>
                 </div>
               )}
-              {queueStatusText && <div className="text-[11px] text-[var(--piveo-body)]">{queueStatusText}</div>}
-              {generationStage && (
-                <div className="text-[11px] text-[var(--piveo-accent)]">
-                  {generationStage}
-                  {generationProgress ? ` (${generationProgress.current}/${generationProgress.total})` : ''}
-                </div>
-              )}
-              {/* ③ 同步状态条：未同步项数量 + 失败项重试入口；都为 0 时不渲染，不打扰用户 */}
-              {(syncStatus.pending > 0 || syncStatus.failed > 0) && (
-                <div className="flex items-center gap-2 text-[11px]">
+              {/* P2-#22：把 queue / generation / sync 合并到一行 chip 列表，减少 5 行堆叠的视觉噪音 */}
+              {(queueStatusText || generationStage || syncStatus.pending > 0 || syncStatus.failed > 0) && (
+                <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-[11px]">
+                  {generationStage && (
+                    <span className="inline-flex items-center gap-1 text-[var(--piveo-accent)]">
+                      <Icon name="bolt" />
+                      {generationStage}
+                      {generationProgress ? ` (${generationProgress.current}/${generationProgress.total})` : ''}
+                    </span>
+                  )}
+                  {queueStatusText && (
+                    <span className="text-[var(--piveo-body)]">{queueStatusText}</span>
+                  )}
                   {syncStatus.pending > 0 && (
                     <span className="text-[var(--piveo-muted)] inline-flex items-center gap-1">
                       <Icon name="cloud-upload-alt fa-pulse" />
-                      正在同步 {syncStatus.pending} 项到服务器
+                      正在同步 {syncStatus.pending} 项
                     </span>
                   )}
                   {syncStatus.failed > 0 && (
@@ -2905,15 +2919,15 @@ const AppInner: React.FC = () => {
                       title={syncStatus.lastError || undefined}
                     >
                       <Icon name="exclamation-circle" />
-                      有 {syncStatus.failed} 项尚未同步到服务器（已自动后台重试）
+                      有 {syncStatus.failed} 项尚未同步（自动重试中）
                     </span>
                   )}
                 </div>
               )}
               {errorDetails && (
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-[11px] text-red-600 truncate">{errorDetails.message}</div>
-                  <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center justify-between gap-3 mt-1.5 pt-1.5 border-t border-[var(--piveo-border)]">
+                  <div className="text-[11px] text-red-600 truncate" title={errorDetails.message}>{errorDetails.message}</div>
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
                       onClick={() => void retryLastGeneration()}
@@ -2922,6 +2936,22 @@ const AppInner: React.FC = () => {
                     >
                       重试
                     </button>
+                    {/* P0-#3：把上一次失败的 prompt 回填到输入框，让用户改完再重试 */}
+                    {lastRunRef.current?.prompt && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const p = lastRunRef.current?.prompt;
+                          if (!p) return;
+                          uiDispatch({ type: SET_INPUT_TEXT, payload: p });
+                          uiDispatch({ type: SET_ERROR_DETAILS, payload: null });
+                        }}
+                        disabled={isGenerating}
+                        className="px-2 py-1 text-[10px] rounded border border-[var(--piveo-border)] text-[var(--piveo-text)] bg-white hover:bg-[#EEF2F6] disabled:opacity-50"
+                      >
+                        编辑提示词重试
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={cancelGeneration}

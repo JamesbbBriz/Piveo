@@ -69,6 +69,10 @@ export interface MessagePartMeta {
   responseFormat?: ImageResponseFormat;
   parentImageUrl?: string;
   action?: string;
+  // 失败消息标记：UI 据此渲染红色错误卡 + 重试 / 编辑提示词按钮
+  isError?: boolean;
+  /** 失败时保留原始 prompt，用户点"编辑后重试"可一键回填到输入框 */
+  retryPrompt?: string;
 }
 
 export interface MessagePart {
