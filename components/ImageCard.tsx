@@ -57,11 +57,13 @@ export const ImageCard: React.FC<ImageCardProps> = ({
 
   return (
     <div
-      className={`group relative bg-white rounded-xl border overflow-hidden cursor-pointer transition-all duration-200 ${
+      // P2-#21：hover:scale-[1.02] 在 grid 中导致邻居 reflow + 抖动。
+      // 改成 translateY + shadow 既视觉上仍有抬升感、又不影响布局。
+      className={`group relative bg-white rounded-xl border overflow-hidden cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${
         isSelected
           ? 'border-[var(--piveo-accent)] ring-2 ring-[var(--piveo-accent)]/25'
           : 'border-[var(--piveo-border)] hover:border-[var(--piveo-body)]'
-      } hover:scale-[1.02]`}
+      }`}
       onClick={isMultiSelect ? () => onCheck?.(!isChecked) : onClick}
     >
       {/* Multi-select checkbox */}

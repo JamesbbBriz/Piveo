@@ -227,20 +227,39 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
         </div>
       </div>
 
-      {/* Batch progress inline */}
+      {/* Batch progress inline — P1-#15：状态翻译成中文 + 估算 ETA */}
       {hasBatchProgress && (
         <div className="shrink-0 px-4 py-2 border-b border-[var(--piveo-border)] bg-[var(--piveo-card)]">
-          {Object.entries(batchProgress!).map(([key, prog]) => (
-            <div key={key} className="flex items-center gap-2 text-[11px]">
-              <Icon name="spinner" className="fa-spin text-[var(--piveo-accent)]" />
-              <span className="text-[var(--piveo-text)]">
-                正在生成 {prog.current}/{prog.total}
-              </span>
-              <Badge type="pill-color" size="sm" color="warning">
-                {prog.status}
-              </Badge>
-            </div>
-          ))}
+          {(Object.entries(batchProgress!) as Array<[string, { current: number; total: number; status: string }]>).map(([key, prog]) => {
+            const statusLabel = ((): string => {
+              switch (prog.status) {
+                case 'queued': return '排队中';
+                case 'running': return '生成中';
+                case 'paused': return '已暂停';
+                case 'completed': return '已完成';
+                case 'failed': return '失败';
+                default: return prog.status;
+              }
+            })();
+            // ETA：剩余张数 × 单张平均 30s（保守估计），>60s 显示分钟
+            const remaining = Math.max(0, prog.total - prog.current);
+            const etaSec = remaining * 30;
+            const etaText = remaining === 0
+              ? null
+              : etaSec >= 60
+                ? `约 ${Math.ceil(etaSec / 60)} 分钟`
+                : `约 ${etaSec} 秒`;
+            const isActive = prog.status === 'running' || prog.status === 'queued';
+            return (
+              <div key={key} className="flex items-center gap-2 text-[11px]">
+                {isActive && <Icon name="spinner" className="fa-spin text-[var(--piveo-accent)]" />}
+                <span className="text-[var(--piveo-text)]">
+                  {statusLabel} {prog.current}/{prog.total}
+                  {etaText && <span className="text-[var(--piveo-muted)] ml-1">（{etaText}）</span>}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -250,10 +269,30 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
           onboardingProps ? (
             <Onboarding {...onboardingProps} />
           ) : (
-            <div className="flex flex-col items-center justify-center h-full text-[var(--piveo-body)] opacity-70">
-              <Icon name="images" className="text-5xl mb-4" />
-              <p className="text-sm">暂无图片</p>
-              <p className="text-xs mt-1 text-[var(--piveo-muted)]">在下方输入提示词，开始创作</p>
+            // P2-#18：空状态从单调"暂无图片"升级为 3 张可执行的引导卡片
+            <div className="flex flex-col items-center justify-center h-full px-4">
+              <div className="text-center mb-6">
+                <Icon name="images" className="text-4xl text-[var(--piveo-muted)] mb-3" />
+                <h3 className="text-sm font-semibold text-[var(--piveo-text)]">从这里开始</h3>
+                <p className="text-xs mt-1 text-[var(--piveo-muted)]">选一种工作方式，或在下方直接输入提示词</p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-2xl">
+                <div className="p-4 border border-[var(--piveo-border)] rounded-xl bg-white hover:shadow-md transition-shadow text-center">
+                  <Icon name="upload" className="text-2xl text-[var(--piveo-accent)] mb-2" />
+                  <div className="text-xs font-medium text-[var(--piveo-text)] mb-1">上传产品图</div>
+                  <div className="text-[11px] text-[var(--piveo-muted)] leading-snug">把产品放进各种场景与模特图中</div>
+                </div>
+                <div className="p-4 border border-[var(--piveo-border)] rounded-xl bg-white hover:shadow-md transition-shadow text-center">
+                  <Icon name="palette" className="text-2xl text-[var(--piveo-accent)] mb-2" />
+                  <div className="text-xs font-medium text-[var(--piveo-text)] mb-1">导入参考风格</div>
+                  <div className="text-[11px] text-[var(--piveo-muted)] leading-snug">用一张参考图统一整套视觉风格</div>
+                </div>
+                <div className="p-4 border border-[var(--piveo-border)] rounded-xl bg-white hover:shadow-md transition-shadow text-center">
+                  <Icon name="layer-group" className="text-2xl text-[var(--piveo-accent)] mb-2" />
+                  <div className="text-xs font-medium text-[var(--piveo-text)] mb-1">从模板开始</div>
+                  <div className="text-[11px] text-[var(--piveo-muted)] leading-snug">直接套用预设场景批量出图</div>
+                </div>
+              </div>
             </div>
           )
         ) : (
@@ -293,6 +332,25 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
           >
             {!isZipping && <Icon name="file-archive" className="text-[10px]" />}
             下载 ZIP
+          </Button>
+          {/* P0-#5：批量删除——单 confirm 后逐张走原 delete handler，而不是变成另一个"按钮但点了不响应"的死路 */}
+          <Button
+            type="button"
+            size="sm"
+            color="secondary"
+            onClick={() => {
+              if (!window.confirm(`确认删除选中的 ${checkedCount} 张图片？此操作不可撤销。`)) return;
+              const selected = sortedImages.filter((img) => checkedIds.has(img.id));
+              for (const img of selected) {
+                onImageAction(img, 'delete-bulk');
+              }
+              setCheckedIds(new Set());
+              setIsMultiSelect(false);
+            }}
+            className="!text-[11px] !px-3 !py-1.5 whitespace-nowrap !text-red-600 hover:!bg-red-50"
+          >
+            <Icon name="trash" className="text-[10px]" />
+            删除选中
           </Button>
           <Button
             type="button"
