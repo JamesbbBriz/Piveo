@@ -238,9 +238,13 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
         </div>
       )}
 
-      {/* Quick prompts */}
-      {!hasUserMessages && (
-        <div className="px-4 py-2 border-t border-dark-700 flex flex-wrap gap-1.5">
+      {/* Quick prompts —— P2-#19：之前只在首次显示，第一轮发送后就消失。
+          改成常驻可折叠：默认展开，用户可以收起；任何阶段都能点 */}
+      <details className="border-t border-dark-700" open={!hasUserMessages}>
+        <summary className="px-4 py-1.5 text-[11px] text-gray-400 cursor-pointer select-none hover:text-gray-300">
+          常用迭代指令
+        </summary>
+        <div className="px-4 pb-2 flex flex-wrap gap-1.5">
           {REFINE_QUICK_PROMPTS.map((qp) => (
             <button
               key={qp}
@@ -252,7 +256,7 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
             </button>
           ))}
         </div>
-      )}
+      </details>
 
       {/* Input area */}
       <div className="px-4 py-3 border-t border-dark-700 flex gap-2">

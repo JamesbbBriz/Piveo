@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import type { ReferenceIntent } from '../types';
 import { Icon } from './Icon';
 import { Button } from '@/components/base/buttons/button';
@@ -10,6 +10,15 @@ const INTENT_OPTIONS: { value: ReferenceIntent; label: string }[] = [
   { value: 'product', label: '产品外观' },
   { value: 'style', label: '风格氛围' },
   { value: 'composition', label: '构图排版' },
+];
+
+// P1-#10：示例提示词，给新用户一个 starting point。涵盖核心场景。
+const EXAMPLE_PROMPTS: { label: string; prompt: string }[] = [
+  { label: '产品白底图', prompt: '把这张产品图改成纯白背景的电商主图，光线柔和均匀，居中构图，无投影。' },
+  { label: '场景氛围图', prompt: '把这张产品放进现代北欧风客厅场景，自然光从左侧大窗洒入，画面温暖柔和。' },
+  { label: '模特上身', prompt: '让模特身穿这件衣服，街拍风格，城市背景虚化，自然站姿。' },
+  { label: '多图合成', prompt: '用图1的产品 + 图2的背景场景 + 图3的灯光氛围，合成一张品牌主视觉。' },
+  { label: '细节特写', prompt: '聚焦产品细节（材质纹理、缝线、商标），微距镜头，柔光，背景模糊。' },
 ];
 
 interface PromptBarProps {
@@ -52,6 +61,30 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const intentItems = INTENT_OPTIONS;
+  // P1-#10：示例 popover 开关
+  const [examplesOpen, setExamplesOpen] = useState(false);
+  const examplesRef = useRef<HTMLDivElement>(null);
+  // P2-#20：底部提示文案的永久"已看过"标记，写到 localStorage 防止每次刷新又出现
+  const HINT_DISMISSED_KEY = 'piveo_promptbar_hint_dismissed';
+  const [hintDismissed, setHintDismissed] = useState<boolean>(() => {
+    try { return typeof window !== 'undefined' && window.localStorage.getItem(HINT_DISMISSED_KEY) === '1'; }
+    catch { return false; }
+  });
+  const dismissHint = () => {
+    setHintDismissed(true);
+    try { window.localStorage.setItem(HINT_DISMISSED_KEY, '1'); } catch { /* ignore */ }
+  };
+  // 点击 popover 外部时关闭
+  useEffect(() => {
+    if (!examplesOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (examplesRef.current && !examplesRef.current.contains(e.target as Node)) {
+        setExamplesOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [examplesOpen]);
 
   // 在 textarea 光标位置插入 @图N 引用；若拿不到光标则追加到末尾
   const insertAtCursor = (snippet: string) => {
@@ -234,6 +267,46 @@ export const PromptBar: React.FC<PromptBarProps> = ({
             style={{ minHeight: '40px' }}
             disabled={disabled}
           />
+          {/* P1-#10：示例 popover 触发按钮，hover 上去说"看示例"。新用户找不到 @图N 用法
+              和起手 prompt 时，这是最自然的发现路径。 */}
+          <div className="relative" ref={examplesRef}>
+            <Button
+              type="button"
+              color="tertiary"
+              size="sm"
+              onClick={() => setExamplesOpen((v) => !v)}
+              className="!p-2.5 !text-[var(--piveo-body)] hover:!text-[var(--piveo-text)]"
+              aria-label="提示词示例"
+              title="提示词示例"
+            >
+              <Icon name="lightbulb" />
+            </Button>
+            {examplesOpen && (
+              <div className="absolute bottom-full mb-2 right-0 z-30 w-72 bg-white border border-[var(--piveo-border)] rounded-xl shadow-xl p-2">
+                <div className="px-2 py-1.5 text-[11px] text-[var(--piveo-muted)] font-medium">
+                  常用提示词模板（点击填入）
+                </div>
+                {EXAMPLE_PROMPTS.map((ex) => (
+                  <button
+                    key={ex.label}
+                    type="button"
+                    onClick={() => {
+                      onInputChange(ex.prompt);
+                      setExamplesOpen(false);
+                      textareaRef.current?.focus();
+                    }}
+                    className="w-full text-left px-2 py-2 rounded-lg hover:bg-[#EEF2F6] transition-colors"
+                  >
+                    <div className="text-xs font-medium text-[var(--piveo-text)]">{ex.label}</div>
+                    <div className="text-[11px] text-[var(--piveo-muted)] mt-0.5 line-clamp-2">{ex.prompt}</div>
+                  </button>
+                ))}
+                <div className="px-2 py-1.5 text-[10px] text-[var(--piveo-muted)] border-t border-[var(--piveo-border)] mt-1">
+                  小技巧：上传多张参考图后，可在提示词中写 <code className="bg-[#EEF2F6] px-1 rounded">@图1</code> <code className="bg-[#EEF2F6] px-1 rounded">@图2</code> 引用对应图片
+                </div>
+              </div>
+            )}
+          </div>
           <Button
             type="button"
             color="tertiary"
@@ -274,9 +347,21 @@ export const PromptBar: React.FC<PromptBarProps> = ({
           )}
         </div>
 
-        <div className="text-[10px] text-[var(--piveo-muted)]">
-          回车发送，Shift+回车换行。支持粘贴图片。
-        </div>
+        {/* P2-#20：提示文案永久显示是噪音，看过一次就够了；可关闭并永久记忆 */}
+        {!hintDismissed && (
+          <div className="text-[10px] text-[var(--piveo-muted)] flex items-center justify-between">
+            <span>回车发送，Shift+回车换行。支持粘贴图片。</span>
+            <button
+              type="button"
+              onClick={dismissHint}
+              className="text-[var(--piveo-muted)] hover:text-[var(--piveo-text)] ml-2"
+              aria-label="关闭提示"
+              title="不再显示"
+            >
+              <Icon name="times" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
