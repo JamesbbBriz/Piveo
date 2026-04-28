@@ -14,6 +14,10 @@ export const SET_CURRENT_SESSION_ID = 'SET_CURRENT_SESSION_ID';
 
 // Lazy loading: load session messages on demand
 export const LOAD_SESSION_MESSAGES = 'LOAD_SESSION_MESSAGES';
+// Lazy-load failure surface: store last error message per session so UI can show a banner + retry
+export const SET_SESSION_MESSAGES_LOAD_ERROR = 'SET_SESSION_MESSAGES_LOAD_ERROR';
+// Retry counter per session — bumping it re-runs the lazy-load effect (deps include this counter)
+export const RETRY_LOAD_SESSION_MESSAGES = 'RETRY_LOAD_SESSION_MESSAGES';
 
 // Image URL writeback actions (performance: replace data URLs with blob URLs in local state)
 export const REPLACE_IMAGE_URLS = 'REPLACE_IMAGE_URLS';

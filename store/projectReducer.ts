@@ -12,6 +12,8 @@ import {
   SET_CURRENT_PROJECT_ID,
   REPLACE_IMAGE_URLS,
   LOAD_SESSION_MESSAGES,
+  SET_SESSION_MESSAGES_LOAD_ERROR,
+  RETRY_LOAD_SESSION_MESSAGES,
 } from './actions';
 
 export interface ProjectState {
@@ -19,6 +21,10 @@ export interface ProjectState {
   currentSessionId: string | null;
   projects: Project[];
   currentProjectId: string | null;
+  /** Per-session lazy-load failure messages — drives the "重新加载" 错误条 in chat view. */
+  messageLoadErrors: Record<string, string>;
+  /** Per-session retry counter — bumping it re-runs the lazy-load effect (used as effect dep). */
+  messageLoadAttempts: Record<string, number>;
 }
 
 export const projectInitialState: ProjectState = {
@@ -26,6 +32,8 @@ export const projectInitialState: ProjectState = {
   currentSessionId: null,
   projects: [],
   currentProjectId: null,
+  messageLoadErrors: {},
+  messageLoadAttempts: {},
 };
 
 export type ProjectAction =
@@ -40,7 +48,9 @@ export type ProjectAction =
   | { type: typeof DELETE_PROJECT; payload: string }
   | { type: typeof SET_CURRENT_PROJECT_ID; payload: string | null }
   | { type: typeof REPLACE_IMAGE_URLS; payload: { sessionId: string; replacements: Map<string, string> } }
-  | { type: typeof LOAD_SESSION_MESSAGES; payload: { sessionId: string; messages: any[] } };
+  | { type: typeof LOAD_SESSION_MESSAGES; payload: { sessionId: string; messages: any[] } }
+  | { type: typeof SET_SESSION_MESSAGES_LOAD_ERROR; payload: { sessionId: string; error: string | null } }
+  | { type: typeof RETRY_LOAD_SESSION_MESSAGES; payload: { sessionId: string } };
 
 export function projectReducer(state: ProjectState, action: ProjectAction): ProjectState {
   switch (action.type) {
@@ -90,14 +100,46 @@ export function projectReducer(state: ProjectState, action: ProjectAction): Proj
     case SET_CURRENT_PROJECT_ID:
       return { ...state, currentProjectId: action.payload };
 
-    case LOAD_SESSION_MESSAGES:
+    case LOAD_SESSION_MESSAGES: {
+      const { sessionId } = action.payload;
+      // 加载成功，顺手清掉之前可能残留的错误，避免错误条还卡在那
+      const { [sessionId]: _dropped, ...remainingErrors } = state.messageLoadErrors;
       return {
         ...state,
         sessions: state.sessions.map((s) => {
-          if (s.id !== action.payload.sessionId) return s;
+          if (s.id !== sessionId) return s;
           return { ...s, messages: action.payload.messages, messagesLoaded: true };
         }),
+        messageLoadErrors: remainingErrors,
       };
+    }
+
+    case SET_SESSION_MESSAGES_LOAD_ERROR: {
+      const { sessionId, error } = action.payload;
+      if (error == null) {
+        if (!(sessionId in state.messageLoadErrors)) return state;
+        const { [sessionId]: _dropped, ...rest } = state.messageLoadErrors;
+        return { ...state, messageLoadErrors: rest };
+      }
+      return {
+        ...state,
+        messageLoadErrors: { ...state.messageLoadErrors, [sessionId]: error },
+      };
+    }
+
+    case RETRY_LOAD_SESSION_MESSAGES: {
+      const { sessionId } = action.payload;
+      // 同时清错误并 bump 计数器；effect 依赖 attempts[id] 重新跑
+      const { [sessionId]: _dropped, ...remainingErrors } = state.messageLoadErrors;
+      return {
+        ...state,
+        messageLoadErrors: remainingErrors,
+        messageLoadAttempts: {
+          ...state.messageLoadAttempts,
+          [sessionId]: (state.messageLoadAttempts[sessionId] ?? 0) + 1,
+        },
+      };
+    }
 
     case REPLACE_IMAGE_URLS:
       return {

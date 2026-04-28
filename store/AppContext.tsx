@@ -20,6 +20,8 @@ import {
   saveModels,
   saveProducts,
   setStorageUserId,
+  saveCurrentSessionId,
+  loadCurrentSessionId,
 } from '@/services/storage';
 import { syncService } from '@/services/sync';
 import { getSession as getAuthSession } from '@/services/auth';
@@ -41,6 +43,7 @@ import {
   REPLACE_IMAGE_URLS,
   REPLACE_BATCH_IMAGE_URLS,
   LOAD_SESSION_MESSAGES,
+  SET_SESSION_MESSAGES_LOAD_ERROR,
 } from './actions';
 import type { Session, SessionSettings, BatchJob, BrandKit } from '@/types';
 import { DEFAULT_ASPECT_RATIO, DEFAULT_SYSTEM_TEMPLATES } from '@/constants';
@@ -373,12 +376,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (!cancelled) void tryLoad();
           }, nextDelay);
         } else {
+          const msg = e instanceof Error ? e.message : String(e);
           console.error(
-            `[AppContext] Giving up loading session messages after ${attempt} attempts. Session keeps messagesLoaded=false; user can retry by switching away and back.`,
+            `[AppContext] Giving up loading session messages after ${attempt} attempts. messagesLoaded=false 保留，UI 会显示错误条供用户重试。`,
             e
           );
-          // 故意不 dispatch LOAD_SESSION_MESSAGES：保留 messagesLoaded=false 状态，
-          // 这样 saveProject 的 guard 会继续跳过写入，避免覆盖服务器已有历史。
+          // 上报错误给 UI 渲染错误条；不 dispatch LOAD_SESSION_MESSAGES 避免空数组覆盖。
+          projectDispatch({
+            type: SET_SESSION_MESSAGES_LOAD_ERROR,
+            payload: { sessionId, error: msg || "网络异常，加载会话历史失败" },
+          });
         }
       }
     };
@@ -386,7 +393,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 首次立即触发，后续由失败路径自己 schedule
     void tryLoad();
     return () => { cancelled = true; };
-  }, [project.currentSessionId, ui.authUser]);
+    // 依赖 messageLoadAttempts[sessionId]：用户点"重新加载"时 reducer bump 这个数，
+    // effect 重跑 → 重新拉取。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.currentSessionId, ui.authUser, project.messageLoadAttempts[project.currentSessionId ?? ""]]);
 
   // Bootstrap data after auth — server-first with IndexedDB fallback
   useEffect(() => {
@@ -416,11 +426,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await initPersistentStorage();
       syncService.init(ui.authUser!);
 
+      // 恢复上次刷新前选中的 session id；bootstrap 把它一并传给 pullAll，
+      // 一次往返就能把当前会话的 messages 拿回来，避免首屏空白依赖二次 lazy-load。
+      const restoredSessionId = loadCurrentSessionId();
+
       // Try server-first pull with 5s timeout
       let serverData: Awaited<ReturnType<typeof syncService.pullAll>> | null = null;
       try {
         serverData = await Promise.race([
-          syncService.pullAll(),
+          syncService.pullAll(restoredSessionId),
           new Promise<never>((_, reject) => setTimeout(() => reject(new Error("pullAll timeout")), 5000)),
         ]);
       } catch (err) {
@@ -493,9 +507,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const resolvedDefaultTemplate = mergedTemplates.length > 0 ? mergedTemplates[0].content : defaultTemplate;
         if (serverData.projects.length > 0) {
           const mappedSessions = mapServerProjectsToSessions(serverData.projects, resolvedDefaultTemplate);
-          const normalized = normalizeSessions(mappedSessions, resolvedDefaultTemplate);
+          // 把 pullAll 顺带拉到的活跃会话 messages 就地装填，避免再触发一次 lazy-load。
+          // 只在请求成功（!== null）时覆盖，失败时保持 messagesLoaded=false 让 lazy-load 兜底。
+          let hydratedSessions = mappedSessions;
+          if (restoredSessionId && Array.isArray(serverData.activeSessionMessages)) {
+            const activeMsgs = serverData.activeSessionMessages;
+            hydratedSessions = mappedSessions.map((s) =>
+              s.id === restoredSessionId
+                ? { ...s, messages: activeMsgs, messagesLoaded: true }
+                : s
+            );
+          }
+          const normalized = normalizeSessions(hydratedSessions, resolvedDefaultTemplate);
           projectDispatch({ type: SET_SESSIONS, payload: normalized });
-          projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: normalized[0].id });
+          // 恢复上次选中的 session；如果它已经被删/换号了就退回第一个
+          const initialId = restoredSessionId && normalized.some((s) => s.id === restoredSessionId)
+            ? restoredSessionId
+            : normalized[0].id;
+          projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: initialId });
           prevSessionsRef.current = normalized;
           // Write to IndexedDB as cache
           void saveSessions(normalized);
@@ -505,7 +534,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           if (localSessions.length > 0) {
             const normalized = normalizeSessions(localSessions, resolvedDefaultTemplate);
             projectDispatch({ type: SET_SESSIONS, payload: normalized });
-            projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: normalized[0].id });
+            const initialId = restoredSessionId && normalized.some((s) => s.id === restoredSessionId)
+              ? restoredSessionId
+              : normalized[0].id;
+            projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: initialId });
             prevSessionsRef.current = normalized;
             // Push local data to server
             console.log("[Sync] 服务端无项目数据，推送本地项目到服务端");
@@ -617,7 +649,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           const fallbackDefaultTemplate = resolvedTemplates.length > 0 ? resolvedTemplates[0].content : "";
           const normalized = normalizeSessions(loadedSessions, fallbackDefaultTemplate);
           projectDispatch({ type: SET_SESSIONS, payload: normalized });
-          projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: normalized[0].id });
+          const initialId = restoredSessionId && normalized.some((s) => s.id === restoredSessionId)
+            ? restoredSessionId
+            : normalized[0].id;
+          projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: initialId });
         } else {
           const fallbackDefaultTemplate = resolvedTemplates.length > 0 ? resolvedTemplates[0].content : '';
           const prefs = loadDefaultPreferences();
@@ -669,6 +704,66 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     latestBatchJobsRef.current = batch.batchJobs;
   }, [batch.batchJobs]);
+
+  // 把 currentSessionId 落盘，刷新后 bootstrap 会 loadCurrentSessionId 恢复，
+  // 防止"刷新后被甩到第一个 session、上一刻在编辑的会话像消失了"。
+  // 等 hydration 完成再写，避免 bootstrap 自己 dispatch 时反向覆盖刚恢复的值。
+  useEffect(() => {
+    if (!hasHydratedStorage) return;
+    saveCurrentSessionId(project.currentSessionId);
+  }, [project.currentSessionId, hasHydratedStorage]);
+
+  // 后台预取所有未加载会话的 messages，错开时序，命中速率限制就回退；
+  // 失败的不上报错误条（错误条只为"用户当前会话"服务），仅静默重试一次。
+  // 预期效果：用户切换会话时无需等待 lazy-load 往返。
+  useEffect(() => {
+    if (!hasHydratedStorage || !ui.authUser) return;
+    const unloaded = project.sessions.filter((s) => s.messagesLoaded === false);
+    if (unloaded.length === 0) return;
+
+    let cancelled = false;
+    const idle = (cb: () => void): number => {
+      const w = window as any;
+      if (typeof w.requestIdleCallback === "function") return w.requestIdleCallback(cb, { timeout: 3000 });
+      return window.setTimeout(cb, 200);
+    };
+    const cancelIdle = (handle: number) => {
+      const w = window as any;
+      if (typeof w.cancelIdleCallback === "function") w.cancelIdleCallback(handle);
+      else window.clearTimeout(handle);
+    };
+
+    let idleHandle = 0;
+    const prefetch = async () => {
+      // 串行 + 间隔，避免突刺触发上游 429
+      for (const s of unloaded) {
+        if (cancelled) return;
+        // 用户已经手动切到这个 session 时跳过，让前台 lazy-load 拿主动权（避免双重请求）。
+        if (s.id === project.currentSessionId) continue;
+        try {
+          const messages = await syncService.pullProjectMessages(s.id);
+          if (cancelled) return;
+          projectDispatch({ type: LOAD_SESSION_MESSAGES, payload: { sessionId: s.id, messages } });
+        } catch (e) {
+          // 预取失败不弹错误条，等用户真切到这个 session 时 lazy-load 再试
+          console.warn(`[Prefetch] session ${s.id} 预取失败，跳过：`, e);
+        }
+        // 每个之间停 250ms，给主线程让路
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    };
+
+    idleHandle = idle(() => {
+      void prefetch();
+    });
+
+    return () => {
+      cancelled = true;
+      if (idleHandle) cancelIdle(idleHandle);
+    };
+    // 只在 sessions 列表本身变化时触发；messageLoadAttempts/Errors 的变化不需要重跑预取
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasHydratedStorage, ui.authUser, project.sessions]);
 
   // Debounced session save
   useEffect(() => {

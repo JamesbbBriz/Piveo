@@ -9,6 +9,7 @@ const BATCH_JOBS_KEY = "nanobanana_batch_jobs_v1";
 const PRODUCTS_KEY = "nanobanana_products_v1";
 const PROJECTS_KEY = "nanobanana_projects_v1";
 const MIGRATION_DONE_KEY = "nanobanana_project_migration_done";
+const CURRENT_SESSION_ID_KEY_PREFIX = "nanobanana_current_session_id";
 
 const DB_NAME_PREFIX = "nanobanana_persistence_v2";
 const DB_VERSION = 1;
@@ -32,6 +33,29 @@ export const setStorageUserId = async (userId: string): Promise<void> => {
     resetDbPromise();
   }
   storageUserId = userId;
+};
+
+/** 当前选中的会话 ID 用 localStorage 而不是 IDB 存：体积极小、读写同步、bootstrap 拿到不阻塞。 */
+const currentSessionIdKey = (): string =>
+  storageUserId ? `${CURRENT_SESSION_ID_KEY_PREFIX}_${storageUserId}` : CURRENT_SESSION_ID_KEY_PREFIX;
+
+export const saveCurrentSessionId = (id: string | null): void => {
+  if (!hasWindow()) return;
+  try {
+    if (id) window.localStorage.setItem(currentSessionIdKey(), id);
+    else window.localStorage.removeItem(currentSessionIdKey());
+  } catch (e) {
+    console.warn("[Storage] 写入 currentSessionId 失败：", e);
+  }
+};
+
+export const loadCurrentSessionId = (): string | null => {
+  if (!hasWindow()) return null;
+  try {
+    return window.localStorage.getItem(currentSessionIdKey()) || null;
+  } catch {
+    return null;
+  }
 };
 
 const getDbName = (): string => {

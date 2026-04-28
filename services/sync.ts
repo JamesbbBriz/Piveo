@@ -73,7 +73,7 @@ class SyncService {
 
   // ——— Pull ———
 
-  async pullAll(): Promise<{
+  async pullAll(activeSessionId?: string | null): Promise<{
     projects: any[];
     models: any[];
     products: any[];
@@ -82,8 +82,22 @@ class SyncService {
     teams: any[];
     batchJobs: any[];
     brandKits: any[];
+    /** 当传入 activeSessionId 时，并行拉它的 chat_history_json，省一次首屏往返 */
+    activeSessionMessages?: any[] | null;
   }> {
-    const [projects, models, products, templates, preferences, teams, batchJobs, brandKits] = await Promise.all([
+    // 把活跃会话的 messages 跟列表请求并行拉，首屏就能把当前 session 完整渲染出来，
+    // 不再依赖 lazy-load effect 跑完才显示——一次往返直接到位。
+    // 拿不到也不会让整个 pullAll 失败，单独 try/catch 包住。
+    const activeMessagesPromise: Promise<any[] | null> = activeSessionId
+      ? this.fetchJson<{ chat_history_json: string }>(`/api/data/projects/${activeSessionId}/messages`)
+          .then((r) => {
+            if (!r?.chat_history_json) return [];
+            try { return JSON.parse(r.chat_history_json); } catch { return []; }
+          })
+          .catch(() => null)
+      : Promise.resolve(null);
+
+    const [projects, models, products, templates, preferences, teams, batchJobs, brandKits, activeSessionMessages] = await Promise.all([
       this.fetchJson<{ projects: any[] }>("/api/data/projects").then((r) => r.projects ?? []),
       this.fetchJson<{ models: any[] }>("/api/data/models").then((r) => r.models ?? []),
       this.fetchJson<{ products: any[] }>("/api/data/products").then((r) => r.products ?? []),
@@ -92,8 +106,9 @@ class SyncService {
       this.fetchJson<{ teams: any[] }>("/api/data/teams").then((r) => r.teams ?? []),
       this.fetchJson<{ batchJobs: any[] }>("/api/data/batch-jobs").then((r) => r.batchJobs ?? []),
       this.fetchJson<{ brandKits: any[] }>("/api/data/brand-kits").then((r) => r.brandKits ?? []),
+      activeMessagesPromise,
     ]);
-    return { projects, models, products, templates, preferences, teams, batchJobs, brandKits };
+    return { projects, models, products, templates, preferences, teams, batchJobs, brandKits, activeSessionMessages };
   }
 
   async pullProjectMessages(projectId: string): Promise<any[]> {
