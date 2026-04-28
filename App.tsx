@@ -37,7 +37,7 @@ import { SwapModelModal } from './components/SwapModelModal';
 import { BrandKitPanel } from './components/BrandKitPanel';
 import { BeforeAfterView } from './components/BeforeAfterView';
 import { exportComparison } from './services/comparisonExport';
-import { ToastProvider } from './components/Toast';
+import { ToastProvider, useToast } from './components/Toast';
 const VideoGenerationPage = React.lazy(() => import('./components/video/VideoGenerationPage').then(m => ({ default: m.VideoGenerationPage })));
 import type { GeneratedImage, ImageRating } from './types';
 import {
@@ -314,6 +314,10 @@ const AppInner: React.FC = () => {
   const [refineTarget, setRefineTarget] = useState<{ imageUrl: string; prompt?: string } | null>(null);
   const [swapModelTarget, setSwapModelTarget] = useState<{ imageUrl: string; prompt?: string } | null>(null);
   const [compareState, setCompareState] = useState<{ beforeUrl: string; afterUrl: string } | null>(null);
+
+  const { addToast } = useToast();
+  // 标记一次会话内已经为同一图片来源弹过"暂存失败"提示，避免重复打扰
+  const upgradeFailToastSeenRef = useRef<Set<string>>(new Set());
 
   // ——— Refs ———
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1241,11 +1245,26 @@ const AppInner: React.FC = () => {
   const toPersistentImageUrl = useCallback(async (url: string): Promise<string> => {
     if (!url) return url;
     if (url.startsWith("/api/data/blobs/") || url.startsWith("/api/blobs/")) return url;
+
+    // 上传失败时弹一次警告 toast：用户必须知道这张图当前只在客户端，
+    // 不要清空浏览器缓存或关闭。背后的 sync queue 会继续重试。
+    const warnFallback = (reason: string) => {
+      const key = url.slice(0, 64);
+      if (upgradeFailToastSeenRef.current.has(key)) return;
+      upgradeFailToastSeenRef.current.add(key);
+      addToast({
+        type: "warning",
+        message: "图片暂存到服务器失败，已在后台自动重试。请勿清空浏览器缓存或立即关闭页面。",
+        duration: 8000,
+      });
+      console.warn(`[toPersistentImageUrl] ${reason}`);
+    };
+
     if (/^https?:\/\//i.test(url)) {
       try {
         return await syncService.remoteUrlToBlobUrl(url);
       } catch (e) {
-        console.warn('[toPersistentImageUrl] blob 直传失败，降级 data URL：', e);
+        warnFallback(`remoteUrlToBlobUrl 失败，降级 data URL：${e}`);
         try { return await urlToDataUrl(url); } catch { return url; }
       }
     }
@@ -1255,12 +1274,12 @@ const AppInner: React.FC = () => {
         const result = await syncService.uploadImage(url, m?.[1] || "image/png");
         return result.url;
       } catch (e) {
-        console.warn('[toPersistentImageUrl] data URL 上传 blob 失败，保留 data URL（sync 会重试）：', e);
+        warnFallback(`uploadImage 失败，保留 data URL（sync 会重试）：${e}`);
         return url;
       }
     }
     return url;
-  }, []);
+  }, [addToast]);
 
   const executeGeneration = useCallback(async (
     prompt: string,

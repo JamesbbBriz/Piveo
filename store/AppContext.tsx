@@ -922,10 +922,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   // ③ 订阅 sync 状态，dispatch 给 uiReducer，UI 渲染 "未同步：N 项"
+  // 同时把最新 status 缓存到 ref，beforeunload 拦截要用
+  const latestSyncStatusRef = useRef<SyncStatus>({
+    pending: 0, failed: 0, lastError: null, lastSyncedAt: null, quotaExceeded: false,
+  });
   useEffect(() => {
     syncService.setOnSyncStatusChange((status: SyncStatus) => {
+      latestSyncStatusRef.current = status;
       uiDispatch({ type: SET_SYNC_STATUS, payload: status });
     });
+  }, []);
+
+  // Option F：当还有未同步内容时，beforeunload 弹浏览器原生确认对话框，
+  // 让用户主动选择是否离开，避免"误关 tab → 数据进 emergency backup → 下次清缓存才发现丢"。
+  // 检测条件：syncQueue 有 pending、有 failed 残留、或 debounce timer 还没 flush（最致命的场景）。
+  useEffect(() => {
+    const guardUnload = (e: BeforeUnloadEvent) => {
+      const status = latestSyncStatusRef.current;
+      const hasDebounceLag =
+        pendingSessionsRef.current !== null || pendingBatchJobsRef.current !== null;
+      if (status.pending > 0 || status.failed > 0 || hasDebounceLag) {
+        // 现代浏览器已经忽略自定义文案，只显示通用 "Leave site?" 弹窗——
+        // 但 returnValue 必须设为非空字符串才会触发对话框。
+        e.preventDefault();
+        e.returnValue = "有内容尚未保存到服务器，确认离开吗？";
+        return e.returnValue;
+      }
+      return undefined;
+    };
+    window.addEventListener("beforeunload", guardUnload);
+    return () => window.removeEventListener("beforeunload", guardUnload);
   }, []);
 
   // ⑤ 把 storage 的 QuotaExceededError 接到 syncStatus.quotaExceeded → 红条提示用户清理
