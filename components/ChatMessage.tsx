@@ -30,6 +30,24 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
   const [showActionsIdx, setShowActionsIdx] = React.useState<number | null>(null);
   const [downloadOptions, setDownloadOptions] = React.useState(loadDownloadOptions);
   const [pendingDownload, setPendingDownload] = React.useState<{ url: string; basename: string } | null>(null);
+  // ⑦ blob 加载失败追踪：失败 URL → 重试计数（用作 <img key> 强制重渲）
+  const [failedImages, setFailedImages] = React.useState<Set<string>>(new Set());
+  const markFailed = React.useCallback((url: string) => {
+    setFailedImages((prev) => {
+      if (prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.add(url);
+      return next;
+    });
+  }, []);
+  const retryImage = React.useCallback((url: string) => {
+    setFailedImages((prev) => {
+      if (!prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.delete(url); // 清除失败标记，img 重新渲染会再 fetch
+      return next;
+    });
+  }, []);
   const { addToast } = useToast();
 
   const downloadImage = (imageUrl: string, imageId?: string) => {
@@ -80,20 +98,43 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                 )}
                 {part.type === 'image' && part.imageUrl && (
                   <div className="relative group mt-2 rounded-lg overflow-hidden border border-dark-600 bg-black/20">
-                    <img
-                      src={part.imageUrl}
-                      alt="图片"
-                      onClick={(e) => {
-                        // 点击图片 toggle 操作按钮（触控可达），桌面端同时保留 hover
-                        e.stopPropagation();
-                        setShowActionsIdx(showActionsIdx === idx ? null : idx);
-                      }}
-                      loading="lazy"
-                      decoding="async"
-                      className="max-w-full h-auto max-h-[400px] object-contain block cursor-pointer"
-                    />
+                    {failedImages.has(part.imageUrl) ? (
+                      // ⑦ 图片加载失败回退：直观告诉用户"加载失败可以重试"，
+                      // 而不是显示成黑/破图让用户以为数据丢了。多数情况是上游 blob
+                      // 接口瞬时抖动，重试就能恢复。
+                      <div className="flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+                        <Icon name="exclamation-triangle" className="text-amber-500 text-xl" />
+                        <div className="text-xs text-gray-400">图片资源暂时无法加载</div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            retryImage(part.imageUrl!);
+                          }}
+                          className="mt-1 px-3 py-1 text-[11px] rounded border border-gray-500 text-gray-200 hover:bg-gray-700/40"
+                        >
+                          <Icon name="redo" className="mr-1" />
+                          重试
+                        </button>
+                      </div>
+                    ) : (
+                      <img
+                        src={part.imageUrl}
+                        alt="图片"
+                        onError={() => markFailed(part.imageUrl!)}
+                        onClick={(e) => {
+                          // 点击图片 toggle 操作按钮（触控可达），桌面端同时保留 hover
+                          e.stopPropagation();
+                          setShowActionsIdx(showActionsIdx === idx ? null : idx);
+                        }}
+                        loading="lazy"
+                        decoding="async"
+                        className="max-w-full h-auto max-h-[400px] object-contain block cursor-pointer"
+                      />
+                    )}
 
-                    {/* Hover + Click Toggle Actions */}
+                    {/* Hover + Click Toggle Actions —— 图片加载失败时隐藏，避免在失败 UI 上叠 hover 操作面板 */}
+                    {!failedImages.has(part.imageUrl) && (
                     <div className={`absolute inset-0 bg-black/40 transition-opacity flex flex-col items-center justify-center gap-3 ${showActionsIdx === idx ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto'}`}>
                       
                       {/* Standard Actions */}
@@ -172,6 +213,7 @@ const ChatMessageInner: React.FC<ChatMessageProps> = ({
                       )}
 
                     </div>
+                    )}
 
                     {!isUser && part.meta && (
                       <div className="px-3 py-2 bg-dark-900/70 border-t border-dark-700 flex flex-wrap gap-2 text-[10px] text-gray-400">

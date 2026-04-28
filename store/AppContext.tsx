@@ -27,6 +27,7 @@ import {
   loadEmergencySessionsBackup,
   loadEmergencyBatchJobsBackup,
   clearEmergencyBackups,
+  setOnStorageQuotaExceeded,
 } from '@/services/storage';
 import { syncService, type SyncStatus } from '@/services/sync';
 import { getSession as getAuthSession } from '@/services/auth';
@@ -256,7 +257,7 @@ const uiInitialState: UIState = {
   authReady: false,
   authLoading: false,
   isSuperAdmin: false,
-  syncStatus: { pending: 0, failed: 0, lastError: null, lastSyncedAt: null },
+  syncStatus: { pending: 0, failed: 0, lastError: null, lastSyncedAt: null, quotaExceeded: false },
 };
 
 // ——— Split Contexts (one per reducer + hydration) ———
@@ -924,6 +925,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     syncService.setOnSyncStatusChange((status: SyncStatus) => {
       uiDispatch({ type: SET_SYNC_STATUS, payload: status });
+    });
+  }, []);
+
+  // ⑤ 把 storage 的 QuotaExceededError 接到 syncStatus.quotaExceeded → 红条提示用户清理
+  useEffect(() => {
+    setOnStorageQuotaExceeded(() => {
+      syncService.markQuotaExceeded();
+    });
+    return () => setOnStorageQuotaExceeded(null);
+  }, []);
+
+  // ⑥ 多 tab 防覆盖：另一个 tab 保存了同 session 时收到广播，
+  // 立即从服务器 refetch messages，让本 tab 拿到最新版，再编辑就不会覆盖。
+  useEffect(() => {
+    syncService.setOnRemoteProjectChanged(async (sessionId: string) => {
+      const exists = latestSessionsRef.current.some((s) => s.id === sessionId);
+      if (!exists) return;
+      try {
+        const messages = await syncService.pullProjectMessages(sessionId);
+        projectDispatch({ type: LOAD_SESSION_MESSAGES, payload: { sessionId, messages } });
+      } catch (e) {
+        console.warn(`[Multi-tab] refetch session ${sessionId} 失败：`, e);
+      }
     });
   }, []);
 

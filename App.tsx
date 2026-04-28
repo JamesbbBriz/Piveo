@@ -2852,8 +2852,18 @@ const AppInner: React.FC = () => {
               onGoToBatch={() => uiDispatch({ type: SET_CURRENT_VIEW, payload: 'batch' })}
             />
           )}
-          {(queueStatusText || generationStage || errorDetails || syncStatus.pending > 0 || syncStatus.failed > 0) && (
+          {(queueStatusText || generationStage || errorDetails || syncStatus.pending > 0 || syncStatus.failed > 0 || syncStatus.quotaExceeded) && (
             <div className="border-t border-[var(--piveo-border)] bg-[var(--piveo-card)] px-4 py-2.5 space-y-1.5">
+              {/* ⑤ 配额满：最高优先级红条，必须比所有其他状态先显示 */}
+              {syncStatus.quotaExceeded && (
+                <div className="flex items-start gap-2 p-2 rounded border border-red-300 bg-red-50">
+                  <Icon name="exclamation-triangle" className="text-red-600 mt-0.5" />
+                  <div className="text-[11px] text-red-700 leading-snug">
+                    <div className="font-semibold">本地存储空间已满，新生成的内容可能无法保存到本机</div>
+                    <div className="mt-0.5">服务器同步仍在工作；为防丢失，请删除部分旧会话或清理浏览器存储。</div>
+                  </div>
+                </div>
+              )}
               {queueStatusText && <div className="text-[11px] text-[var(--piveo-body)]">{queueStatusText}</div>}
               {generationStage && (
                 <div className="text-[11px] text-[var(--piveo-accent)]">
