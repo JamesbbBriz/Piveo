@@ -22,6 +22,8 @@ export interface SyncStatus {
   lastError: string | null;
   /** 上次成功 flush 的时间戳；用于"刚刚保存"提示 */
   lastSyncedAt: number | null;
+  /** IDB / localStorage 配额满，本地保存失效——这是最高优先级的红条提示 */
+  quotaExceeded: boolean;
 }
 
 interface FailedOp {
@@ -46,6 +48,45 @@ class SyncService {
   private onSyncStatusChange?: (status: SyncStatus) => void;
   private lastError: string | null = null;
   private lastSyncedAt: number | null = null;
+  private quotaExceeded: boolean = false;
+
+  // ⑥ 多 tab 防覆盖：本 tab 写入后广播，其他 tab 拉取最新。
+  // 只在浏览器支持 BroadcastChannel 时启用（Safari < 15.4 无；rare）。
+  private tabId: string =
+    typeof crypto !== "undefined" && (crypto as any).randomUUID
+      ? (crypto as any).randomUUID()
+      : `tab-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+  private bc: BroadcastChannel | null = null;
+  private onRemoteProjectChanged?: (id: string) => void;
+
+  setOnRemoteProjectChanged(cb: (id: string) => void): void {
+    this.onRemoteProjectChanged = cb;
+  }
+
+  private handleBroadcast(msg: any): void {
+    if (!msg || typeof msg !== "object") return;
+    if (msg.from === this.tabId) return; // 别响应自己发的
+    if (msg.kind === "project_saved" && typeof msg.id === "string") {
+      // 异步触发 refetch；处理函数在 AppContext 里实现
+      this.onRemoteProjectChanged?.(msg.id);
+    }
+  }
+
+  private broadcast(msg: any): void {
+    if (!this.bc) return;
+    try {
+      this.bc.postMessage({ ...msg, from: this.tabId });
+    } catch {
+      // BroadcastChannel postMessage 在浏览器关闭瞬间可能 throw，吞掉
+    }
+  }
+
+  /** 由 AppContext 在 storage.setOnStorageQuotaExceeded 回调里调用 */
+  markQuotaExceeded(): void {
+    if (this.quotaExceeded) return;
+    this.quotaExceeded = true;
+    this.emitStatus();
+  }
 
   setOnImagesUploaded(cb: (type: 'project' | 'batch', id: string, replacements: Map<string, string>) => void) {
     this.onImagesUploaded = cb;
@@ -65,6 +106,7 @@ class SyncService {
       failed,
       lastError: this.lastError,
       lastSyncedAt: this.lastSyncedAt,
+      quotaExceeded: this.quotaExceeded,
     });
   }
 
@@ -92,12 +134,25 @@ class SyncService {
     this.blobCache.clear();
     this.lastError = null;
     this.lastSyncedAt = null;
+    if (this.bc) {
+      try { this.bc.close(); } catch { /* ignore */ }
+      this.bc = null;
+    }
     this.userId = null;
   }
 
   init(userId: string): void {
     this.reset();
     this.userId = userId;
+    // ⑥ 每个用户独立 channel，防止串账号
+    if (typeof BroadcastChannel !== "undefined") {
+      try {
+        this.bc = new BroadcastChannel(`nanobanana_sync_${userId}`);
+        this.bc.onmessage = (ev) => this.handleBroadcast(ev.data);
+      } catch {
+        // 创建失败就退化成单 tab；不影响主功能
+      }
+    }
     this.drainFailedOps();
     this.emitStatus();
   }
@@ -232,6 +287,8 @@ class SyncService {
       // 成功了：从待同步注册表里摘掉，让 UI 的"未同步：N 项"自动减
       removePendingSyncId("projects", project.id);
       this.emitStatus();
+      // ⑥ 广播给同账号其他 tab，让它们 refetch 这个 session 防覆盖
+      this.broadcast({ kind: "project_saved", id: project.id });
     });
   }
 

@@ -26,6 +26,32 @@ type StoreKey = "sessions" | "templates" | "models" | "products" | "batch_jobs" 
 let storageUserId: string | null = null;
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+// ——— 配额异常上报 ———
+// 重度用户的 IDB / localStorage 装满后，put / setItem 会 throw QuotaExceededError。
+// 旧逻辑全部 catch{} 静默吞掉 → 用户以为保存成功，刷新发现没了。
+// 模块级回调让 storage 层把 quota 错误冒泡到 UI 层显示红条。
+
+let onQuotaExceededCb: (() => void) | null = null;
+export const setOnStorageQuotaExceeded = (cb: (() => void) | null): void => {
+  onQuotaExceededCb = cb;
+};
+
+const isQuotaExceeded = (e: any): boolean => {
+  if (!e) return false;
+  if (e.name === "QuotaExceededError") return true;
+  if (e.name === "NS_ERROR_DOM_QUOTA_REACHED") return true;
+  // localStorage 浏览器特定错误码
+  if (typeof e.code === "number" && (e.code === 22 || e.code === 1014)) return true;
+  return false;
+};
+
+const reportQuotaExceeded = (origin: string): void => {
+  console.error(`[Storage] QuotaExceededError @ ${origin} — surfaced to UI`);
+  if (onQuotaExceededCb) {
+    try { onQuotaExceededCb(); } catch { /* swallow */ }
+  }
+};
+
 /** Set user ID to namespace the IndexedDB database. Must be called before storage operations. */
 export const setStorageUserId = async (userId: string): Promise<void> => {
   if (storageUserId === userId) return;
@@ -87,6 +113,7 @@ const safeLocalSet = (key: string, value: unknown) => {
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
   } catch (e) {
+    if (isQuotaExceeded(e)) reportQuotaExceeded(`safeLocalSet(${key})`);
     console.error(`写入 localStorage 失败: ${key}`, e);
   }
 };
@@ -150,12 +177,23 @@ const idbSet = async <T>(key: StoreKey, value: T): Promise<void> => {
     await new Promise<void>((resolve) => {
       const tx = db.transaction(STORE_NAME, "readwrite");
       const store = tx.objectStore(STORE_NAME);
-      store.put(value, key);
+      const req = store.put(value, key);
+      // 单独监听 put 的 error，捕获 QuotaExceededError（tx.onerror 拿不到原始 error 对象）
+      req.onerror = () => {
+        if (isQuotaExceeded(req.error)) reportQuotaExceeded(`idbSet(${key})`);
+      };
       tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-      tx.onabort = () => resolve();
+      tx.onerror = () => {
+        if (isQuotaExceeded(tx.error)) reportQuotaExceeded(`idbSet(${key}) tx`);
+        resolve();
+      };
+      tx.onabort = () => {
+        if (isQuotaExceeded(tx.error)) reportQuotaExceeded(`idbSet(${key}) abort`);
+        resolve();
+      };
     });
   } catch (e) {
+    if (isQuotaExceeded(e)) reportQuotaExceeded(`idbSet(${key}) catch`);
     console.error(`idbSet(${key}) 失败，重置连接：`, e);
     resetDbPromise();
   }
@@ -306,6 +344,7 @@ const deferLocalSet = (key: string, value: unknown) => {
       }
       window.localStorage.setItem(key, serialized);
     } catch (e) {
+      if (isQuotaExceeded(e)) reportQuotaExceeded(`deferLocalSet(${key})`);
       console.error(`写入 localStorage 失败: ${key}`, e);
     }
   };
@@ -325,6 +364,7 @@ const writeSessionsBackupSync = (sessions: Session[]) => {
     }
     window.localStorage.setItem(SESSIONS_KEY, serialized);
   } catch (e) {
+    if (isQuotaExceeded(e)) reportQuotaExceeded("writeSessionsBackupSync");
     console.error("同步写入 sessions 备份失败：", e);
   }
 };
@@ -351,7 +391,8 @@ export const backupSessionsEmergency = (sessions: Session[]): void => {
       return;
     }
     window.localStorage.setItem(emergencyKey("sessions"), serialized);
-  } catch {
+  } catch (e) {
+    if (isQuotaExceeded(e)) reportQuotaExceeded("backupSessionsEmergency");
     // unload 路径上不能再做更多
   }
 };
@@ -362,7 +403,8 @@ export const backupBatchJobsEmergency = (jobs: BatchJob[]): void => {
     const serialized = JSON.stringify(jobs);
     if (serialized.length > LOCAL_BACKUP_MAX_BYTES) return;
     window.localStorage.setItem(emergencyKey("batch_jobs"), serialized);
-  } catch {
+  } catch (e) {
+    if (isQuotaExceeded(e)) reportQuotaExceeded("backupBatchJobsEmergency");
     // ignore
   }
 };
