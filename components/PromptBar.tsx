@@ -16,6 +16,8 @@ interface PromptBarProps {
   inputText: string;
   onInputChange: (text: string) => void;
   onSend: () => void;
+  /** 生成中点击发送区域时改为取消生成 — 没有传入则禁用取消能力 */
+  onCancel?: () => void;
   onImageUpload: (file: File) => void;
   onEnhance: () => void;
   isGenerating: boolean;
@@ -34,6 +36,7 @@ export const PromptBar: React.FC<PromptBarProps> = ({
   inputText,
   onInputChange,
   onSend,
+  onCancel,
   onImageUpload,
   onEnhance,
   isGenerating,
@@ -243,17 +246,32 @@ export const PromptBar: React.FC<PromptBarProps> = ({
           >
             <Icon name="magic" />
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            color="primary"
-            onClick={onSend}
-            isDisabled={!canSend}
-            className="!p-2.5 !bg-[var(--piveo-text)] !text-white hover:!bg-[var(--piveo-accent-hover)] disabled:!bg-[var(--piveo-border)] disabled:!text-[var(--piveo-muted)]"
-            aria-label="发送"
-          >
-            <Icon name="paper-plane" />
-          </Button>
+          {isGenerating && onCancel ? (
+            // 生成中把发送按钮换成停止按钮，避免长任务把 UI 锁住，用户以为卡死了
+            <Button
+              type="button"
+              size="sm"
+              color="primary"
+              onClick={onCancel}
+              className="!p-2.5 !bg-red-500 !text-white hover:!bg-red-600"
+              aria-label="停止生成"
+              title="停止生成"
+            >
+              <Icon name="stop" />
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              color="primary"
+              onClick={onSend}
+              isDisabled={!canSend}
+              className="!p-2.5 !bg-[var(--piveo-text)] !text-white hover:!bg-[var(--piveo-accent-hover)] disabled:!bg-[var(--piveo-border)] disabled:!text-[var(--piveo-muted)]"
+              aria-label="发送"
+            >
+              <Icon name="paper-plane" />
+            </Button>
+          )}
         </div>
 
         <div className="text-[10px] text-[var(--piveo-muted)]">

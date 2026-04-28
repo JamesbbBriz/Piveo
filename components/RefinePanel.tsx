@@ -33,6 +33,10 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
   const [inputText, setInputText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState(0);
+  // 用户主动点过版本时置 true，effect 不再 auto-jump 到 latest 覆盖用户选择
+  // —— 否则用户切到 v1 → 又触发新一轮迭代 → selection 被静默重写到 latest，
+  // 点"完成"会发出错误版本（属于"静默数据丢失"，是 P0 bug）
+  const [userPickedVersion, setUserPickedVersion] = useState(false);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -60,12 +64,15 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
   // Extract all model image versions
   const versions = messages.filter((m) => m.role === 'model' && m.imageUrl);
 
-  // Keep selectedVersion in bounds and default to latest
+  // 默认聚焦最新版本，但用户已经手动选过就不再覆盖；同时把 selectedVersion 钳在合法范围内
   useEffect(() => {
-    if (versions.length > 0) {
+    if (versions.length === 0) return;
+    if (!userPickedVersion) {
+      setSelectedVersion(versions.length - 1);
+    } else if (selectedVersion >= versions.length) {
       setSelectedVersion(versions.length - 1);
     }
-  }, [versions.length]);
+  }, [versions.length, userPickedVersion, selectedVersion]);
 
   const currentImage = versions[selectedVersion]?.imageUrl || imageUrl;
 
@@ -177,7 +184,10 @@ export const RefinePanel: React.FC<RefinePanelProps> = ({
               key={idx}
               src={v.imageUrl}
               alt={`v${idx + 1}`}
-              onClick={() => setSelectedVersion(idx)}
+              onClick={() => {
+                setSelectedVersion(idx);
+                setUserPickedVersion(true);
+              }}
               className={`w-12 h-12 rounded-md border-2 cursor-pointer object-cover flex-shrink-0 ${
                 idx === selectedVersion ? 'border-cyan-500' : 'border-dark-600'
               }`}
