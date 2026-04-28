@@ -2946,6 +2946,7 @@ const AppInner: React.FC = () => {
             inputText={inputText}
             onInputChange={(text) => uiDispatch({ type: SET_INPUT_TEXT, payload: text })}
             onSend={() => { void handleSendMessage(); }}
+            onCancel={cancelGeneration}
             onImageUpload={handleOnboardingFileUpload}
             onEnhance={() => { void handleEnhancePrompt(); }}
             isGenerating={isGenerating}
@@ -3095,7 +3096,19 @@ const AppInner: React.FC = () => {
       </MainContent>
 
       {/* Modals — rendered inside Layout but overlay on top */}
-      {previewImageUrl && <ImagePreviewModal imageUrl={previewImageUrl} onClose={() => uiDispatch({ type: SET_PREVIEW_IMAGE, payload: null })} />}
+      {previewImageUrl && (
+        <ImagePreviewModal
+          imageUrl={previewImageUrl}
+          onClose={() => uiDispatch({ type: SET_PREVIEW_IMAGE, payload: null })}
+          onUseAsReference={(url) => uiDispatch({ type: SET_SELECTED_IMAGE, payload: url })}
+          onRefine={(url) => setRefineTarget({ imageUrl: url })}
+          onMaskEdit={(url) => {
+            uiDispatch({ type: SET_MASK_EDIT_CONTEXT, payload: { source: "chat" } });
+            setMaskEditBaseUrl(url);
+          }}
+          onBatchFromImage={handleBatchFromImage}
+        />
+      )}
       {refineTarget && (
         <RefinePanel
           imageUrl={refineTarget.imageUrl}
