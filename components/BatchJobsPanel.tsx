@@ -413,6 +413,33 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
         </div>
       )}
 
+      {/* Failed-slots quick-rerun banner: 上游 502/503 这类瞬时错误最常见，避免用户一个个点"单独重跑" */}
+      {!isBusy && selectedJob && selectedJob.status !== "deleted" && onRunAllSlots && (() => {
+        const failedCount = selectedJob.slots.filter((s) => s.status === "failed").length;
+        if (failedCount === 0) return null;
+        return (
+          <div className="px-4 py-3 bg-red-500/10 border-b border-red-500/30 flex items-center gap-3 shrink-0">
+            <div className="text-red-400">
+              <Icon name="exclamation-triangle" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-red-300 font-medium">
+                有 {failedCount} 个槽位生成失败
+              </div>
+              <div className="text-[11px] text-red-400/70 mt-0.5 truncate">
+                通常是上游服务瞬时抖动，一键重跑大概率能恢复
+              </div>
+            </div>
+            <button
+              onClick={() => onRunAllSlots(selectedJob.id, "pending_only")}
+              className="px-3 py-1.5 text-xs rounded-md border border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20 whitespace-nowrap"
+            >
+              重跑失败槽位 ({failedCount})
+            </button>
+          </div>
+        );
+      })()}
+
       {/* Main content area */}
       {!selectedJob ? (
         <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">暂无矩阵任务</div>

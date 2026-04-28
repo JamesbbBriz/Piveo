@@ -180,6 +180,11 @@ const formatHttpError = (status: number, payload: string): string => {
   return msg ? `HTTP ${status} ${msg}` : `HTTP ${status}`;
 };
 
+// 502/503/504/522/524 都是上游网关层瞬时故障，给用户一句更直白的解释，
+// 别让"图片接口请求失败"这种看上去像参数问题的措辞误导排查方向。
+const formatTransientUpstreamError = (status: number): string =>
+  `上游图像服务暂时不可用 (HTTP ${status})，请稍后重试`;
+
 const enableGeminiChatFallback = String((import.meta as any)?.env?.VITE_ENABLE_CHAT_IMAGE_FALLBACK || "")
   .trim()
   .toLowerCase() === "true";
@@ -192,8 +197,15 @@ const toPositiveInt = (raw: unknown, fallback: number): number => {
 };
 
 const imageRequestMaxRetries = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_REQUEST_RETRIES, 1);
+// 矩阵任务一次要打 N 次上游，瞬时 502/503/504 概率比单图聊天高一些，
+// 给个更宽的默认重试预算让短暂抖动能自愈，避免整槽位失败逼用户手动重跑。
+const batchImageRequestMaxRetries = toPositiveInt(
+  (import.meta as any)?.env?.VITE_BATCH_IMAGE_REQUEST_RETRIES,
+  3
+);
 const imageRetryBaseDelayMs = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_RETRY_BASE_DELAY_MS, 800);
 const RETRYABLE_STATUS = new Set([408, 425, 500, 502, 503, 504, 522, 524]);
+const TRANSIENT_UPSTREAM_STATUS = new Set([502, 503, 504, 522, 524]);
 const imageFetchTimeoutMs = Math.max(
   1_000,
   toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_FETCH_TIMEOUT_MS, 300_000)
@@ -239,9 +251,12 @@ const toRetryPolicy = (opts?: ClientRequestOptions): { maxRetries: number; baseD
   const maxRetriesRaw = opts?.retryPolicy?.maxRetries;
   const baseDelayRaw = opts?.retryPolicy?.baseDelayMs;
   const maxDelayRaw = opts?.retryPolicy?.maxDelayMs;
+  const defaultMaxRetries = opts?.queueSource === "batch"
+    ? batchImageRequestMaxRetries
+    : imageRequestMaxRetries;
   const maxRetries = Number.isFinite(Number(maxRetriesRaw))
     ? Math.max(0, Math.floor(Number(maxRetriesRaw)))
-    : imageRequestMaxRetries;
+    : defaultMaxRetries;
   const baseDelayMs = Number.isFinite(Number(baseDelayRaw))
     ? Math.max(100, Math.floor(Number(baseDelayRaw)))
     : imageRetryBaseDelayMs;
@@ -793,7 +808,9 @@ export const imagesGenerations = async (
     const detail = extractErrorMessageFromPayload(lastText);
     const retrySuffix = retryCount > 0 ? `（已自动重试 ${retryCount} 次）` : "";
     const traceSuffix = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
-    const generationErr = `图片接口请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}。${traceSuffix}`.trim();
+    const generationErr = TRANSIENT_UPSTREAM_STATUS.has(lastStatus)
+      ? `${formatTransientUpstreamError(lastStatus)}${retrySuffix}。${traceSuffix}`.trim()
+      : `图片接口请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}。${traceSuffix}`.trim();
     // 仅在显式开启 VITE_ENABLE_CHAT_IMAGE_FALLBACK=true 且为"模型不支持"时才回退 chat。
     // chat 回退仅适用于无图（JSON）路径下的 Gemini 图片模型。
     if (!hasImages && enableGeminiChatFallback && isGeminiImageModel(model) && includesUnsupportedModelError(detail)) {
@@ -990,5 +1007,8 @@ export const imagesEdits = async (
 
   const retrySuffix = retryCount > 0 ? `（已自动重试 ${retryCount} 次）` : "";
   const traceSuffix = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
-  throw new Error(`图片编辑请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}。${traceSuffix}`.trim());
+  const editErr = TRANSIENT_UPSTREAM_STATUS.has(lastStatus)
+    ? `${formatTransientUpstreamError(lastStatus)}${retrySuffix}。${traceSuffix}`.trim()
+    : `图片编辑请求失败：${formatHttpError(lastStatus || 500, lastText)}${retrySuffix}。${traceSuffix}`.trim();
+  throw new Error(editErr);
 };
