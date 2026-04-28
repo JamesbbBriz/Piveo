@@ -292,7 +292,7 @@ const AppInner: React.FC = () => {
     isGenerating, generationStage, generationProgress, isEnhancing,
     previewImageUrl, errorDetails, maskEditContext, isAdvancedPanelOpen,
     queueStats, currentView, inputText, selectedImage, referenceIntent, apiConfig, defaultPreferences,
-    authUser, authReady, authLoading, isSuperAdmin,
+    authUser, authReady, authLoading, isSuperAdmin, syncStatus,
     dispatch: uiDispatch,
   } = useUI();
   const { hasHydratedStorage } = useHydration();
@@ -2852,13 +2852,33 @@ const AppInner: React.FC = () => {
               onGoToBatch={() => uiDispatch({ type: SET_CURRENT_VIEW, payload: 'batch' })}
             />
           )}
-          {(queueStatusText || generationStage || errorDetails) && (
+          {(queueStatusText || generationStage || errorDetails || syncStatus.pending > 0 || syncStatus.failed > 0) && (
             <div className="border-t border-[var(--piveo-border)] bg-[var(--piveo-card)] px-4 py-2.5 space-y-1.5">
               {queueStatusText && <div className="text-[11px] text-[var(--piveo-body)]">{queueStatusText}</div>}
               {generationStage && (
                 <div className="text-[11px] text-[var(--piveo-accent)]">
                   {generationStage}
                   {generationProgress ? ` (${generationProgress.current}/${generationProgress.total})` : ''}
+                </div>
+              )}
+              {/* ③ 同步状态条：未同步项数量 + 失败项重试入口；都为 0 时不渲染，不打扰用户 */}
+              {(syncStatus.pending > 0 || syncStatus.failed > 0) && (
+                <div className="flex items-center gap-2 text-[11px]">
+                  {syncStatus.pending > 0 && (
+                    <span className="text-[var(--piveo-muted)] inline-flex items-center gap-1">
+                      <Icon name="cloud-upload-alt fa-pulse" />
+                      正在同步 {syncStatus.pending} 项到服务器
+                    </span>
+                  )}
+                  {syncStatus.failed > 0 && (
+                    <span
+                      className="text-amber-600 inline-flex items-center gap-1"
+                      title={syncStatus.lastError || undefined}
+                    >
+                      <Icon name="exclamation-circle" />
+                      有 {syncStatus.failed} 项尚未同步到服务器（已自动后台重试）
+                    </span>
+                  )}
                 </div>
               )}
               {errorDetails && (
