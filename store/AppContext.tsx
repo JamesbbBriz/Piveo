@@ -22,8 +22,13 @@ import {
   setStorageUserId,
   saveCurrentSessionId,
   loadCurrentSessionId,
+  backupSessionsEmergency,
+  backupBatchJobsEmergency,
+  loadEmergencySessionsBackup,
+  loadEmergencyBatchJobsBackup,
+  clearEmergencyBackups,
 } from '@/services/storage';
-import { syncService } from '@/services/sync';
+import { syncService, type SyncStatus } from '@/services/sync';
 import { getSession as getAuthSession } from '@/services/auth';
 import { onQueueStateChange } from '@/services/generationQueue';
 import {
@@ -44,6 +49,7 @@ import {
   REPLACE_BATCH_IMAGE_URLS,
   LOAD_SESSION_MESSAGES,
   SET_SESSION_MESSAGES_LOAD_ERROR,
+  SET_SYNC_STATUS,
 } from './actions';
 import type { Session, SessionSettings, BatchJob, BrandKit } from '@/types';
 import { DEFAULT_ASPECT_RATIO, DEFAULT_SYSTEM_TEMPLATES } from '@/constants';
@@ -250,6 +256,7 @@ const uiInitialState: UIState = {
   authReady: false,
   authLoading: false,
   isSuperAdmin: false,
+  syncStatus: { pending: 0, failed: 0, lastError: null, lastSyncedAt: null },
 };
 
 // ——— Split Contexts (one per reducer + hydration) ———
@@ -628,7 +635,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // ——— Fallback path: load from IndexedDB ———
         console.log("[Bootstrap] 使用本地 IndexedDB 数据");
 
-        const [loadedTemplates, loadedModels, loadedProducts, loadedSessions, loadedBatchJobs] = await Promise.all([
+        const [loadedTemplates, loadedModels, loadedProducts, loadedSessionsRaw, loadedBatchJobsRaw] = await Promise.all([
           loadTemplates(),
           loadModels(),
           loadProducts(),
@@ -636,6 +643,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           loadBatchJobs(),
         ]);
         if (cancelled) return;
+
+        // ② 紧急备份兜底：IDB 也为空（用户清缓存 / 浏览器 OOM 杀进程）时，
+        // 用 beforeunload/pagehide 同步落盘的 localStorage 备份继续救一下，
+        // 防止"刷新前 2 秒生成的图丢"再次发生。
+        let loadedSessions = loadedSessionsRaw;
+        if (loadedSessions.length === 0) {
+          const emergency = loadEmergencySessionsBackup();
+          if (emergency && emergency.length > 0) {
+            console.warn(`[Bootstrap] IDB 为空，从紧急备份恢复 ${emergency.length} 个 sessions`);
+            loadedSessions = emergency;
+          }
+        }
+        let loadedBatchJobs = loadedBatchJobsRaw;
+        if (!loadedBatchJobs || loadedBatchJobs.length === 0) {
+          const emergency = loadEmergencyBatchJobsBackup();
+          if (emergency && emergency.length > 0) {
+            console.warn(`[Bootstrap] IDB 为空，从紧急备份恢复 ${emergency.length} 个 batch jobs`);
+            loadedBatchJobs = emergency;
+          }
+        }
 
         // Merge admin defaults + local templates (dedup by id)
         const localDefaultIds = new Set(effectiveDefaults.map((d: any) => d.id));
@@ -691,6 +718,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       setHasHydratedStorage(true);
+      // 既然 hydration 跑完，紧急备份的使命就结束了；下次 unload 会写入新版本
+      clearEmergencyBackups();
     };
     void bootstrap();
     return () => { cancelled = true; };
@@ -765,7 +794,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasHydratedStorage, ui.authUser, project.sessions]);
 
-  // Debounced session save
+  // ① 立即写 IDB（无 debounce）—— 修复"刷新前 2 秒生成的图丢"。
+  // saveSessions 内部对 messagesLoaded=false 的 session 会从缓存合并 messages，
+  // 所以反复触发是幂等且安全的。这是最关键的一道防线。
+  useEffect(() => {
+    if (!hasHydratedStorage) return;
+    void saveSessions(project.sessions);
+  }, [project.sessions, hasHydratedStorage]);
+
+  // ② 服务器同步保留 2s debounce —— 网络成本较高，攒一会儿再发
   useEffect(() => {
     if (!hasHydratedStorage) return;
     pendingSessionsRef.current = project.sessions;
@@ -773,7 +810,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveSessionsTimerRef.current = setTimeout(() => {
       saveSessionsTimerRef.current = null;
       if (pendingSessionsRef.current) {
-        void saveSessions(pendingSessionsRef.current);
         // Sync changed sessions to server (skip sessions whose messages haven't been loaded yet)
         const prev = prevSessionsRef.current;
         const prevMap = new Map<string, Session>(prev.map((s) => [s.id, s]));
@@ -800,7 +836,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [project.sessions, hasHydratedStorage]);
 
-  // Debounced batch jobs save + server sync
+  // ① 立即写 IDB（无 debounce），与 sessions 同样的安全策略
+  useEffect(() => {
+    if (!hasHydratedStorage) return;
+    void saveBatchJobs(batch.batchJobs);
+  }, [batch.batchJobs, hasHydratedStorage]);
+
+  // ② 服务器同步保留 2s debounce
   useEffect(() => {
     if (!hasHydratedStorage) return;
     pendingBatchJobsRef.current = batch.batchJobs;
@@ -808,7 +850,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveBatchJobsTimerRef.current = setTimeout(() => {
       saveBatchJobsTimerRef.current = null;
       if (pendingBatchJobsRef.current) {
-        void saveBatchJobs(pendingBatchJobsRef.current);
         // Sync changed batch jobs to server
         const prev = prevBatchJobsRef.current;
         const prevMap = new Map<string, BatchJob>(prev.map((j) => [j.id, j]));
@@ -834,9 +875,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [batch.batchJobs, hasHydratedStorage]);
 
-  // Flush on beforeunload
+  // Flush on beforeunload / pagehide.
+  // 关键：浏览器关闭瞬间 IndexedDB 的 async 事务不保证完成，
+  // 必须先用同步的 localStorage emergency backup 兜一层底——
+  // bootstrap 路径在 IDB 为空时会优先读这个备份，刷新前几秒生成的图就能找回来。
+  // pagehide 事件比 beforeunload 在 Safari/iOS 下更可靠，所以两个都监听。
   useEffect(() => {
     const flushAll = () => {
+      // 同步路径：localStorage 写入是同步的，浏览器一定会等它完成
+      const latestSessions = pendingSessionsRef.current ?? latestSessionsRef.current;
+      const latestBatch = pendingBatchJobsRef.current ?? latestBatchJobsRef.current;
+      if (latestSessions && latestSessions.length > 0) {
+        backupSessionsEmergency(latestSessions);
+      }
+      if (latestBatch && latestBatch.length > 0) {
+        backupBatchJobsEmergency(latestBatch);
+      }
+
+      // 异步路径：尽力而为，能完成就完成
       if (saveSessionsTimerRef.current) {
         clearTimeout(saveSessionsTimerRef.current);
         saveSessionsTimerRef.current = null;
@@ -857,8 +913,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     };
     window.addEventListener("beforeunload", flushAll);
-    return () => window.removeEventListener("beforeunload", flushAll);
+    window.addEventListener("pagehide", flushAll);
+    return () => {
+      window.removeEventListener("beforeunload", flushAll);
+      window.removeEventListener("pagehide", flushAll);
+    };
   }, []);
+
+  // ③ 订阅 sync 状态，dispatch 给 uiReducer，UI 渲染 "未同步：N 项"
+  useEffect(() => {
+    syncService.setOnSyncStatusChange((status: SyncStatus) => {
+      uiDispatch({ type: SET_SYNC_STATUS, payload: status });
+    });
+  }, []);
+
+  // ④ Bootstrap 完成后扫描"上次 sync 失败"的 project/batchJob ID，
+  // 从最新 React state 找到对应实体重新提交。
+  // 同时定时（5 分钟）轮询，覆盖"用户开着不动但失败的项目还没 retry"的场景。
+  useEffect(() => {
+    if (!hasHydratedStorage || !ui.authUser) return;
+
+    const retryPending = () => {
+      const pendingProjectIds = syncService.getPendingProjectIds();
+      const pendingJobIds = syncService.getPendingBatchJobIds();
+      if (pendingProjectIds.length === 0 && pendingJobIds.length === 0) return;
+
+      // 用 latestRef 而不是闭包里的 project.sessions，确保拿到最新数据
+      const sessionMap = new Map<string, Session>(latestSessionsRef.current.map((s) => [s.id, s]));
+      const jobMap = new Map<string, BatchJob>(latestBatchJobsRef.current.map((j) => [j.id, j]));
+
+      let dispatched = 0;
+      for (const id of pendingProjectIds) {
+        const s = sessionMap.get(id);
+        if (s && s.messagesLoaded === true) {
+          syncService.saveProject(s);
+          dispatched++;
+        }
+      }
+      for (const id of pendingJobIds) {
+        const j = jobMap.get(id);
+        if (j) {
+          syncService.saveBatchJob(j);
+          dispatched++;
+        }
+      }
+      if (dispatched > 0) {
+        console.log(`[Sync] 重试 ${dispatched} 个 bootstrap/idle 阶段未同步的实体`);
+      }
+    };
+
+    // 启动后稍等让 bootstrap 数据稳定，再做第一次 retry
+    const initialTimer = setTimeout(retryPending, 4000);
+    const intervalTimer = setInterval(retryPending, 5 * 60 * 1000);
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(intervalTimer);
+    };
+  }, [hasHydratedStorage, ui.authUser]);
 
   // Auto-save templates when changed
   useEffect(() => {

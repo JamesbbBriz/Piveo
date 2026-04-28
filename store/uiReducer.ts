@@ -3,6 +3,7 @@ import type { DefaultPreferences } from '@/components/SettingsPanel';
 import type { ErrorDetails } from '@/components/ErrorDetailsModal';
 import type { MaskEditorHistoryItem } from '@/components/MaskEditorModal';
 import type { QueueStats } from '@/services/generationQueue';
+import type { SyncStatus } from '@/services/sync';
 import type { ReferenceIntent } from '../types';
 import {
   SET_GENERATING,
@@ -25,6 +26,7 @@ import {
   SET_AUTH_READY,
   SET_AUTH_LOADING,
   SET_IS_SUPER_ADMIN,
+  SET_SYNC_STATUS,
 } from './actions';
 
 export type MaskEditContextType = {
@@ -58,6 +60,8 @@ export interface UIState {
   authReady: boolean;
   authLoading: boolean;
   isSuperAdmin: boolean;
+  /** 由 syncService 推送，UI 用于"未同步：N 项"等持久状态显示 */
+  syncStatus: SyncStatus;
 }
 
 export type UIAction =
@@ -80,7 +84,8 @@ export type UIAction =
   | { type: typeof SET_AUTH_USER; payload: string | null }
   | { type: typeof SET_AUTH_READY; payload: boolean }
   | { type: typeof SET_AUTH_LOADING; payload: boolean }
-  | { type: typeof SET_IS_SUPER_ADMIN; payload: boolean };
+  | { type: typeof SET_IS_SUPER_ADMIN; payload: boolean }
+  | { type: typeof SET_SYNC_STATUS; payload: SyncStatus };
 
 export function uiReducer(state: UIState, action: UIAction): UIState {
   switch (action.type) {
@@ -143,6 +148,9 @@ export function uiReducer(state: UIState, action: UIAction): UIState {
 
     case SET_IS_SUPER_ADMIN:
       return { ...state, isSuperAdmin: action.payload };
+
+    case SET_SYNC_STATUS:
+      return { ...state, syncStatus: action.payload };
 
     default:
       return state;

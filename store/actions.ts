@@ -72,6 +72,7 @@ export const SET_AUTH_READY = 'SET_AUTH_READY';
 export const SET_AUTH_LOADING = 'SET_AUTH_LOADING';
 export const SET_IS_SUPER_ADMIN = 'SET_IS_SUPER_ADMIN';
 export const SET_REFERENCE_INTENT = 'SET_REFERENCE_INTENT';
+export const SET_SYNC_STATUS = 'SET_SYNC_STATUS';
 
 // Brand Kit actions
 export const SET_BRAND_KITS = 'SET_BRAND_KITS';
