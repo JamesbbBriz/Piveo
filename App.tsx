@@ -91,6 +91,7 @@ import {
   REMOVE_BRAND_TASTE_RATING,
   SET_BRAND_TASTE_RATINGS,
   SET_BRAND_TASTE_PROFILE,
+  RETRY_LOAD_SESSION_MESSAGES,
 } from './store/actions';
 
 const aspectRatioToSize = (aspectRatio: AspectRatio | string, imageSize?: string): string => {
@@ -283,7 +284,7 @@ const createNewSession = (templates: SystemTemplate[], prefs?: DefaultPreference
 
 const AppInner: React.FC = () => {
   // ——— Store hooks ———
-  const { sessions, currentSessionId, dispatch: projectDispatch } = useProjects();
+  const { sessions, currentSessionId, messageLoadErrors, dispatch: projectDispatch } = useProjects();
   const { batchJobs, selectedBatchJobId, isBatchGenerating, batchGenerationProgress, refiningSlotIds, dispatch: batchDispatch } = useBatch();
   const { models, products, templates, brandKits, dispatch: libraryDispatch } = useLibrary();
   const { teams, currentTeamId, dispatch: teamDispatch } = useTeam();
@@ -339,6 +340,7 @@ const AppInner: React.FC = () => {
   // ——— Derived state ———
   const currentSession = sessions.find(s => s.id === currentSessionId) || sessions[0];
   const isSessionLoading = currentSession?.messagesLoaded === false;
+  const currentSessionLoadError = currentSession ? messageLoadErrors[currentSession.id] : undefined;
   const currentMessageCount = currentSession?.messages.length || 0;
   const selectedBatchJob = useMemo(
     () => batchJobs.find((j) => j.id === selectedBatchJobId) || batchJobs[0] || null,
@@ -2801,9 +2803,41 @@ const AppInner: React.FC = () => {
         </div>
       ) : (
         <>
-          {isSessionLoading ? (
-            <div className="flex items-center justify-center h-64 text-[var(--piveo-muted)]">
-              <Icon name="spinner fa-spin" className="mr-2" />加载中...
+          {isSessionLoading && currentSessionLoadError ? (
+            // 失败：显示错误条 + 重试按钮，绝不让用户对着空白发呆
+            <div className="flex flex-col items-center justify-center h-64 px-6 gap-3 text-center">
+              <div className="text-red-500 text-2xl">
+                <Icon name="exclamation-triangle" />
+              </div>
+              <div className="text-sm text-[var(--piveo-text)] font-medium">无法加载会话历史</div>
+              <div className="text-xs text-[var(--piveo-muted)] max-w-md break-words">
+                {currentSessionLoadError}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (currentSession?.id) {
+                    projectDispatch({ type: RETRY_LOAD_SESSION_MESSAGES, payload: { sessionId: currentSession.id } });
+                  }
+                }}
+                className="mt-1 px-3 py-1.5 text-xs rounded-md border border-[var(--piveo-border)] bg-white text-[var(--piveo-text)] hover:bg-[#EEF2F6]"
+              >
+                <Icon name="redo" className="mr-1.5" />
+                重新加载
+              </button>
+            </div>
+          ) : isSessionLoading ? (
+            // 加载中（lazy-load 或预取尚未完成）：用骨架屏替代纯文字"加载中..."，
+            // 给用户"内容正在路上"的视觉反馈而不是"会话是空的"。
+            <div className="flex flex-col gap-3 px-6 py-8 animate-pulse">
+              <div className="h-4 w-1/3 rounded bg-[var(--piveo-border)] opacity-60" />
+              <div className="h-24 rounded bg-[var(--piveo-border)] opacity-40" />
+              <div className="h-4 w-1/2 rounded bg-[var(--piveo-border)] opacity-60" />
+              <div className="h-24 rounded bg-[var(--piveo-border)] opacity-40" />
+              <div className="text-[11px] text-[var(--piveo-muted)] mt-2 flex items-center gap-1.5">
+                <Icon name="spinner fa-spin" />
+                正在拉取会话历史...
+              </div>
             </div>
           ) : (
             <ImageGallery
