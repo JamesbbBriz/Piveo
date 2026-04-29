@@ -30,6 +30,8 @@ interface BatchJobsPanelProps {
   onCancelGeneration?: () => void;
   onRunAllSlots?: (jobId: string, mode: "pending_only" | "all") => void;
   onCreateJob?: () => void;
+  /** 直接从本地上传一张图，开始矩阵任务（不需要先在 chat 里生成） */
+  onUploadAndCreate?: () => void;
   onRenameJob: (jobId: string, newTitle: string) => void;
   onAddSlots?: (jobId: string) => void;
   onRefineSlot?: (jobId: string, slotId: string, instruction: string) => void;
@@ -116,6 +118,7 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
   onCancelGeneration,
   onRunAllSlots,
   onCreateJob,
+  onUploadAndCreate,
   onRenameJob,
   onAddSlots,
   onRefineSlot,
@@ -294,7 +297,19 @@ export const BatchJobsPanel: React.FC<BatchJobsPanelProps> = ({
             </button>
           )}
 
-          {/* Create new job */}
+          {/* 上传图直接新建矩阵 — 用户最常见的用法："我有一张产品图想批量出图" */}
+          {onUploadAndCreate && (
+            <button
+              onClick={onUploadAndCreate}
+              className="px-2.5 py-1.5 text-xs rounded-md border border-dark-600 bg-dark-900 text-gray-300 hover:text-gray-100 hover:bg-dark-700 transition-colors flex items-center gap-1.5"
+              title="上传一张图作为矩阵基础"
+            >
+              <Icon name="cloud-arrow-up" />
+              <span className="hidden md:inline">上传图新建</span>
+            </button>
+          )}
+
+          {/* Create new job — 不传图，直接进矩阵设置 */}
           {onCreateJob && (
             <button
               onClick={onCreateJob}

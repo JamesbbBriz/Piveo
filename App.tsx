@@ -1785,6 +1785,25 @@ const AppInner: React.FC = () => {
     openBatchSetModal();
   }, [openBatchSetModal, uiDispatch]);
 
+  // 用户上传一张图 → 直接进入矩阵生成。这是"我有一张产品图，想批量出图"的最直白入口，
+  // 不再需要先在 chat 里生成一张图、再点其上下文菜单的"生成矩阵"。
+  const batchUploadInputRef = useRef<HTMLInputElement>(null);
+  const handleUploadAndBatch = useCallback(() => {
+    if (isGenerating) return;
+    batchUploadInputRef.current?.click();
+  }, [isGenerating]);
+  const handleBatchUploadFile = useCallback(async (file: File) => {
+    try {
+      const dataUrl = await blobToDataUrl(file);
+      handleBatchFromImage(dataUrl);
+    } catch (e) {
+      addToast({
+        type: "error",
+        message: `读取图片失败：${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+  }, [handleBatchFromImage, addToast]);
+
   const handleBatchSetSubmit = useCallback(async (items: BatchSetItem[]) => {
     if (!currentSession || isBatchGenerating || items.length === 0) return;
 
@@ -2822,6 +2841,7 @@ const AppInner: React.FC = () => {
               void handleRunAllBatchSlots(jobId, mode);
             }}
             onCreateJob={openBatchSetModal}
+            onUploadAndCreate={handleUploadAndBatch}
             onRenameJob={handleRenameBatchJob}
             onAddSlots={handleOpenAddSlots}
             onRefineSlot={(jobId, slotId, instruction) => {
@@ -2879,6 +2899,7 @@ const AppInner: React.FC = () => {
               batchProgress={projectBatchProgress}
               onboardingProps={onboardingProps}
               onOpenBatchSet={openBatchSetModal}
+              onUploadAndCreateBatch={handleUploadAndBatch}
               onGoToBatch={() => uiDispatch({ type: SET_CURRENT_VIEW, payload: 'batch' })}
             />
           )}
@@ -3027,6 +3048,7 @@ const AppInner: React.FC = () => {
           batchProgress: projectBatchProgress,
           onboardingProps,
           onOpenBatchSet: openBatchSetModal,
+          onUploadAndCreateBatch: handleUploadAndBatch,
           onGoToBatch: () => uiDispatch({ type: SET_CURRENT_VIEW, payload: 'batch' }),
         }}
         projectListProps={{
@@ -3124,6 +3146,20 @@ const AppInner: React.FC = () => {
       >
         {projectViewContent}
       </MainContent>
+
+      {/* 隐藏的 file input：handleUploadAndBatch 触发，选完文件 → 转 dataURL → 进矩阵 */}
+      <input
+        ref={batchUploadInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void handleBatchUploadFile(file);
+          // 清空 value 否则同一文件二次选择不会触发 change
+          e.target.value = "";
+        }}
+      />
 
       {/* Modals — rendered inside Layout but overlay on top */}
       {previewImageUrl && (

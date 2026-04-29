@@ -18,6 +18,8 @@ export interface ImageGalleryProps {
   onboardingProps?: OnboardingProps;
   onOpenBatchSet?: () => void;
   onGoToBatch?: () => void;
+  /** 空状态"上传产品图"卡片点击：选文件 → 直接进矩阵 */
+  onUploadAndCreateBatch?: () => void;
 }
 
 export const ImageGallery: React.FC<ImageGalleryProps> = ({
@@ -30,6 +32,7 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
   onboardingProps,
   onOpenBatchSet,
   onGoToBatch,
+  onUploadAndCreateBatch,
 }) => {
   const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
@@ -277,20 +280,30 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({
                 <p className="text-xs mt-1 text-[var(--piveo-muted)]">选一种工作方式，或在下方直接输入提示词</p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-2xl">
-                <div className="p-4 border border-[var(--piveo-border)] rounded-xl bg-white hover:shadow-md transition-shadow text-center">
+                <button
+                  type="button"
+                  onClick={onUploadAndCreateBatch}
+                  disabled={!onUploadAndCreateBatch}
+                  className="p-4 border border-[var(--piveo-border)] rounded-xl bg-white hover:shadow-md hover:border-[var(--piveo-accent)] transition-all text-center disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                   <Icon name="upload" className="text-2xl text-[var(--piveo-accent)] mb-2" />
-                  <div className="text-xs font-medium text-[var(--piveo-text)] mb-1">上传产品图</div>
-                  <div className="text-[11px] text-[var(--piveo-muted)] leading-snug">把产品放进各种场景与模特图中</div>
-                </div>
-                <div className="p-4 border border-[var(--piveo-border)] rounded-xl bg-white hover:shadow-md transition-shadow text-center">
-                  <Icon name="palette" className="text-2xl text-[var(--piveo-accent)] mb-2" />
-                  <div className="text-xs font-medium text-[var(--piveo-text)] mb-1">导入参考风格</div>
-                  <div className="text-[11px] text-[var(--piveo-muted)] leading-snug">用一张参考图统一整套视觉风格</div>
-                </div>
-                <div className="p-4 border border-[var(--piveo-border)] rounded-xl bg-white hover:shadow-md transition-shadow text-center">
+                  <div className="text-xs font-medium text-[var(--piveo-text)] mb-1">上传图新建矩阵</div>
+                  <div className="text-[11px] text-[var(--piveo-muted)] leading-snug">选一张产品图，批量生成多场景</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={onOpenBatchSet}
+                  disabled={!onOpenBatchSet}
+                  className="p-4 border border-[var(--piveo-border)] rounded-xl bg-white hover:shadow-md hover:border-[var(--piveo-accent)] transition-all text-center disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                   <Icon name="layer-group" className="text-2xl text-[var(--piveo-accent)] mb-2" />
                   <div className="text-xs font-medium text-[var(--piveo-text)] mb-1">从模板开始</div>
                   <div className="text-[11px] text-[var(--piveo-muted)] leading-snug">直接套用预设场景批量出图</div>
+                </button>
+                <div className="p-4 border border-[var(--piveo-border)] rounded-xl bg-white text-center">
+                  <Icon name="palette" className="text-2xl text-[var(--piveo-muted)] mb-2" />
+                  <div className="text-xs font-medium text-[var(--piveo-text)] mb-1">在下方输入提示词</div>
+                  <div className="text-[11px] text-[var(--piveo-muted)] leading-snug">直接描述你想要的画面</div>
                 </div>
               </div>
             </div>
