@@ -13,6 +13,7 @@ import { checkQuota, recordUsage } from "./services/usageTracker.mjs";
 import * as providerStore from "./services/providerStore.mjs";
 import { normalizeModelId } from "./services/providerStore.mjs";
 import { createGeminiNativeHandler } from "./middleware/geminiAdapter.mjs";
+import { createAsyncImageJobStore, readRawBody, serializeJob } from "./services/asyncImageJobs.mjs";
 
 const IS_PROD = process.env.NODE_ENV === "production";
 const JWT_SECRET = process.env.AUTH_JWT_SECRET || "dev-only-change-me";
@@ -88,8 +89,15 @@ const UPSTREAM_MAX_INFLIGHT_PER_USER = toPositiveInt(process.env.UPSTREAM_MAX_IN
 const UPSTREAM_MAX_INFLIGHT_GLOBAL = toPositiveInt(process.env.UPSTREAM_MAX_INFLIGHT_GLOBAL, 12);
 const UPSTREAM_GUARD_RETRY_AFTER_SEC = toPositiveInt(process.env.UPSTREAM_GUARD_RETRY_AFTER_SEC, 5);
 const UPSTREAM_HARD_TIMEOUT_MS = toPositiveInt(process.env.UPSTREAM_HARD_TIMEOUT_MS, 305_000);
+const ASYNC_IMAGE_JOB_TIMEOUT_MS = toPositiveInt(process.env.ASYNC_IMAGE_JOB_TIMEOUT_MS, 900_000);
+const ASYNC_IMAGE_JOB_TTL_MS = toPositiveInt(process.env.ASYNC_IMAGE_JOB_TTL_MS, 30 * 60_000);
+const ASYNC_IMAGE_BODY_LIMIT_BYTES = toPositiveInt(process.env.ASYNC_IMAGE_BODY_LIMIT_BYTES, 80 * 1024 * 1024);
 let upstreamImageInFlightGlobal = 0;
 const upstreamImageInFlightByUser = new Map();
+const asyncImageJobs = createAsyncImageJobStore({
+  timeoutMs: ASYNC_IMAGE_JOB_TIMEOUT_MS,
+  ttlMs: ASYNC_IMAGE_JOB_TTL_MS,
+});
 
 const isGuardedImageRoute = (rawUrl) => {
   const url = String(rawUrl || "");
@@ -189,6 +197,93 @@ const getUpstreamConfig = (model, rawUrl = "") => {
 
 const geminiNativeHandler = createGeminiNativeHandler((model) => getUpstreamConfig(model), { recordUsage, isSuperAdmin });
 
+const isAsyncImageSubmitRoute = (req) => {
+  if (req.method !== "POST") return false;
+  const url = String(req.originalUrl || "");
+  return url.includes("/api/async/v1/images/generations")
+    || url.includes("/api/async/v1/images/edits");
+};
+
+const asyncImageJobHandler = async (req, res, next) => {
+  const path = String(req.path || "");
+  if (req.method === "GET" && path.startsWith("/async/jobs/")) {
+    const id = decodeURIComponent(path.slice("/async/jobs/".length).split("/")[0] || "");
+    const job = asyncImageJobs.get(id, String(req.authUser || ""));
+    if (!job) {
+      res.status(404).json({ ok: false, message: "任务不存在或已过期。" });
+      return;
+    }
+    const payload = serializeJob(job);
+    res.status(job.status === "running" ? 202 : 200).json({ ok: true, job: payload });
+    return;
+  }
+
+  if (!isAsyncImageSubmitRoute(req)) return next();
+
+  try {
+    const body = await readRawBody(req, { limitBytes: ASYNC_IMAGE_BODY_LIMIT_BYTES });
+    const targetPath = String(req.originalUrl || "").replace(/^\/api\/async/, "");
+    const endpoint = targetPath.split("?")[0] || "";
+    const routeModel = req._routeModel;
+    const { baseUrl, authorization } = getUpstreamConfig(routeModel, targetPath);
+    const requestId = String(req.requestId || randomUUID());
+    const headers = {
+      "authorization": authorization,
+      "x-auth-user": String(req.authUser || ""),
+      "x-request-id": requestId,
+      "accept": String(req.headers.accept || "application/json"),
+    };
+    if (req.headers["content-type"]) headers["content-type"] = String(req.headers["content-type"]);
+
+    const job = asyncImageJobs.submit({
+      method: req.method,
+      targetUrl: `${baseUrl}${targetPath}`,
+      headers,
+      body,
+      requestId,
+      username: String(req.authUser || ""),
+      userId: req._quotaUserId || null,
+      endpoint,
+      model: normalizeModelId(routeModel) || null,
+    });
+
+    console.info(`[ASYNC_IMAGE] ${requestId} ${req.method} ${targetPath} -> job ${job.id} (${baseUrl})`);
+
+    job.done.finally(() => {
+      console.info(
+        `[ASYNC_IMAGE] ${requestId} job ${job.id} ${job.status}${job.upstreamStatus ? ` <- ${job.upstreamStatus}` : ""}`
+      );
+      if (!req._quotaUserId) return;
+      try {
+        recordUsage({
+          userId: req._quotaUserId,
+          username: String(req.authUser || ""),
+          endpoint,
+          model: normalizeModelId(routeModel) || null,
+          statusCode: job.status === "succeeded" ? (job.upstreamStatus || 0) : 502,
+          requestId,
+        });
+      } catch (e) {
+        console.error(`[ASYNC_IMAGE] ${requestId} usage record error: ${e.message}`);
+      }
+    });
+
+    res.status(202).json({
+      ok: true,
+      job_id: job.id,
+      request_id: requestId,
+      poll_url: `/api/async/jobs/${encodeURIComponent(job.id)}`,
+    });
+  } catch (e) {
+    const status = Number(e?.statusCode || 500);
+    res.status(status).json({
+      ok: false,
+      message: e?.message || "创建异步图片任务失败。",
+      request_id: req.requestId || undefined,
+    });
+  }
+};
+
 app.use(
   "/api",
   (req, res, next) => {
@@ -215,6 +310,7 @@ app.use(
     req._routeModel = String(req.headers["x-route-model"] || "").trim() || undefined;
     next();
   },
+  asyncImageJobHandler,
   // Hard timeout: destroy the connection if upstream hasn't responded in time.
   // http-proxy-middleware's proxyTimeout can silently fail when the upstream
   // keeps the TCP connection alive without sending HTTP data, leaving zombie

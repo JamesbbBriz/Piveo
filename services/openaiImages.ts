@@ -196,12 +196,12 @@ const toPositiveInt = (raw: unknown, fallback: number): number => {
   return v >= 0 ? v : fallback;
 };
 
-const imageRequestMaxRetries = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_REQUEST_RETRIES, 1);
+const imageRequestMaxRetries = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_REQUEST_RETRIES, 0);
 // 矩阵任务一次要打 N 次上游，瞬时 502/503/504 概率比单图聊天高一些，
 // 给个更宽的默认重试预算让短暂抖动能自愈，避免整槽位失败逼用户手动重跑。
 const batchImageRequestMaxRetries = toPositiveInt(
   (import.meta as any)?.env?.VITE_BATCH_IMAGE_REQUEST_RETRIES,
-  3
+  0
 );
 const imageRetryBaseDelayMs = toPositiveInt((import.meta as any)?.env?.VITE_IMAGE_RETRY_BASE_DELAY_MS, 800);
 const RETRYABLE_STATUS = new Set([408, 425, 500, 502, 503, 504, 522, 524]);
@@ -221,6 +221,17 @@ const imageRetryMaxDelayMs = Math.max(
 const modelFallbackCacheTtlMs = Math.max(
   5_000,
   toPositiveInt((import.meta as any)?.env?.VITE_MODEL_FALLBACK_CACHE_TTL_MS, 300_000)
+);
+const asyncImageJobsEnabled = String((import.meta as any)?.env?.VITE_ASYNC_IMAGE_JOBS_ENABLED ?? "true")
+  .trim()
+  .toLowerCase() !== "false";
+const asyncImageJobPollIntervalMs = Math.max(
+  500,
+  toPositiveInt((import.meta as any)?.env?.VITE_ASYNC_IMAGE_JOB_POLL_INTERVAL_MS, 2_000)
+);
+const asyncImageJobWaitTimeoutMs = Math.max(
+  imageFetchTimeoutMs,
+  toPositiveInt((import.meta as any)?.env?.VITE_ASYNC_IMAGE_JOB_WAIT_TIMEOUT_MS, 900_000)
 );
 const MODEL_LIST_CACHE_STORAGE_KEY = "nanobanana_model_list_cache_v1";
 
@@ -278,7 +289,9 @@ const fetchViaQueue = async (
 ): Promise<Response> => {
   const source: QueueSource = opts?.queueSource || "chat";
   return await enqueueGenerationTask(
-    async () => await fetch(input, init),
+    async () => shouldUseAsyncImageJob(input)
+      ? await fetchViaAsyncImageJob(input, init)
+      : await fetch(input, init),
     { source, signal: init.signal as AbortSignal | undefined }
   );
 };
@@ -298,6 +311,33 @@ const resolveImageFetchTimeoutMs = (modelId?: string): number => {
 const withTimeout = (signal?: AbortSignal, timeoutMs: number = imageFetchTimeoutMs): AbortSignal => {
   const timeout = AbortSignal.timeout(timeoutMs);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
+};
+
+const toRequestUrl = (input: RequestInfo | URL): URL | null => {
+  try {
+    const raw = typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+    return new URL(raw, window.location.origin);
+  } catch {
+    return null;
+  }
+};
+
+const shouldUseAsyncImageJob = (input: RequestInfo | URL): boolean => {
+  if (!asyncImageJobsEnabled || typeof window === "undefined") return false;
+  const url = toRequestUrl(input);
+  if (!url || url.origin !== window.location.origin) return false;
+  return /^\/api\/v1\/images\/(?:generations|edits)$/i.test(url.pathname);
+};
+
+const toAsyncImageJobUrl = (input: RequestInfo | URL): string => {
+  const url = toRequestUrl(input);
+  if (!url) return String(input);
+  url.pathname = url.pathname.replace(/^\/api\/v1\//i, "/api/async/v1/");
+  return `${url.pathname}${url.search}`;
 };
 
 /** 指数退避 + ±20% jitter */
@@ -329,6 +369,91 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
     };
     if (signal) signal.addEventListener("abort", onAbort, { once: true });
   });
+
+const fetchViaAsyncImageJob = async (
+  input: RequestInfo | URL,
+  init: RequestInit
+): Promise<Response> => {
+  const submitResp = await fetch(toAsyncImageJobUrl(input), init);
+  if (!submitResp.ok && submitResp.status !== 202) return submitResp;
+
+  let submitJson: any = null;
+  try {
+    submitJson = await submitResp.json();
+  } catch {
+    return new Response(JSON.stringify({ ok: false, message: "异步图片任务返回结构异常。" }), {
+      status: 502,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const jobId = String(submitJson?.job_id || "").trim();
+  const requestId = String(submitJson?.request_id || "").trim();
+  if (!jobId) {
+    return new Response(JSON.stringify({ ok: false, message: "异步图片任务缺少 job_id。", request_id: requestId || undefined }), {
+      status: 502,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const signal = init.signal as AbortSignal | undefined;
+  const deadline = Date.now() + asyncImageJobWaitTimeoutMs;
+  while (Date.now() <= deadline) {
+    if (signal?.aborted) throw new DOMException("已取消", "AbortError");
+    const pollResp = await fetch(`/api/async/jobs/${encodeURIComponent(jobId)}`, {
+      credentials: "include",
+      headers: { "Accept": "application/json" },
+      signal,
+    });
+    let pollJson: any = null;
+    try {
+      pollJson = await pollResp.json();
+    } catch {
+      // Surface the HTTP status below.
+    }
+
+    const job = pollJson?.job;
+    if (pollResp.status === 202 || job?.status === "running") {
+      await sleep(asyncImageJobPollIntervalMs, signal);
+      continue;
+    }
+
+    if (!pollResp.ok || !job) {
+      return new Response(JSON.stringify({
+        ok: false,
+        message: pollJson?.message || `异步图片任务查询失败：HTTP ${pollResp.status}`,
+        request_id: requestId || undefined,
+      }), {
+        status: pollResp.status || 502,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (job.status === "succeeded") {
+      return new Response(String(job.response_text || ""), {
+        status: Number(job.upstream_status || 200),
+        headers: {
+          "content-type": String(job.content_type || "application/json"),
+          ...(job.request_id ? { "x-request-id": String(job.request_id) } : {}),
+        },
+      });
+    }
+
+    return new Response(JSON.stringify({
+      ok: false,
+      message: job.error || "异步图片任务失败。",
+      request_id: job.request_id || requestId || undefined,
+    }), {
+      status: Number(job.upstream_status || 502),
+      headers: {
+        "content-type": "application/json",
+        ...(job.request_id ? { "x-request-id": String(job.request_id) } : {}),
+      },
+    });
+  }
+
+  throw new DOMException(`异步图片任务等待超时（${Math.round(asyncImageJobWaitTimeoutMs / 1000)} 秒）`, "TimeoutError");
+};
 
 const chooseFallbackModel = (current: string, available: string[]): string | null => {
   const normalized = Array.from(
@@ -728,6 +853,8 @@ export const imagesGenerations = async (
       const requestId = createRequestId();
       lastRequestId = requestId;
       const startedAt = Date.now();
+      const requestUrl = `${cfg.baseUrl}${endpointPath}`;
+      const waitTimeoutMs = shouldUseAsyncImageJob(requestUrl) ? asyncImageJobWaitTimeoutMs : requestTimeoutMs;
       try {
         const baseHeaders: Record<string, string> = {
           "X-Request-Id": requestId,
@@ -741,16 +868,16 @@ export const imagesGenerations = async (
               headers: baseHeaders,
               credentials: "include",
               body: buildFormData(),
-              signal: withTimeout(signal, requestTimeoutMs),
+              signal: withTimeout(signal, waitTimeoutMs),
             }
           : {
               method: "POST",
               headers: { "Content-Type": "application/json", ...baseHeaders },
               credentials: "include",
               body: JSON.stringify(jsonBody),
-              signal: withTimeout(signal, requestTimeoutMs),
+              signal: withTimeout(signal, waitTimeoutMs),
             };
-        resp = await fetchViaQueue(`${cfg.baseUrl}${endpointPath}`, init, opts);
+        resp = await fetchViaQueue(requestUrl, init, opts);
       } catch (e: any) {
         const isAbort = e instanceof DOMException && e.name === "AbortError";
         if (!isAbort || isLikelyTimeoutError(e)) {
@@ -766,7 +893,7 @@ export const imagesGenerations = async (
           continue;
         }
         const timeoutHint = isLikelyTimeoutError(e)
-          ? `（前端等待 ${Math.round(requestTimeoutMs / 1000)} 秒后超时）`
+          ? `（前端等待 ${Math.round(waitTimeoutMs / 1000)} 秒后超时）`
           : "";
         const traceHint = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
         throw new Error(
@@ -936,9 +1063,11 @@ export const imagesEdits = async (
     const requestId = createRequestId();
     lastRequestId = requestId;
     const startedAt = Date.now();
+    const requestUrl = `${cfg.baseUrl}/v1/images/edits`;
+    const waitTimeoutMs = shouldUseAsyncImageJob(requestUrl) ? asyncImageJobWaitTimeoutMs : requestTimeoutMs;
     try {
       resp = await fetchViaQueue(
-        `${cfg.baseUrl}/v1/images/edits`,
+        requestUrl,
         {
           method: "POST",
           headers: {
@@ -948,7 +1077,7 @@ export const imagesEdits = async (
           },
           credentials: "include",
           body: buildFormData(),
-          signal: withTimeout(signal, requestTimeoutMs),
+          signal: withTimeout(signal, waitTimeoutMs),
         },
         opts
       );
@@ -967,7 +1096,7 @@ export const imagesEdits = async (
         continue;
       }
       const timeoutHint = isLikelyTimeoutError(e)
-        ? `（前端等待 ${Math.round(requestTimeoutMs / 1000)} 秒后超时）`
+        ? `（前端等待 ${Math.round(waitTimeoutMs / 1000)} 秒后超时）`
         : "";
       const traceHint = lastRequestId ? ` 请求追踪ID：${lastRequestId}。` : "";
       throw new Error(

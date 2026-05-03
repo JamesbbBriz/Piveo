@@ -166,7 +166,10 @@ export const startFirstFrameVideo = async (input: BuildVideoRequestInput): Promi
     if (payload.input_reference.length > 0) {
       for (const [index, reference] of payload.input_reference.entries()) {
         const referenceBlob = await dataUrlToBlob(reference);
-        formData.append('input_reference', referenceBlob, `video-reference-${index + 1}.webp`);
+        const uploadBlob = new Blob([await referenceBlob.arrayBuffer()], {
+          type: referenceBlob.type || 'image/webp',
+        });
+        formData.append('input_reference', uploadBlob, `video-reference-${index + 1}.webp`);
       }
     }
 
@@ -197,7 +200,11 @@ export const startFirstFrameVideo = async (input: BuildVideoRequestInput): Promi
       status: String(created?.status || 'queued').toLowerCase() || 'queued',
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : '未知错误';
+    const message = error && typeof error === 'object' && 'message' in error
+      ? String((error as { message?: unknown }).message || '未知错误')
+      : error instanceof Error
+        ? error.message
+        : '未知错误';
     console.error(`[video] upstream generation failed: ${message}`);
     throw new Error(`${VIDEO_UPSTREAM_ERROR_PREFIX}：${message}`);
   }
