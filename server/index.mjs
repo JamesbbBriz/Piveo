@@ -14,6 +14,7 @@ import * as providerStore from "./services/providerStore.mjs";
 import { normalizeModelId } from "./services/providerStore.mjs";
 import { createGeminiNativeHandler } from "./middleware/geminiAdapter.mjs";
 import { createAsyncImageJobStore, readRawBody, serializeJob } from "./services/asyncImageJobs.mjs";
+import { createUpstreamInflightTracker } from "./services/upstreamInflightTracker.mjs";
 
 const IS_PROD = process.env.NODE_ENV === "production";
 const JWT_SECRET = process.env.AUTH_JWT_SECRET || "dev-only-change-me";
@@ -85,7 +86,7 @@ const toPositiveInt = (raw, fallback) => {
 const UPSTREAM_GUARD_ENABLED = String(process.env.UPSTREAM_GUARD_ENABLED || "true")
   .trim()
   .toLowerCase() !== "false";
-const UPSTREAM_MAX_INFLIGHT_PER_USER = toPositiveInt(process.env.UPSTREAM_MAX_INFLIGHT_PER_USER, 2);
+const UPSTREAM_MAX_INFLIGHT_PER_USER = toPositiveInt(process.env.UPSTREAM_MAX_INFLIGHT_PER_USER, 1);
 const UPSTREAM_MAX_INFLIGHT_GLOBAL = toPositiveInt(process.env.UPSTREAM_MAX_INFLIGHT_GLOBAL, 12);
 const UPSTREAM_GUARD_RETRY_AFTER_SEC = toPositiveInt(process.env.UPSTREAM_GUARD_RETRY_AFTER_SEC, 5);
 const UPSTREAM_HARD_TIMEOUT_MS = toPositiveInt(process.env.UPSTREAM_HARD_TIMEOUT_MS, 305_000);
@@ -97,8 +98,10 @@ const formatDurationSec = (ms) => {
   if (!Number.isFinite(n) || n < 0) return "?";
   return String(Math.round(n / 1000));
 };
-let upstreamImageInFlightGlobal = 0;
-const upstreamImageInFlightByUser = new Map();
+const upstreamInflight = createUpstreamInflightTracker({
+  maxPerUser: UPSTREAM_MAX_INFLIGHT_PER_USER,
+  maxGlobal: UPSTREAM_MAX_INFLIGHT_GLOBAL,
+});
 const asyncImageJobs = createAsyncImageJobStore({
   timeoutMs: ASYNC_IMAGE_JOB_TIMEOUT_MS,
   ttlMs: ASYNC_IMAGE_JOB_TTL_MS,
@@ -118,8 +121,8 @@ const upstreamGuard = (req, res, next) => {
   }
 
   const user = String(req.authUser || "unknown");
-  const userInFlight = Number(upstreamImageInFlightByUser.get(user) || 0);
-  if (upstreamImageInFlightGlobal >= UPSTREAM_MAX_INFLIGHT_GLOBAL || userInFlight >= UPSTREAM_MAX_INFLIGHT_PER_USER) {
+  const slot = upstreamInflight.acquire(user);
+  if (!slot.allowed) {
     const requestId = String(req.requestId || "");
     res.setHeader("Retry-After", String(UPSTREAM_GUARD_RETRY_AFTER_SEC));
     res.status(429).json({
@@ -130,22 +133,14 @@ const upstreamGuard = (req, res, next) => {
     return;
   }
 
-  upstreamImageInFlightGlobal += 1;
-  upstreamImageInFlightByUser.set(user, userInFlight + 1);
-
-  let cleaned = false;
-  const cleanup = () => {
-    if (cleaned) return;
-    cleaned = true;
-    upstreamImageInFlightGlobal = Math.max(0, upstreamImageInFlightGlobal - 1);
-    const cur = Number(upstreamImageInFlightByUser.get(user) || 0);
-    if (cur <= 1) upstreamImageInFlightByUser.delete(user);
-    else upstreamImageInFlightByUser.set(user, cur - 1);
+  req._upstreamGuardRelease = slot.release;
+  req._upstreamGuardHeldForAsync = false;
+  const releaseUnlessAsyncJobOwnsSlot = () => {
+    if (!req._upstreamGuardHeldForAsync) slot.release();
   };
-
-  res.on("finish", cleanup);
-  res.on("close", cleanup);
-  req.on("aborted", cleanup);
+  res.on("finish", releaseUnlessAsyncJobOwnsSlot);
+  res.on("close", releaseUnlessAsyncJobOwnsSlot);
+  req.on("aborted", releaseUnlessAsyncJobOwnsSlot);
   next();
 };
 
@@ -158,7 +153,7 @@ const quotaGuard = (req, res, next) => {
   if (!user) return next();
   req._quotaUserId = user.id;
   if (isSuperAdmin(username)) return next();
-  const userInFlight = Number(upstreamImageInFlightByUser.get(username) || 0);
+  const userInFlight = upstreamInflight.countForUser(username);
   const result = checkQuota(user.id, userInFlight);
   if (!result.allowed) {
     return res.status(429).json({ ok: false, message: result.message, quota_exceeded: true });
@@ -256,12 +251,17 @@ const asyncImageJobHandler = async (req, res, next) => {
       `[ASYNC_IMAGE] ${requestId} user=${req.authUser || "-"} model=${normalizeModelId(routeModel) || "-"} bytes=${body.length} ${req.method} ${targetPath} -> job ${job.id} (${baseUrl})`
     );
 
+    req._upstreamGuardHeldForAsync = true;
+
     job.done.finally(() => {
       const elapsed = formatDurationSec((job.finishedAt || Date.now()) - job.createdAt);
       const errorSuffix = job.error ? ` error="${String(job.error).replace(/\s+/g, " ").slice(0, 500)}"` : "";
       console.info(
         `[ASYNC_IMAGE] ${requestId} user=${req.authUser || "-"} job ${job.id} ${job.status}${job.upstreamStatus ? ` <- ${job.upstreamStatus}` : ""} duration=${elapsed}s${errorSuffix}`
       );
+      if (req._upstreamGuardHeldForAsync && typeof req._upstreamGuardRelease === "function") {
+        req._upstreamGuardRelease();
+      }
       if (!req._quotaUserId) return;
       try {
         recordUsage({

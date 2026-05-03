@@ -79,7 +79,7 @@ const toPositiveNumber = (raw: unknown, fallback: number): number => {
 const env = (import.meta as any)?.env || {};
 
 const policy: QueuePolicy = {
-  initialMaxInFlight: Math.min(Math.max(toPositiveInt(env.VITE_QUEUE_INITIAL_MAX_INFLIGHT, 2), 1), 2),
+  initialMaxInFlight: Math.min(Math.max(toPositiveInt(env.VITE_QUEUE_INITIAL_MAX_INFLIGHT, 1), 1), 2),
   maxPending: Math.max(1, toPositiveInt(env.VITE_CHAT_QUEUE_MAX_PENDING, 20)),
   enqueueTimeoutMs: Math.max(1000, toPositiveInt(env.VITE_QUEUE_ENQUEUE_TIMEOUT_MS, 8000)),
   metricsWindowSize: Math.max(5, toPositiveInt(env.VITE_QUEUE_METRICS_WINDOW_SIZE, 20)),
@@ -347,4 +347,3 @@ export const shouldUseConservativeRetry = (queueDepthHint = 0): boolean => {
   if (queueDepthHint > 0) return true;
   return stats.state === "DEGRADED" || stats.state === "PAUSED_UNTIL" || stats.pending > 0;
 };
-
