@@ -15,11 +15,13 @@ const EMERGENCY_BACKUP_PREFIX = "nanobanana_emergency_backup";
 // per-user 待同步项目 ID 列表：sync 重试耗尽后写入，下次 bootstrap 重新提交
 const PENDING_SYNC_PROJECTS_PREFIX = "nanobanana_pending_sync_projects";
 const PENDING_SYNC_BATCH_JOBS_PREFIX = "nanobanana_pending_sync_batch_jobs";
+const SERVER_AUTHORITATIVE_STORAGE_KEY_PREFIX = "nanobanana_server_authoritative_storage_v1";
 
 const DB_NAME_PREFIX = "nanobanana_persistence_v2";
 const DB_VERSION = 1;
 const STORE_NAME = "kv";
 const LOCAL_BACKUP_MAX_BYTES = 2 * 1024 * 1024;
+const SERVER_AUTHORITATIVE_STORAGE = true;
 
 type StoreKey = "sessions" | "templates" | "models" | "products" | "batch_jobs" | "projects";
 
@@ -117,6 +119,24 @@ const safeLocalSet = (key: string, value: unknown) => {
     console.error(`写入 localStorage 失败: ${key}`, e);
   }
 };
+
+const serverAuthoritativeMigrationKey = (): string =>
+  storageUserId
+    ? `${SERVER_AUTHORITATIVE_STORAGE_KEY_PREFIX}_${storageUserId}`
+    : SERVER_AUTHORITATIVE_STORAGE_KEY_PREFIX;
+
+const heavyLocalStorageKeys = (): string[] => [
+  SESSIONS_KEY,
+  TEMPLATES_KEY,
+  MODELS_KEY,
+  BATCH_JOBS_KEY,
+  PRODUCTS_KEY,
+  PROJECTS_KEY,
+  emergencyKey("sessions"),
+  emergencyKey("batch_jobs"),
+  pendingSyncKey("projects"),
+  pendingSyncKey("batch_jobs"),
+];
 
 /** 重置连接缓存，下次操作会重新打开 */
 const resetDbPromise = () => {
@@ -328,11 +348,55 @@ const migrateLocalToIndexedDb = async () => {
 };
 
 export const initPersistentStorage = async (): Promise<void> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) {
+    await purgeHeavyLocalPersistence();
+    return;
+  }
   await migrateLocalToIndexedDb();
+};
+
+export const purgeHeavyLocalPersistence = async (): Promise<void> => {
+  if (!hasWindow()) return;
+  const migrationKey = serverAuthoritativeMigrationKey();
+  try {
+    for (const key of heavyLocalStorageKeys()) {
+      window.localStorage.removeItem(key);
+    }
+  } catch (e) {
+    console.warn("[Storage] 清理 heavy localStorage 失败：", e);
+  }
+
+  try {
+    const db = await openDb();
+    if (db) db.close();
+  } catch {
+    // ignore
+  }
+  resetDbPromise();
+
+  if (typeof indexedDB !== "undefined") {
+    try {
+      await new Promise<void>((resolve) => {
+        const req = indexedDB.deleteDatabase(getDbName());
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+        req.onblocked = () => resolve();
+      });
+    } catch (e) {
+      console.warn("[Storage] 清理 heavy IndexedDB 失败：", e);
+    }
+  }
+
+  try {
+    window.localStorage.setItem(migrationKey, "1");
+  } catch {
+    // small marker only; ignore
+  }
 };
 
 /** 延迟写入 localStorage 作为备份（不阻塞主流程） */
 const deferLocalSet = (key: string, value: unknown) => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return;
   const cb = () => {
     if (!hasWindow()) return;
     try {
@@ -356,6 +420,7 @@ const deferLocalSet = (key: string, value: unknown) => {
 };
 
 const writeSessionsBackupSync = (sessions: Session[]) => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return;
   if (!hasWindow()) return;
   try {
     const serialized = JSON.stringify(sessions);
@@ -383,6 +448,7 @@ const emergencyKey = (kind: "sessions" | "batch_jobs"): string =>
     : `${EMERGENCY_BACKUP_PREFIX}_${kind}`;
 
 export const backupSessionsEmergency = (sessions: Session[]): void => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return;
   if (!hasWindow()) return;
   try {
     const serialized = JSON.stringify(sessions);
@@ -398,6 +464,7 @@ export const backupSessionsEmergency = (sessions: Session[]): void => {
 };
 
 export const backupBatchJobsEmergency = (jobs: BatchJob[]): void => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return;
   if (!hasWindow()) return;
   try {
     const serialized = JSON.stringify(jobs);
@@ -410,6 +477,7 @@ export const backupBatchJobsEmergency = (jobs: BatchJob[]): void => {
 };
 
 export const loadEmergencySessionsBackup = (): Session[] | null => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return null;
   if (!hasWindow()) return null;
   try {
     const raw = window.localStorage.getItem(emergencyKey("sessions"));
@@ -422,6 +490,7 @@ export const loadEmergencySessionsBackup = (): Session[] | null => {
 };
 
 export const loadEmergencyBatchJobsBackup = (): BatchJob[] | null => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return null;
   if (!hasWindow()) return null;
   try {
     const raw = window.localStorage.getItem(emergencyKey("batch_jobs"));
@@ -496,6 +565,7 @@ export const getPendingSyncIds = (kind: "projects" | "batch_jobs"): string[] => 
 };
 
 export const saveSessions = async (sessions: Session[]): Promise<void> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return;
   // Merge: for sessions whose messages haven't been lazy-loaded yet,
   // preserve the existing cached messages from IndexedDB to avoid data loss.
   const hasUnloaded = sessions.some((s) => (s as any).messagesLoaded === false);
@@ -519,50 +589,59 @@ export const saveSessions = async (sessions: Session[]): Promise<void> => {
 };
 
 export const loadSessions = async (): Promise<Session[]> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return [];
   const idbData = await idbGet<Session[]>("sessions");
   if (Array.isArray(idbData)) return idbData;
   return safeLocalGet<Session[]>(SESSIONS_KEY, []);
 };
 
 export const saveTemplates = async (templates: SystemTemplate[]): Promise<void> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return;
   await idbSet("templates", templates);
   deferLocalSet(TEMPLATES_KEY, templates);
 };
 
 export const loadTemplates = async (): Promise<SystemTemplate[]> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return DEFAULT_SYSTEM_TEMPLATES;
   const idbData = await idbGet<SystemTemplate[]>("templates");
   if (Array.isArray(idbData) && idbData.length > 0) return idbData;
   return safeLocalGet<SystemTemplate[]>(TEMPLATES_KEY, DEFAULT_SYSTEM_TEMPLATES);
 };
 
 export const saveModels = async (models: ModelCharacter[]): Promise<void> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return;
   await idbSet("models", models);
   deferLocalSet(MODELS_KEY, models);
 };
 
 export const loadModels = async (): Promise<ModelCharacter[]> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return [];
   const idbData = await idbGet<ModelCharacter[]>("models");
   if (Array.isArray(idbData)) return idbData;
   return safeLocalGet<ModelCharacter[]>(MODELS_KEY, []);
 };
 
 export const saveProducts = async (products: ProductCatalogItem[]): Promise<void> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return;
   await idbSet("products", products);
   deferLocalSet(PRODUCTS_KEY, products);
 };
 
 export const loadProducts = async (): Promise<ProductCatalogItem[]> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return [];
   const idbData = await idbGet<ProductCatalogItem[]>("products");
   if (Array.isArray(idbData)) return idbData;
   return safeLocalGet<ProductCatalogItem[]>(PRODUCTS_KEY, []);
 };
 
 export const saveBatchJobs = async (jobs: BatchJob[]): Promise<void> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return;
   await idbSet("batch_jobs", jobs);
   deferLocalSet(BATCH_JOBS_KEY, jobs);
 };
 
 export const loadBatchJobs = async (): Promise<BatchJob[]> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return [];
   const idbData = await idbGet<BatchJob[]>("batch_jobs");
   const rawJobs = Array.isArray(idbData) ? idbData : safeLocalGet<BatchJob[]>(BATCH_JOBS_KEY, []);
   // 数据兼容：确保新字段存在（productImageUrl, modelImageUrl）
@@ -576,11 +655,13 @@ export const loadBatchJobs = async (): Promise<BatchJob[]> => {
 // === Project persistence ===
 
 export const saveProjects = async (projects: Project[]): Promise<void> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return;
   await idbSet("projects", projects);
   deferLocalSet(PROJECTS_KEY, projects);
 };
 
 export const loadProjects = async (): Promise<Project[]> => {
+  if (SERVER_AUTHORITATIVE_STORAGE) return [];
   const idbData = await idbGet<Project[]>("projects");
   if (Array.isArray(idbData)) return idbData;
   return safeLocalGet<Project[]>(PROJECTS_KEY, []);

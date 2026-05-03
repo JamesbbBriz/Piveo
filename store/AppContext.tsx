@@ -9,25 +9,12 @@ import { getEffectiveApiConfig } from '@/services/apiConfig';
 import { loadDefaultPreferences } from '@/components/SettingsPanel';
 import {
   initPersistentStorage,
-  loadSessions,
-  loadBatchJobs,
-  loadTemplates,
-  loadModels,
-  loadProducts,
-  saveSessions,
-  saveBatchJobs,
   saveTemplates,
   saveModels,
   saveProducts,
   setStorageUserId,
   saveCurrentSessionId,
   loadCurrentSessionId,
-  backupSessionsEmergency,
-  backupBatchJobsEmergency,
-  loadEmergencySessionsBackup,
-  loadEmergencyBatchJobsBackup,
-  clearEmergencyBackups,
-  setOnStorageQuotaExceeded,
 } from '@/services/storage';
 import { syncService, type SyncStatus } from '@/services/sync';
 import { getSession as getAuthSession } from '@/services/auth';
@@ -406,7 +393,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.currentSessionId, ui.authUser, project.messageLoadAttempts[project.currentSessionId ?? ""]]);
 
-  // Bootstrap data after auth — server-first with IndexedDB fallback
+  // Bootstrap data after auth — server is the source of truth.
   useEffect(() => {
     if (!ui.authReady || !ui.authUser) return;
     let cancelled = false;
@@ -429,7 +416,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       setHasHydratedStorage(false);
 
-      // Namespace storage per user and initialize (await DB close before opening new)
+      // Namespace small local state per user and purge legacy heavy browser storage.
       await setStorageUserId(ui.authUser!);
       await initPersistentStorage();
       syncService.init(ui.authUser!);
@@ -446,7 +433,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           new Promise<never>((_, reject) => setTimeout(() => reject(new Error("pullAll timeout")), 5000)),
         ]);
       } catch (err) {
-        console.warn("[Bootstrap] 服务端拉取失败，回退到 IndexedDB:", err);
+        console.warn("[Bootstrap] 服务端拉取失败，本地重数据持久化已停用：", err);
       }
 
       if (cancelled) return;
@@ -534,155 +521,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             : normalized[0].id;
           projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: initialId });
           prevSessionsRef.current = normalized;
-          // Write to IndexedDB as cache
-          void saveSessions(normalized);
         } else {
-          // Server has no projects — check local for one-time migration
-          const localSessions = await loadSessions();
-          if (localSessions.length > 0) {
-            const normalized = normalizeSessions(localSessions, resolvedDefaultTemplate);
-            projectDispatch({ type: SET_SESSIONS, payload: normalized });
-            const initialId = restoredSessionId && normalized.some((s) => s.id === restoredSessionId)
-              ? restoredSessionId
-              : normalized[0].id;
-            projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: initialId });
-            prevSessionsRef.current = normalized;
-            // Push local data to server
-            console.log("[Sync] 服务端无项目数据，推送本地项目到服务端");
-            for (const s of normalized) {
-              syncService.saveProject(s);
-            }
-          } else {
-            // Create empty session
-            const prefs = loadDefaultPreferences();
-            const ar = prefs.aspectRatio ?? DEFAULT_ASPECT_RATIO;
-            const newSession: Session = {
-              id: uuidv4(),
-              title: '新项目',
-              messages: [],
-              updatedAt: Date.now(),
-              messagesLoaded: true,
-              settings: {
-                aspectRatio: ar,
-                systemPrompt: resolvedDefaultTemplate,
-                selectedModelId: null,
-                creationWorkflow: 'product',
-                productScale: prefs.productScale ?? ProductScale.Standard,
-                responseFormat: "url",
-                batchCount: prefs.batchCount ?? 1,
-                batchSizes: [getSupportedSizeForAspect(ar)],
-                imageSize: "2K" as const,
-                autoUseLastImage: true,
-                productImage: null,
-              },
-            };
-            projectDispatch({ type: SET_SESSIONS, payload: [newSession] });
-            projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: newSession.id });
-            prevSessionsRef.current = [newSession];
-          }
-        }
-
-        // Batch Jobs
-        if (serverData.batchJobs.length > 0) {
-          const mappedBatchJobs = mapServerBatchJobsToFrontend(serverData.batchJobs);
-          batchDispatch({ type: SET_BATCH_JOBS, payload: mappedBatchJobs });
-          batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: mappedBatchJobs[0]?.id || null });
-          prevBatchJobsRef.current = mappedBatchJobs;
-          void saveBatchJobs(mappedBatchJobs);
-        } else {
-          // Check local for one-time migration
-          const localBatchJobs = await loadBatchJobs();
-          if (localBatchJobs.length > 0) {
-            batchDispatch({ type: SET_BATCH_JOBS, payload: localBatchJobs });
-            batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: localBatchJobs[0]?.id || null });
-            prevBatchJobsRef.current = localBatchJobs;
-            console.log("[Sync] 服务端无矩阵数据，推送本地矩阵到服务端");
-            for (const j of localBatchJobs) {
-              syncService.saveBatchJob(j);
-            }
-          }
-        }
-
-        // One-time migration for models/products/templates
-        if (serverData.models.length === 0) {
-          const localModels = await loadModels();
-          if (localModels.length > 0) {
-            libraryDispatch({ type: SET_MODELS, payload: localModels });
-            console.log("[Sync] 服务端无模特数据，推送本地模特到服务端");
-            for (const m of localModels) syncService.saveModel(m);
-          }
-        }
-        if (serverData.products.length === 0) {
-          const localProducts = await loadProducts();
-          if (localProducts.length > 0) {
-            libraryDispatch({ type: SET_PRODUCTS, payload: localProducts });
-            console.log("[Sync] 服务端无产品数据，推送本地产品到服务端");
-            for (const p of localProducts) syncService.saveProduct(p);
-          }
-        }
-        if (serverData.templates.length === 0) {
-          const localTemplates = await loadTemplates();
-          if (localTemplates.length > 0) {
-            // Merge admin defaults + local templates, push local to server
-            const localDefaultIds = new Set(effectiveDefaults.map((d: any) => d.id));
-            const localUserOnly = localTemplates.filter((t: any) => !localDefaultIds.has(t.id));
-            libraryDispatch({ type: SET_TEMPLATES, payload: [...effectiveDefaults, ...localUserOnly] });
-            console.log("[Sync] 服务端无模板数据，推送本地模板到服务端");
-            syncService.saveTemplates(localUserOnly);
-          }
-          // effectiveDefaults already merged via mergedTemplates above
-        }
-      } else {
-        // ——— Fallback path: load from IndexedDB ———
-        console.log("[Bootstrap] 使用本地 IndexedDB 数据");
-
-        const [loadedTemplates, loadedModels, loadedProducts, loadedSessionsRaw, loadedBatchJobsRaw] = await Promise.all([
-          loadTemplates(),
-          loadModels(),
-          loadProducts(),
-          loadSessions(),
-          loadBatchJobs(),
-        ]);
-        if (cancelled) return;
-
-        // ② 紧急备份兜底：IDB 也为空（用户清缓存 / 浏览器 OOM 杀进程）时，
-        // 用 beforeunload/pagehide 同步落盘的 localStorage 备份继续救一下，
-        // 防止"刷新前 2 秒生成的图丢"再次发生。
-        let loadedSessions = loadedSessionsRaw;
-        if (loadedSessions.length === 0) {
-          const emergency = loadEmergencySessionsBackup();
-          if (emergency && emergency.length > 0) {
-            console.warn(`[Bootstrap] IDB 为空，从紧急备份恢复 ${emergency.length} 个 sessions`);
-            loadedSessions = emergency;
-          }
-        }
-        let loadedBatchJobs = loadedBatchJobsRaw;
-        if (!loadedBatchJobs || loadedBatchJobs.length === 0) {
-          const emergency = loadEmergencyBatchJobsBackup();
-          if (emergency && emergency.length > 0) {
-            console.warn(`[Bootstrap] IDB 为空，从紧急备份恢复 ${emergency.length} 个 batch jobs`);
-            loadedBatchJobs = emergency;
-          }
-        }
-
-        // Merge admin defaults + local templates (dedup by id)
-        const localDefaultIds = new Set(effectiveDefaults.map((d: any) => d.id));
-        const localUserOnly = loadedTemplates.filter((t: any) => !localDefaultIds.has(t.id));
-        const resolvedTemplates = [...effectiveDefaults, ...localUserOnly];
-        libraryDispatch({ type: SET_TEMPLATES, payload: resolvedTemplates });
-        libraryDispatch({ type: SET_MODELS, payload: loadedModels });
-        libraryDispatch({ type: SET_PRODUCTS, payload: loadedProducts });
-
-        if (loadedSessions.length > 0) {
-          const fallbackDefaultTemplate = resolvedTemplates.length > 0 ? resolvedTemplates[0].content : "";
-          const normalized = normalizeSessions(loadedSessions, fallbackDefaultTemplate);
-          projectDispatch({ type: SET_SESSIONS, payload: normalized });
-          const initialId = restoredSessionId && normalized.some((s) => s.id === restoredSessionId)
-            ? restoredSessionId
-            : normalized[0].id;
-          projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: initialId });
-        } else {
-          const fallbackDefaultTemplate = resolvedTemplates.length > 0 ? resolvedTemplates[0].content : '';
           const prefs = loadDefaultPreferences();
           const ar = prefs.aspectRatio ?? DEFAULT_ASPECT_RATIO;
           const newSession: Session = {
@@ -693,7 +532,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             messagesLoaded: true,
             settings: {
               aspectRatio: ar,
-              systemPrompt: fallbackDefaultTemplate,
+              systemPrompt: resolvedDefaultTemplate,
               selectedModelId: null,
               creationWorkflow: 'product',
               productScale: prefs.productScale ?? ProductScale.Standard,
@@ -707,20 +546,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           };
           projectDispatch({ type: SET_SESSIONS, payload: [newSession] });
           projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: newSession.id });
+          prevSessionsRef.current = [newSession];
         }
 
-        if (Array.isArray(loadedBatchJobs)) {
-          batchDispatch({ type: SET_BATCH_JOBS, payload: loadedBatchJobs });
-          batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: loadedBatchJobs[0]?.id || null });
-          prevBatchJobsRef.current = loadedBatchJobs;
+        // Batch Jobs
+        if (serverData.batchJobs.length > 0) {
+          const mappedBatchJobs = mapServerBatchJobsToFrontend(serverData.batchJobs);
+          batchDispatch({ type: SET_BATCH_JOBS, payload: mappedBatchJobs });
+          batchDispatch({ type: SET_SELECTED_BATCH_JOB_ID, payload: mappedBatchJobs[0]?.id || null });
+          prevBatchJobsRef.current = mappedBatchJobs;
         }
 
-        prevSessionsRef.current = loadedSessions;
+      } else {
+        libraryDispatch({ type: SET_TEMPLATES, payload: effectiveDefaults });
+        libraryDispatch({ type: SET_MODELS, payload: [] });
+        libraryDispatch({ type: SET_PRODUCTS, payload: [] });
+        const prefs = loadDefaultPreferences();
+        const ar = prefs.aspectRatio ?? DEFAULT_ASPECT_RATIO;
+        const newSession: Session = {
+          id: uuidv4(),
+          title: '新项目',
+          messages: [],
+          updatedAt: Date.now(),
+          messagesLoaded: true,
+          settings: {
+            aspectRatio: ar,
+            systemPrompt: defaultTemplate,
+            selectedModelId: null,
+            creationWorkflow: 'product',
+            productScale: prefs.productScale ?? ProductScale.Standard,
+            responseFormat: "url",
+            batchCount: prefs.batchCount ?? 1,
+            batchSizes: [getSupportedSizeForAspect(ar)],
+            imageSize: "2K" as const,
+            autoUseLastImage: true,
+            productImage: null,
+          },
+        };
+        projectDispatch({ type: SET_SESSIONS, payload: [newSession] });
+        projectDispatch({ type: SET_CURRENT_SESSION_ID, payload: newSession.id });
+        prevSessionsRef.current = [newSession];
       }
 
       setHasHydratedStorage(true);
-      // 既然 hydration 跑完，紧急备份的使命就结束了；下次 unload 会写入新版本
-      clearEmergencyBackups();
     };
     void bootstrap();
     return () => { cancelled = true; };
@@ -795,15 +663,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasHydratedStorage, ui.authUser, project.sessions]);
 
-  // ① 立即写 IDB（无 debounce）—— 修复"刷新前 2 秒生成的图丢"。
-  // saveSessions 内部对 messagesLoaded=false 的 session 会从缓存合并 messages，
-  // 所以反复触发是幂等且安全的。这是最关键的一道防线。
-  useEffect(() => {
-    if (!hasHydratedStorage) return;
-    void saveSessions(project.sessions);
-  }, [project.sessions, hasHydratedStorage]);
-
-  // ② 服务器同步保留 2s debounce —— 网络成本较高，攒一会儿再发
+  // 服务器同步保留 2s debounce —— 浏览器本地不再持久化 sessions。
   useEffect(() => {
     if (!hasHydratedStorage) return;
     pendingSessionsRef.current = project.sessions;
@@ -837,13 +697,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [project.sessions, hasHydratedStorage]);
 
-  // ① 立即写 IDB（无 debounce），与 sessions 同样的安全策略
-  useEffect(() => {
-    if (!hasHydratedStorage) return;
-    void saveBatchJobs(batch.batchJobs);
-  }, [batch.batchJobs, hasHydratedStorage]);
-
-  // ② 服务器同步保留 2s debounce
+  // 服务器同步保留 2s debounce —— 浏览器本地不再持久化 batch jobs。
   useEffect(() => {
     if (!hasHydratedStorage) return;
     pendingBatchJobsRef.current = batch.batchJobs;
@@ -876,30 +730,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, [batch.batchJobs, hasHydratedStorage]);
 
-  // Flush on beforeunload / pagehide.
-  // 关键：浏览器关闭瞬间 IndexedDB 的 async 事务不保证完成，
-  // 必须先用同步的 localStorage emergency backup 兜一层底——
-  // bootstrap 路径在 IDB 为空时会优先读这个备份，刷新前几秒生成的图就能找回来。
-  // pagehide 事件比 beforeunload 在 Safari/iOS 下更可靠，所以两个都监听。
+  // Flush pending server sync timers on beforeunload / pagehide.
+  // 不再写 localStorage/IndexedDB emergency backup，避免大图再次撑爆浏览器配额。
   useEffect(() => {
     const flushAll = () => {
-      // 同步路径：localStorage 写入是同步的，浏览器一定会等它完成
-      const latestSessions = pendingSessionsRef.current ?? latestSessionsRef.current;
-      const latestBatch = pendingBatchJobsRef.current ?? latestBatchJobsRef.current;
-      if (latestSessions && latestSessions.length > 0) {
-        backupSessionsEmergency(latestSessions);
-      }
-      if (latestBatch && latestBatch.length > 0) {
-        backupBatchJobsEmergency(latestBatch);
-      }
-
-      // 异步路径：尽力而为，能完成就完成
       if (saveSessionsTimerRef.current) {
         clearTimeout(saveSessionsTimerRef.current);
         saveSessionsTimerRef.current = null;
       }
       if (pendingSessionsRef.current) {
-        void saveSessions(pendingSessionsRef.current);
+        for (const s of pendingSessionsRef.current) {
+          if (s.messagesLoaded !== false) syncService.saveProject(s);
+        }
         pendingSessionsRef.current = null;
       }
       if (saveBatchJobsTimerRef.current) {
@@ -907,10 +749,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         saveBatchJobsTimerRef.current = null;
       }
       if (pendingBatchJobsRef.current) {
-        void saveBatchJobs(pendingBatchJobsRef.current);
+        for (const j of pendingBatchJobsRef.current) {
+          syncService.saveBatchJob(j);
+        }
         pendingBatchJobsRef.current = null;
-      } else if (latestBatchJobsRef.current.length > 0) {
-        void saveBatchJobs(latestBatchJobsRef.current);
       }
     };
     window.addEventListener("beforeunload", flushAll);
@@ -952,14 +794,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     window.addEventListener("beforeunload", guardUnload);
     return () => window.removeEventListener("beforeunload", guardUnload);
-  }, []);
-
-  // ⑤ 把 storage 的 QuotaExceededError 接到 syncStatus.quotaExceeded → 红条提示用户清理
-  useEffect(() => {
-    setOnStorageQuotaExceeded(() => {
-      syncService.markQuotaExceeded();
-    });
-    return () => setOnStorageQuotaExceeded(null);
   }, []);
 
   // ⑥ 多 tab 防覆盖：另一个 tab 保存了同 session 时收到广播，
