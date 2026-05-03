@@ -13,7 +13,7 @@ import { checkQuota, recordUsage } from "./services/usageTracker.mjs";
 import * as providerStore from "./services/providerStore.mjs";
 import { normalizeModelId } from "./services/providerStore.mjs";
 import { createGeminiNativeHandler } from "./middleware/geminiAdapter.mjs";
-import { createAsyncImageJobStore, readRawBody, serializeJob } from "./services/asyncImageJobs.mjs";
+import { createAsyncImageJobStore, readRawBody, serializeJob, summarizeImageRequest } from "./services/asyncImageJobs.mjs";
 import { createUpstreamInflightTracker } from "./services/upstreamInflightTracker.mjs";
 
 const IS_PROD = process.env.NODE_ENV === "production";
@@ -234,6 +234,10 @@ const asyncImageJobHandler = async (req, res, next) => {
       "accept": String(req.headers.accept || "application/json"),
     };
     if (req.headers["content-type"]) headers["content-type"] = String(req.headers["content-type"]);
+    const capture = summarizeImageRequest({
+      contentType: String(req.headers["content-type"] || ""),
+      body,
+    });
 
     const job = asyncImageJobs.submit({
       method: req.method,
@@ -250,14 +254,23 @@ const asyncImageJobHandler = async (req, res, next) => {
     console.info(
       `[ASYNC_IMAGE] ${requestId} user=${req.authUser || "-"} model=${normalizeModelId(routeModel) || "-"} bytes=${body.length} ${req.method} ${targetPath} -> job ${job.id} (${baseUrl})`
     );
+    console.info(`[ASYNC_IMAGE_CAPTURE] ${requestId} ${JSON.stringify({
+      user: String(req.authUser || ""),
+      endpoint,
+      route_model: normalizeModelId(routeModel) || null,
+      capture,
+    })}`);
 
     req._upstreamGuardHeldForAsync = true;
 
     job.done.finally(() => {
       const elapsed = formatDurationSec((job.finishedAt || Date.now()) - job.createdAt);
       const errorSuffix = job.error ? ` error="${String(job.error).replace(/\s+/g, " ").slice(0, 500)}"` : "";
+      const responseSuffix = job.upstreamStatus && job.upstreamStatus >= 400
+        ? ` upstream_body="${String(job.responseText || "").replace(/\s+/g, " ").slice(0, 500)}"`
+        : "";
       console.info(
-        `[ASYNC_IMAGE] ${requestId} user=${req.authUser || "-"} job ${job.id} ${job.status}${job.upstreamStatus ? ` <- ${job.upstreamStatus}` : ""} duration=${elapsed}s${errorSuffix}`
+        `[ASYNC_IMAGE] ${requestId} user=${req.authUser || "-"} job ${job.id} ${job.status}${job.upstreamStatus ? ` <- ${job.upstreamStatus}` : ""} duration=${elapsed}s${errorSuffix}${responseSuffix}`
       );
       if (req._upstreamGuardHeldForAsync && typeof req._upstreamGuardRelease === "function") {
         req._upstreamGuardRelease();

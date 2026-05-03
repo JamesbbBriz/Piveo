@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAsyncImageJobStore } from '../../server/services/asyncImageJobs.mjs';
+import { createAsyncImageJobStore, summarizeImageRequest } from '../../server/services/asyncImageJobs.mjs';
 
 describe('async image jobs', () => {
   it('returns immediately and stores the upstream response when the background request completes', async () => {
@@ -44,5 +44,33 @@ describe('async image jobs', () => {
     expect(completed?.status).toBe('succeeded');
     expect(completed?.upstreamStatus).toBe(200);
     expect(completed?.responseText).toContain('https://img.test/a.png');
+  });
+
+  it('summarizes multipart image requests without storing image bytes', () => {
+    const boundary = 'test-boundary';
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\ngpt-image-2-pro\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\nmake a white dress\r\n`),
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="image"; filename="a.png"\r\nContent-Type: image/png\r\n\r\n`),
+      Buffer.from([1, 2, 3, 4, 5]),
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+
+    const summary = summarizeImageRequest({
+      contentType: `multipart/form-data; boundary=${boundary}`,
+      body,
+    });
+
+    expect(summary.fields.model).toBe('gpt-image-2-pro');
+    expect(summary.prompt_preview).toBe('make a white dress');
+    expect(summary.prompt_hash).toMatch(/^[a-f0-9]{16}$/);
+    expect(summary.image_count).toBe(1);
+    expect(summary.image_bytes).toBe(5);
+    expect(summary.images[0]).toMatchObject({
+      field: 'image',
+      filename: 'a.png',
+      content_type: 'image/png',
+      bytes: 5,
+    });
   });
 });
