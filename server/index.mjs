@@ -92,6 +92,11 @@ const UPSTREAM_HARD_TIMEOUT_MS = toPositiveInt(process.env.UPSTREAM_HARD_TIMEOUT
 const ASYNC_IMAGE_JOB_TIMEOUT_MS = toPositiveInt(process.env.ASYNC_IMAGE_JOB_TIMEOUT_MS, 900_000);
 const ASYNC_IMAGE_JOB_TTL_MS = toPositiveInt(process.env.ASYNC_IMAGE_JOB_TTL_MS, 30 * 60_000);
 const ASYNC_IMAGE_BODY_LIMIT_BYTES = toPositiveInt(process.env.ASYNC_IMAGE_BODY_LIMIT_BYTES, 80 * 1024 * 1024);
+const formatDurationSec = (ms) => {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return "?";
+  return String(Math.round(n / 1000));
+};
 let upstreamImageInFlightGlobal = 0;
 const upstreamImageInFlightByUser = new Map();
 const asyncImageJobs = createAsyncImageJobStore({
@@ -247,11 +252,15 @@ const asyncImageJobHandler = async (req, res, next) => {
       model: normalizeModelId(routeModel) || null,
     });
 
-    console.info(`[ASYNC_IMAGE] ${requestId} ${req.method} ${targetPath} -> job ${job.id} (${baseUrl})`);
+    console.info(
+      `[ASYNC_IMAGE] ${requestId} user=${req.authUser || "-"} model=${normalizeModelId(routeModel) || "-"} bytes=${body.length} ${req.method} ${targetPath} -> job ${job.id} (${baseUrl})`
+    );
 
     job.done.finally(() => {
+      const elapsed = formatDurationSec((job.finishedAt || Date.now()) - job.createdAt);
+      const errorSuffix = job.error ? ` error="${String(job.error).replace(/\s+/g, " ").slice(0, 500)}"` : "";
       console.info(
-        `[ASYNC_IMAGE] ${requestId} job ${job.id} ${job.status}${job.upstreamStatus ? ` <- ${job.upstreamStatus}` : ""}`
+        `[ASYNC_IMAGE] ${requestId} user=${req.authUser || "-"} job ${job.id} ${job.status}${job.upstreamStatus ? ` <- ${job.upstreamStatus}` : ""} duration=${elapsed}s${errorSuffix}`
       );
       if (!req._quotaUserId) return;
       try {
@@ -416,7 +425,18 @@ if (process.env.NODE_ENV === "production") {
   const __dirname = path.dirname(__filename);
   const distDir = path.resolve(__dirname, "../dist");
   if (fs.existsSync(distDir)) {
-    app.use(express.static(distDir));
+    app.use(express.static(distDir, {
+      setHeaders: (res, filePath) => {
+        const rel = path.relative(distDir, filePath).replaceAll(path.sep, "/");
+        if (rel === "index.html") {
+          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+          res.setHeader("Pragma", "no-cache");
+          res.setHeader("Expires", "0");
+        } else if (rel.startsWith("assets/")) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      },
+    }));
     app.use((req, res, next) => {
       if (req.method !== "GET" && req.method !== "HEAD") {
         next();
@@ -426,6 +446,9 @@ if (process.env.NODE_ENV === "production") {
         next();
         return;
       }
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       res.sendFile(path.join(distDir, "index.html"));
     });
   }
